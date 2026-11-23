@@ -24,6 +24,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
 import type { DrmPolicy } from "@shared/schema";
+
+type PolicyRow = DrmPolicy & {
+  legacyReadOnly?: boolean;
+  legacyFileName?: string | null;
+};
+
+const LEGACY_POLICY_ASSET_BASE = "https://webexcels.pk/assets/images/policies/";
+
+function stripHtml(html: string | null | undefined): string {
+  if (!html) return "";
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -56,7 +68,7 @@ export default function PoliciesSettings() {
   });
 
   // Fetch policies
-  const { data: policies = [], isLoading } = useQuery<DrmPolicy[]>({
+  const { data: policies = [], isLoading } = useQuery<PolicyRow[]>({
     queryKey: ["/api/policies"],
   });
 
@@ -116,10 +128,15 @@ export default function PoliciesSettings() {
     createMutation.mutate(formData);
   };
 
-  const filteredPolicies = policies.filter(p => 
-    p.head.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (p.type && p.type.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const filteredPolicies = policies.filter((p) => {
+    const q = searchTerm.toLowerCase();
+    const detail = stripHtml(p.description).toLowerCase();
+    return (
+      p.head.toLowerCase().includes(q) ||
+      (p.type && p.type.toLowerCase().includes(q)) ||
+      detail.includes(q)
+    );
+  });
 
   // Export functions
   const handleCopy = () => {
@@ -178,21 +195,23 @@ export default function PoliciesSettings() {
   };
 
   return (
-    <div className="p-6 space-y-6 bg-slate-50/50 dark:bg-zinc-950 min-h-screen">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-zinc-100">DRM POLICIES</h1>
+    <div className="p-4 lg:p-6 space-y-5 bg-[#f8fafc] dark:bg-zinc-950 min-h-screen">
+      <div className="flex items-center gap-1.5 text-[15px] font-bold tracking-tight px-1">
+        <span className="text-slate-800 uppercase dark:text-zinc-100">Notice</span>
+        <span className="text-[#059669] px-0.5 dark:text-zinc-400">/</span>
+        <span className="text-[#059669] uppercase dark:text-zinc-400">DRM Policies</span>
       </div>
 
       {/* Create Policy Form */}
-      <Card className="border-none shadow-sm ring-1 ring-slate-200 dark:ring-zinc-800 dark:bg-zinc-900">
-        <CardHeader className="pb-4">
-          <CardTitle className="text-sm font-semibold text-slate-600 uppercase tracking-wider dark:text-zinc-300">
+      <Card className="border border-slate-200 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <CardHeader className="pb-3 border-b border-slate-100 dark:border-zinc-800">
+          <CardTitle className="text-[15px] font-bold text-slate-700 dark:text-zinc-300">
             Create DRM Policy
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <CardContent className="pt-5">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
               <div className="space-y-2">
                 <Label className="text-slate-700 font-medium dark:text-zinc-400">Policy Head</Label>
                 <Input 
@@ -234,7 +253,7 @@ export default function PoliciesSettings() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
               <div className="space-y-2">
                 <Label className="text-slate-700 font-medium dark:text-zinc-400">Policy Type</Label>
                 <Select 
@@ -309,7 +328,7 @@ export default function PoliciesSettings() {
                   contentEditable
                   suppressContentEditableWarning
                   data-placeholder="Enter details here..."
-                  className="min-h-[150px] p-3 text-sm outline-none focus:ring-0 bg-white dark:bg-zinc-900 dark:text-zinc-100 empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400"
+                  className="min-h-[120px] p-3 text-sm outline-none focus:ring-0 bg-white dark:bg-zinc-900 dark:text-zinc-100 empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400"
                   onInput={(e) => {
                     setFormData({ ...formData, description: e.currentTarget.innerHTML });
                   }}
@@ -317,19 +336,21 @@ export default function PoliciesSettings() {
               </div>
             </div>
 
-            <Button 
-              type="submit" 
-              className="w-full bg-[#008d41] hover:bg-[#007a38] text-white font-semibold py-6 text-lg"
-              disabled={createMutation.isPending}
-            >
-              {createMutation.isPending ? "Submitting..." : "Submit"}
-            </Button>
+            <div className="pt-1">
+              <Button
+                type="submit"
+                className="bg-[#008d41] hover:bg-[#007a38] text-white font-semibold h-10 px-12 min-w-[140px]"
+                disabled={createMutation.isPending}
+              >
+                {createMutation.isPending ? "Submitting..." : "Submit"}
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>
 
       {/* Policies Table Card */}
-      <Card className="border-none shadow-sm ring-1 ring-slate-200 dark:ring-zinc-800 overflow-hidden dark:bg-zinc-900">
+      <Card className="border border-slate-200 shadow-sm overflow-hidden dark:border-zinc-800 dark:bg-zinc-900">
         <CardContent className="p-0">
           <div className="p-4 border-b bg-white flex flex-col md:flex-row gap-4 items-center justify-between dark:bg-zinc-900">
             <div className="flex flex-wrap gap-2">
@@ -394,7 +415,7 @@ export default function PoliciesSettings() {
                 ) : filteredPolicies.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-4 py-12 text-center text-slate-500 font-medium dark:text-zinc-400">
-                      No policies found matching your search.
+                      {searchTerm ? "No policies found matching your search." : "No policies yet. Create one above or check legacy sync."}
                     </td>
                   </tr>
                 ) : (
@@ -408,8 +429,10 @@ export default function PoliciesSettings() {
                         </td>
                       )}
                       {visibleColumns.detail && (
-                        <td className="px-4 py-4 text-slate-600 max-w-xs truncate dark:text-zinc-300">
-                          {policy.description}
+                        <td className="px-4 py-4 text-slate-600 max-w-md dark:text-zinc-300">
+                          <p className="line-clamp-3 whitespace-pre-wrap break-words">
+                            {stripHtml(policy.description) || "-"}
+                          </p>
                         </td>
                       )}
                       {visibleColumns.minAllow && <td className="px-4 py-4 font-medium text-slate-600 dark:text-zinc-300">{policy.minAllow || '-'}</td>}
@@ -428,9 +451,14 @@ export default function PoliciesSettings() {
                                 if (w) {
                                   w.document.write(`<img src="${policy.fileUrl}" style="max-width: 100%;" />`);
                                 }
-                              } else {
-                                toast({ title: "No Image", description: "No image attached to this policy." });
+                                return;
                               }
+                              if (policy.legacyFileName) {
+                                const asset = `${LEGACY_POLICY_ASSET_BASE}${encodeURIComponent(policy.legacyFileName)}`;
+                                window.open(asset, "_blank", "noopener,noreferrer");
+                                return;
+                              }
+                              toast({ title: "No file", description: "No image or file attached to this policy." });
                             }}
                           >
                             <Eye className="w-5 h-5" />
@@ -443,18 +471,20 @@ export default function PoliciesSettings() {
                             <span className="text-slate-500 tabular-nums dark:text-zinc-400">
                               {policy.createdAt ? format(new Date(policy.createdAt), "dd-MM-yyyy hh:mm a") : '-'}
                             </span>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-8 w-8 text-red-500 hover:bg-red-50"
-                              onClick={() => {
-                                if (confirm("Are you sure you want to delete this policy?")) {
-                                  deleteMutation.mutate(policy.id);
-                                }
-                              }}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
+                            {!policy.legacyReadOnly && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-red-500 hover:bg-red-50"
+                                onClick={() => {
+                                  if (confirm("Are you sure you want to delete this policy?")) {
+                                    deleteMutation.mutate(policy.id);
+                                  }
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
                           </div>
                         </td>
                       )}

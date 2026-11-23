@@ -143,9 +143,9 @@ export default function AuthPage() {
         // Redirect each role to their specific dashboard
         const role = user?.role?.toLowerCase().replace(/\s+/g, "_") || "";
         const ROLE_DASHBOARDS: Record<string, string> = {
-          admin: "/dashboard",
-          administrator: "/dashboard",
-          super_admin: "/dashboard",
+          admin: "/admin",
+          administrator: "/admin",
+          super_admin: "/admin",
           super_hod: "/dashboard/super-hod",
           hod: "/dashboard/hod",
           sales_manager: "/dashboard/sales-manager",
@@ -255,7 +255,7 @@ export default function AuthPage() {
           )}
         </div>
 
-        <form className="space-y-4" onSubmit={handleSubmit}>
+        <form className="space-y-4" onSubmit={handleSubmit} noValidate>
           {mode === "signup" && (
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">Full Name</label>
@@ -271,14 +271,18 @@ export default function AuthPage() {
 
           {(mode === "login" || mode === "signup" || mode.startsWith("forgot-")) && (
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">Email Address</label>
+              <label className="block text-xs font-medium text-slate-300 mb-1">
+                {mode === "login" ? "Email, username, or phone" : "Email Address"}
+              </label>
               <input
-                type="email"
+                type={mode === "login" ? "text" : "email"}
+                inputMode={mode === "login" ? "text" : "email"}
+                autoComplete={mode === "login" ? "username" : "email"}
                 className="w-full rounded-lg border border-white/20 bg-black/20 px-4 py-2.5 text-sm text-white placeholder-slate-400 shadow-sm backdrop-blur-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@company.com"
-                required
+                placeholder={mode === "login" ? "name@company.com or 03XXXXXXXXX" : "name@company.com"}
+                required={mode !== "login"}
                 disabled={mode === "forgot-reset"}
               />
             </div>
@@ -324,7 +328,7 @@ export default function AuthPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  minLength={6}
+                  minLength={mode === "login" ? undefined : 6}
                 />
                 <button
                   type="button"

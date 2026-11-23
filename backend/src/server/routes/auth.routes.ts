@@ -4,7 +4,8 @@ import crypto from "crypto";
 import { authService } from "../services/auth.service";
 import { authMiddleware, setAuthCookie, clearAuthCookie } from "../middleware/auth.middleware";
 import { pool } from "../db";
-import { normalizeRole } from "../utils/role-utils";
+import { formatRoleLabel, normalizeRole, resolveActiveRoleId } from "../utils/role-utils";
+import { legacyAttendanceRepository } from "../repositories/legacy-attendance.repository";
 import { emailService } from "../services/email.service";
 import { sendError, badRequest, unauthorized, forbidden, notFound, conflict } from "../utils/api-error";
 
@@ -28,9 +29,9 @@ function forgotPasswordRateLimited(key: string): boolean {
   return recent.length > FORGOT_MAX_PER_WINDOW;
 }
 
-// Login endpoint
+// Login endpoint — `email` field is legacy API name; value may be email, username, or phone (old DRM).
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().min(1, "Email, username, or phone is required"),
   password: z.string().min(1),
 });
 
@@ -50,7 +51,10 @@ async function issueAuthPayload(user: {
 }) {
   const normalizedRole = normalizeRole(user.role);
   const activeRoleId = normalizedRole;
-  const userRoles = user.roles && user.roles.length > 0 ? user.roles : [normalizedRole];
+  const userRoles =
+    user.roles && user.roles.length > 0
+      ? user.roles.map((r) => normalizeRole(r))
+      : [normalizedRole];
   const token = authService.generateToken({
     userId: user.id,
     email: user.email,
@@ -67,6 +71,7 @@ async function issueAuthPayload(user: {
       fullName: user.full_name,
       email: user.email,
       role: normalizedRole,
+      roleLabel: formatRoleLabel(normalizedRole),
       roles: userRoles,
       activeRoleId,
     },
@@ -119,11 +124,26 @@ router.post("/signup", async (req: Request, res: Response) => {
 
 router.post("/login", async (req: Request, res: Response) => {
   try {
-    const { email, password } = loginSchema.parse(req.body);
+    const { email: loginId, password } = loginSchema.parse(req.body);
 
+    const digits = loginId.replace(/\D/g, "");
     const result = await pool.query(
-      "select id, full_name, email, password_hash, role, roles, is_active from drm.users where email = $1 limit 1",
-      [email],
+      `select id, full_name, email, password_hash, role, roles, is_active
+       from drm.users
+       where lower(trim(email)) = lower(trim($1))
+          or lower(trim(username)) = lower(trim($1))
+          or (
+            $2 <> ''
+            and (
+              regexp_replace(coalesce(username, ''), '[^0-9]', '', 'g') = $2
+              or (
+                coalesce(nullif(regexp_replace(phone, '[^0-9]', '', 'g'), ''), '') <> ''
+                and regexp_replace(phone, '[^0-9]', '', 'g') = $2
+              )
+            )
+          )
+       limit 1`,
+      [loginId, digits],
     );
     if (result.rows.length === 0) {
       return sendError(res, unauthorized("Invalid credentials"));
@@ -187,15 +207,31 @@ router.get("/me", authMiddleware, async (req: Request, res: Response) => {
       is_active: boolean;
     };
 
-    // When impersonating, return the active role, not the original role
-    const activeRole = (req.user as any)?.activeRoleId ?? normalizeRole(user.role);
+    const userRoles =
+      user.roles && user.roles.length > 0
+        ? user.roles.map((r) => normalizeRole(r))
+        : [normalizeRole(user.role)];
+
+    const activeRole = resolveActiveRoleId(
+      (req.user as any)?.activeRoleId,
+      user.role,
+      userRoles,
+    );
+
+    let displayName = user.full_name;
+    try {
+      displayName = await legacyAttendanceRepository.resolveDisplayName(user.id);
+    } catch {
+      /* keep db full_name */
+    }
 
     return res.json({
       id: user.id,
-      fullName: user.full_name,
+      fullName: displayName,
       email: user.email,
-      role: activeRole,  // Return the active role (impersonated or original)
-      roles: user.roles || [normalizeRole(user.role)],
+      role: activeRole,
+      roleLabel: formatRoleLabel(activeRole),
+      roles: userRoles,
       activeRoleId: activeRole,
       isActive: user.is_active,
       isImpersonating: !!(req.user as any)?.impersonatorId,

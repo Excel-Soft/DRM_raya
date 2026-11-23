@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type ComplaintRow = {
     id: string;
@@ -538,16 +539,15 @@ export default function ServiceComplaintList() {
                     </DialogHeader>
                     <div className="space-y-3">
                         <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Assign To *</label>
-                        <Select value={assignTo} onValueChange={setAssignTo}>
-                            <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800" data-testid="select-assign-to">
-                                <SelectValue placeholder="Select a person" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {(users ?? []).map(u => (
-                                    <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                        <RoleGroupedUserSelect
+                            grouped={false}
+                            users={users}
+                            value={assignTo}
+                            onChange={setAssignTo}
+                            getLabel={(u) => String(u.name || u.fullName || u.username || "")}
+                            placeholder="Select a person"
+                            className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"
+                        />
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setAssignTarget(null)} className="h-9 text-[13px]">Cancel</Button>

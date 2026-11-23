@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { normalizeRole as normalize } from "@/lib/role-utils";
+import { findMismatchedRoleHome, getRoleHome } from "@/lib/role-dashboards";
 
 // Define which roles can access which route patterns
 const ROUTE_PERMISSIONS: Record<string, string[]> = {
@@ -30,16 +31,19 @@ const ROUTE_PERMISSIONS: Record<string, string[]> = {
     "/verification": ["admin", "verification_manager"],
 };
 
-// Default dashboards for each role
+// Default dashboards for each role (admin → dedicated admin console)
 const ROLE_DASHBOARDS: Record<string, string> = {
-    admin: "/",
-    super_hod: "/",
+    admin: "/admin",
+    super_admin: "/admin",
+    administrator: "/admin",
+    super_hod: "/dashboard/super-hod",
+    hod: "/dashboard/hod",
     sales_manager: "/dashboard/sales-manager",
     sales_assistant_manager: "/dashboard/sales-assistant-manager",
     sales_executive: "/dashboard/sales-executive",
-    account_manager: "/",
+    account_manager: "/dashboard/account-manager",
     service_manager: "/dashboard/service-manager",
-    service_assistant_manager: "/dashboard/service-manager",
+    service_assistant_manager: "/dashboard/service-assistant-manager",
     service_executive: "/dashboard/service-executive",
     developer: "/dashboard/developer",
     dd_manager: "/dashboard/dd-manager",
@@ -103,12 +107,20 @@ export function useRouteProtection(authState: RouteProtectionState) {
                 if (!isAllowed) {
                     // Fail-closed: unauthorized for this route → redirect to the
                     // user's default dashboard.
-                    const defaultDashboard = ROLE_DASHBOARDS[primaryRole] || "/";
+                    const defaultDashboard = ROLE_DASHBOARDS[primaryRole] || getRoleHome(primaryRole);
                     console.log(`[Route Protection] Redirecting ${primaryRole || "unknown"} from ${location} to ${defaultDashboard}`);
                     setLocation(defaultDashboard);
                     return;
                 }
             }
+        }
+
+        // Active role is Admin (or any role) but URL is still another role's home dashboard
+        // (e.g. stopped impersonation while on /dashboard/sales-manager).
+        const activeHome = getRoleHome(primaryRole);
+        const redirectHome = findMismatchedRoleHome(location, activeHome);
+        if (redirectHome && redirectHome !== location) {
+            setLocation(redirectHome);
         }
     }, [location, setLocation, activeRoleId, userRoles, ready, isAuthenticated]);
 }

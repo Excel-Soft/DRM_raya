@@ -31,6 +31,7 @@ import {
     Save,
     X,
 } from "lucide-react";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
 
 const userFormSchema = z.object({
     // Personal Information
@@ -38,7 +39,7 @@ const userFormSchema = z.object({
     fatherHusbandName: z.string().min(2, "Father/Husband name is required"),
     attendanceId: z.string().optional(),
     email: z.string().email("Valid email is required"),
-    mobile: z.string().regex(/^\d+$/, "Digits only").max(11, "Max 11 digits"),
+    mobile: z.string().min(1, "Mobile is required").regex(/^\d+$/, "Digits only").max(11, "Max 11 digits"),
     guardianMobile: z.string().regex(/^\d+$/, "Digits only").max(11, "Max 11 digits").optional().or(z.literal("")),
     passportCnic: z.string().min(1, "Passport/CNIC is required"),
     facebookId: z.string().optional(),
@@ -47,18 +48,18 @@ const userFormSchema = z.object({
     // Employment
     joinDate: z.string().min(1, "Join date is required"),
     roleType: z.array(z.string()).min(1, "At least one role is required"),
-    underWorks: z.string().optional(),
+    underWorks: z.string().optional(), // empty = "Main" (always has a value)
 
     // Salary
     basicSalary: z.string().min(1, "Basic salary is required"),
-    dailyAllowance: z.string().optional(),
+    dailyAllowance: z.string().min(1, "Daily allowance is required"),
     mobileAllowance: z.string().optional(),
     adminAllowance: z.string().optional(),
     conveyanceAllowance: z.string().optional(),
     relaxationMinutes: z.string().optional(),
 
     // Additional
-    increment: z.string().optional(),
+    increment: z.string().min(1, "Increment is required"),
     gender: z.string().min(1, "Gender is required"),
     address: z.string().optional(),
 });
@@ -101,12 +102,11 @@ const STATIC_UNDER_WORKS = [
 ];
 
 const INCREMENT_OPTIONS = [
-    { value: "none", label: "Select..." },
-    { value: "5", label: "5%" },
-    { value: "10", label: "10%" },
-    { value: "15", label: "15%" },
-    { value: "20", label: "20%" },
-    { value: "custom", label: "Custom" },
+    { value: "1 Year", label: "1 Year" },
+    { value: "2 Year", label: "2 Year" },
+    { value: "3 Year", label: "3 Year" },
+    { value: "4 Year", label: "4 Year" },
+    { value: "5 Year", label: "5 Year" },
 ];
 
 const GENDER_OPTIONS = [
@@ -160,34 +160,12 @@ export default function AddUser() {
         groups.push({ groupLabel: "", items: [{ value: "main", name: "Main" }] });
 
         if (usersData?.users) {
-            // Group users by their role
-            const usersByRole: Record<string, Array<{ id: string; fullName: string }>> = {};
-            const roleOrder: string[] = [];
-            for (const user of usersData.users) {
-                const role = user.role || "Unknown";
-                const roleLabel = role.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
-                if (!usersByRole[roleLabel]) {
-                    usersByRole[roleLabel] = [];
-                    roleOrder.push(roleLabel);
-                }
-                usersByRole[roleLabel].push(user);
-            }
-            // Sort roleOrder based on ROLE_TYPES array
-            roleOrder.sort((a, b) => {
-                const indexA = ROLE_TYPES.findIndex(rt => rt.label.toLowerCase() === a.toLowerCase() || rt.value.replace(/_/g, ' ').toLowerCase() === a.toLowerCase());
-                const indexB = ROLE_TYPES.findIndex(rt => rt.label.toLowerCase() === b.toLowerCase() || rt.value.replace(/_/g, ' ').toLowerCase() === b.toLowerCase());
-                
-                if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-                if (indexA !== -1) return -1;
-                if (indexB !== -1) return 1;
-                return a.localeCompare(b);
-            });
-
-            // Add each role group
-            for (const roleLabel of roleOrder) {
+            // One section per role title; multi-role users under each role;
+            // disabled (role 54) profiles can't be picked.
+            for (const g of groupUsersByRoleTitle(usersData.users as any[])) {
                 groups.push({
-                    groupLabel: roleLabel,
-                    items: usersByRole[roleLabel].map(u => ({ value: u.id, name: u.fullName })),
+                    groupLabel: g.role,
+                    items: g.users.map((u: any) => ({ value: u.id, name: u.fullName })),
                 });
             }
         }
@@ -311,7 +289,7 @@ export default function AddUser() {
                                 name="firstName"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>First name*</FormLabel>
+                                        <FormLabel>First name <span className="text-red-500">*</span></FormLabel>
                                         <FormControl>
                                             <Input {...field} data-testid="input-first-name" />
                                         </FormControl>
@@ -325,7 +303,7 @@ export default function AddUser() {
                                 name="fatherHusbandName"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Father / Husband Name *</FormLabel>
+                                        <FormLabel>Father / Husband Name <span className="text-red-500">*</span></FormLabel>
                                         <FormControl>
                                             <Input {...field} data-testid="input-father-husband" />
                                         </FormControl>
@@ -356,7 +334,7 @@ export default function AddUser() {
                                 name="email"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Email*</FormLabel>
+                                        <FormLabel>Email <span className="text-red-500">*</span></FormLabel>
                                         <FormControl>
                                             <Input type="email" {...field} data-testid="input-email" />
                                         </FormControl>
@@ -370,7 +348,7 @@ export default function AddUser() {
                                 name="mobile"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Mobile*</FormLabel>
+                                        <FormLabel>Mobile <span className="text-red-500">*</span></FormLabel>
                                         <FormControl>
                                             <Input placeholder="03XXXXXXXXX" maxLength={11} {...field} data-testid="input-mobile" />
                                         </FormControl>
@@ -401,7 +379,7 @@ export default function AddUser() {
                                 name="passportCnic"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Passport / CNIC *</FormLabel>
+                                        <FormLabel>Passport / CNIC <span className="text-red-500">*</span></FormLabel>
                                         <FormControl>
                                             <Input {...field} data-testid="input-passport-cnic" />
                                         </FormControl>
@@ -429,7 +407,7 @@ export default function AddUser() {
                                 name="dateOfBirth"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Date of Birth*</FormLabel>
+                                        <FormLabel>Date of Birth <span className="text-red-500">*</span></FormLabel>
                                         <FormControl>
                                             <Input type="date" {...field} data-testid="input-dob" />
                                         </FormControl>
@@ -446,7 +424,7 @@ export default function AddUser() {
                                 name="joinDate"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Join Date*</FormLabel>
+                                        <FormLabel>Join Date <span className="text-red-500">*</span></FormLabel>
                                         <FormControl>
                                             <Input type="date" {...field} data-testid="input-join-date" />
                                         </FormControl>
@@ -483,7 +461,7 @@ export default function AddUser() {
 
                                     return (
                                         <FormItem>
-                                            <FormLabel>Role type*</FormLabel>
+                                            <FormLabel>Role type <span className="text-red-500">*</span></FormLabel>
                                             <div ref={roleDropdownRef} className="relative" data-testid="select-role-type">
                                                 {/* Tags input area */}
                                                 <div
@@ -593,7 +571,7 @@ export default function AddUser() {
 
                                     return (
                                         <FormItem>
-                                            <FormLabel>Under Works*</FormLabel>
+                                            <FormLabel>Under Works <span className="text-red-500">*</span></FormLabel>
                                             <div ref={uwRef} className="relative" data-testid="select-under-works">
                                                 {/* Trigger */}
                                                 <div
@@ -668,7 +646,7 @@ export default function AddUser() {
                                 name="basicSalary"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Basic Salary*</FormLabel>
+                                        <FormLabel>Basic Salary <span className="text-red-500">*</span></FormLabel>
                                         <FormControl>
                                             <Input type="number" placeholder="0" {...field} data-testid="input-basic-salary" />
                                         </FormControl>
@@ -682,7 +660,7 @@ export default function AddUser() {
                                 name="dailyAllowance"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Daily Allowance*</FormLabel>
+                                        <FormLabel>Daily Allowance <span className="text-red-500">*</span></FormLabel>
                                         <FormControl>
                                             <Input type="number" placeholder="0" {...field} data-testid="input-daily-allowance" />
                                         </FormControl>
@@ -766,7 +744,7 @@ export default function AddUser() {
                                 name="increment"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Increment*</FormLabel>
+                                        <FormLabel>Increment <span className="text-red-500">*</span></FormLabel>
                                         <Select onValueChange={field.onChange} value={field.value}>
                                             <FormControl>
                                                 <SelectTrigger data-testid="select-increment">
@@ -791,7 +769,7 @@ export default function AddUser() {
                                 name="gender"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Gender*</FormLabel>
+                                        <FormLabel>Gender <span className="text-red-500">*</span></FormLabel>
                                         <Select onValueChange={field.onChange} value={field.value}>
                                             <FormControl>
                                                 <SelectTrigger data-testid="select-gender">

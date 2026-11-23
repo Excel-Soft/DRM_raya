@@ -871,6 +871,8 @@ export const allowedIps = drmSchema.table("allowed_ips", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   ip_cidr: text("ip_cidr").notNull().unique(),
   description: text("description"),
+  userId: uuid("user_id").references(() => users.id),
+  userName: text("user_name"),
   is_active: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -1592,10 +1594,16 @@ export const insertPolicySchema = createInsertSchema(policies).omit({
   updatedAt: true,
 });
 
-export const insertAllowedIpSchema = createInsertSchema(allowedIps).omit({
-  id: true,
-  createdAt: true,
-});
+export const insertAllowedIpSchema = createInsertSchema(allowedIps)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    user_id: z.string().uuid().nullable().optional(),
+    user_name: z.string().nullable().optional(),
+  });
 
 export const insertAttendanceSchema = createInsertSchema(attendance).omit({
   id: true,
@@ -3263,6 +3271,8 @@ export const portfolios = drmSchema.table("portfolios", {
   bodyImage: text("body_image"),
   fullImage: text("full_image"),
   sliders: jsonb("sliders"), // Array of image URLs
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  status: text("status").default("un-used"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -4195,6 +4205,9 @@ export const webxlVasCommFinal = drmSchema.table("webxl_vas_comm_final", {
   finalPayAmount: decimal("final_pay_amount", { precision: 10, scale: 2 }),
   managerApproveDate: timestamp("manager_approve_date"),
   hodStatusDate: timestamp("hod_satatus_date"),
+  // scripts/migration/add-vas-comm-final-verify-columns.sql
+  totalAmount: decimal("total_amount", { precision: 12, scale: 2 }),
+  userStatusDate: timestamp("user_status_date"),
 });
 
 // GM/BV commission verification — the Reports -> BV Report "Final Com /

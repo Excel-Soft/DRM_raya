@@ -17,6 +17,10 @@ import {
 import { eq, and, or, ilike, gte, lte, desc, asc, sql, getTableColumns } from "drizzle-orm";
 import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES } from "./middleware/financial-permission";
 import { resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
+import {
+  disableLegacyCompany,
+  searchLegacyRelatedCustomers,
+} from "../utils/related-customer-legacy";
 
 const router = Router();
 
@@ -757,9 +761,38 @@ router.get("/projects", async (req, res) => {
 // through server/services/invoice-to-project.service.ts's idempotent
 // create-or-link functions.
 
-// Related Customers endpoints
+// Related Customers endpoints (legacy webxl_company search — mirrors RelatedcheckCompany)
 router.get("/related-customers", async (req, res) => {
   try {
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const pageRaw = parseInt(String(req.query.page ?? "1"), 10);
+    const pageSizeRaw = parseInt(String(req.query.pageSize ?? req.query.limit ?? "50"), 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? pageSizeRaw : 50;
+
+    const legacyPage = await searchLegacyRelatedCustomers(pool, {
+      q: q || undefined,
+      page,
+      pageSize,
+    });
+
+    if (legacyPage.total > 0 || q) {
+      return res.json(legacyPage);
+    }
+
+    const tableExists = await pool.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'related_customers'
+      LIMIT 1
+    `);
+    if (!tableExists.rows.length) {
+      return res.json({ items: [], total: 0, page: 1, pageSize, source: "legacy" as const });
+    }
+
+    const countRes = await pool.query(`SELECT COUNT(*)::int AS n FROM related_customers`);
+    const total = countRes.rows[0]?.n ?? 0;
+    const offset = (page - 1) * pageSize;
+
     const result = await pool.query(`
       SELECT 
         id, 
@@ -777,11 +810,34 @@ router.get("/related-customers", async (req, res) => {
         created_at as "createdAt"
       FROM related_customers
       ORDER BY created_at DESC
-    `);
-    res.json(result.rows);
+      LIMIT $1 OFFSET $2
+    `, [pageSize, offset]);
+
+    res.json({
+      items: result.rows,
+      total,
+      page,
+      pageSize,
+      source: "modern",
+    });
   } catch (error) {
     console.error("Error fetching related customers:", error);
     res.status(500).json({ error: "Failed to fetch related customers" });
+  }
+});
+
+router.post("/related-customers/:legacyCompanyId/disable", async (req, res) => {
+  try {
+    const { legacyCompanyId } = req.params;
+    const result = await disableLegacyCompany(pool, legacyCompanyId);
+    if (!result.ok) {
+      const status = result.error === "Company not found" ? 404 : 400;
+      return res.status(status).json({ error: result.error ?? "Failed to disable company" });
+    }
+    res.json({ success: true, message: "Company disabled" });
+  } catch (error) {
+    console.error("Error disabling legacy company:", error);
+    res.status(500).json({ error: "Failed to disable company" });
   }
 });
 

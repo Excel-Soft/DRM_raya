@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type RefObject, type MutableRefObject } from "react";
+import { useState, useEffect, useRef, useMemo, type RefObject, type MutableRefObject } from "react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,8 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequestJson } from "@/lib/queryClient";
+import { assertAllTaskLinksUnique, validateUniqueTaskLinks } from "@/lib/task-link-utils";
+import { roleCanExecutePmsTasks, roleCanAssignPmsTasks } from "@/lib/pms-task-permissions";
 
 // Same "links inside task.notes" parsing already used inline in the Working
 // Links table column — pulled out here so the Files modal's "Provided
@@ -127,6 +129,9 @@ export default function PmsStatus() {
     const EMPTY_FILTERS = { department: "all", city: "all", status: "all", startDate: "", endDate: "" };
     const [filters, setFilters] = useState(EMPTY_FILTERS);
     const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS);
+    const [listSearch, setListSearch] = useState("");
+    const [pageSize, setPageSize] = useState(10);
+    const [currentPage, setCurrentPage] = useState(1);
 
     const { data: projects = [], isLoading, isError, error } = useQuery<ProjectStatus[]>({
         queryKey: ["/api/pms/department-status", appliedFilters],
@@ -159,8 +164,12 @@ export default function PmsStatus() {
         queryFn: async () => {
             const all = await Promise.all(
                 projectTasks.map(async (t: any) => {
-                    const logs = await apiRequestJson<any[]>("GET", `/api/pms/tasks/${t.id}/time-logs`);
-                    return (Array.isArray(logs) ? logs : []).map((l: any) => ({ ...l, taskTitle: t.title || t.name }));
+                    try {
+                        const logs = await apiRequestJson<any[]>("GET", `/api/pms/tasks/${t.id}/time-logs`);
+                        return (Array.isArray(logs) ? logs : []).map((l: any) => ({ ...l, taskTitle: t.title || t.name }));
+                    } catch {
+                        return [];
+                    }
                 })
             );
             return all.flat().sort((a: any, b: any) => new Date(b.logDate).getTime() - new Date(a.logDate).getTime());
@@ -346,10 +355,11 @@ export default function PmsStatus() {
     });
 
     const userRoleName = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
-    const role = ((userData as any)?.role || userRoleName).toLowerCase();
-    // "Add Task" is a manager/assigner action — an executive only works the
-    // tasks already assigned to them, they don't create new ones.
-    const isExecutive = role.includes("executive");
+    const role = String(
+      (userData as any)?.activeRoleId || (userData as any)?.role || userRoleName || "",
+    ).toLowerCase();
+    const canExecuteTasks = roleCanExecutePmsTasks(role);
+    const canAssignTasks = roleCanAssignPmsTasks(role);
     const isManager = role.includes("manager") && !role.includes("admin");
     const isAdmin = role.includes("admin");
     // View (Eye) action on the projects table is scoped to just these 4
@@ -388,6 +398,45 @@ export default function PmsStatus() {
         departmentTitle = "PROJECT REPORT";
     }
 
+    const filteredProjects = useMemo(() => {
+        const q = listSearch.trim().toLowerCase();
+        const list = projects.filter((row) => {
+            if (!q) return true;
+            return (
+                row.company?.toLowerCase().includes(q) ||
+                row.assign?.toLowerCase().includes(q) ||
+                row.project?.toLowerCase().includes(q) ||
+                row.status?.toLowerCase().includes(q)
+            );
+        });
+        return [...list].sort((a, b) => {
+            const da = a.date ? new Date(a.date).getTime() : 0;
+            const db = b.date ? new Date(b.date).getTime() : 0;
+            if (db !== da) return db - da;
+            return String(a.company).localeCompare(String(b.company));
+        });
+    }, [projects, listSearch]);
+
+    const totalFiltered = filteredProjects.length;
+    const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+    const safePage = Math.min(currentPage, totalPages);
+    const pageStart = totalFiltered === 0 ? 0 : (safePage - 1) * pageSize + 1;
+    const pageEnd = Math.min(safePage * pageSize, totalFiltered);
+    const paginatedProjects = filteredProjects.slice(
+        (safePage - 1) * pageSize,
+        safePage * pageSize,
+    );
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [appliedFilters, listSearch, pageSize]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
     return (
         <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans flex flex-col dark:bg-zinc-950">
             <h1 className="text-[17px] font-bold text-[#495057] tracking-wide uppercase mb-6 flex-shrink-0 dark:text-zinc-400">
@@ -396,8 +445,8 @@ export default function PmsStatus() {
 
             {/* Filter Section */}
             <div className="bg-white rounded border border-gray-100 p-6 shadow-sm flex-shrink-0 mb-6 dark:bg-zinc-900 dark:border-zinc-800">
-                <div className={`grid grid-cols-1 ${isExecutive ? 'md:grid-cols-2' : 'md:grid-cols-5'} gap-6 mb-6`}>
-                    {!isExecutive && (
+                <div className={`grid grid-cols-1 ${canExecuteTasks ? 'md:grid-cols-2' : 'md:grid-cols-5'} gap-6 mb-6`}>
+                    {!canExecuteTasks && (
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Department</label>
                         <Select value={filters.department} onValueChange={(v) => setFilters(prev => ({ ...prev, department: v }))} disabled={isManager && !isAdmin}>
@@ -415,7 +464,7 @@ export default function PmsStatus() {
                         </Select>
                     </div>
                     )}
-                    {!isExecutive && (
+                    {!canExecuteTasks && (
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Select City</label>
                         <Select value={filters.city} onValueChange={(v) => setFilters(prev => ({ ...prev, city: v }))}>
@@ -431,7 +480,7 @@ export default function PmsStatus() {
                         </Select>
                     </div>
                     )}
-                    {!isExecutive && (
+                    {!canExecuteTasks && (
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Select Status</label>
                         <Select value={filters.status} onValueChange={(v) => setFilters(prev => ({ ...prev, status: v }))}>
@@ -477,7 +526,10 @@ export default function PmsStatus() {
                 <div className="flex items-center gap-3">
                     <Button
                         className="h-10 px-8 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold tracking-wide"
-                        onClick={() => setAppliedFilters(filters)}
+                        onClick={() => {
+                            setAppliedFilters(filters);
+                            setCurrentPage(1);
+                        }}
                     >
                         View
                     </Button>
@@ -499,10 +551,37 @@ export default function PmsStatus() {
                 <div className="p-4 border-b border-gray-100 font-bold text-[15px] text-[#495057] dark:text-zinc-400 dark:border-zinc-800">
                     List
                 </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800">
+                    <div className="flex items-center gap-2">
+                        <span className="text-[12px] text-[#495057] dark:text-zinc-400">Show</span>
+                        <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+                            <SelectTrigger className="h-8 w-[70px] text-[12px]">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="10">10</SelectItem>
+                                <SelectItem value="25">25</SelectItem>
+                                <SelectItem value="50">50</SelectItem>
+                                <SelectItem value="100">100</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <span className="text-[12px] text-[#495057] dark:text-zinc-400">entries</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-[12px] text-[#495057] dark:text-zinc-400">Search:</span>
+                        <Input
+                            type="search"
+                            value={listSearch}
+                            onChange={(e) => setListSearch(e.target.value)}
+                            className="h-8 w-[200px] text-[12px]"
+                            placeholder="Company, person, project…"
+                        />
+                    </div>
+                </div>
                 <div className="flex-1 p-4 overflow-auto custom-scrollbar">
-                    <Table className="w-full border-collapse">
-                        <TableHeader>
-                            <TableRow className="bg-[#daf1e2] hover:bg-[#daf1e2] border-0 dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                    <Table className="w-full border-collapse min-w-[1000px]">
+                        <TableHeader className="sticky top-0 z-20 shadow-sm">
+                            <TableRow className="bg-[#daf1e2] hover:bg-[#daf1e2] border-0 dark:bg-zinc-900 dark:hover:bg-zinc-800 [&_th]:bg-[#daf1e2] dark:[&_th]:bg-zinc-900">
                                 <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 first:rounded-l w-[60px] dark:text-zinc-100">No#</TableHead>
                                 <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Company</TableHead>
                                 <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Person</TableHead>
@@ -533,16 +612,16 @@ export default function PmsStatus() {
                                         </button>
                                     </TableCell>
                                 </TableRow>
-                            ) : projects.length === 0 ? (
+                            ) : totalFiltered === 0 ? (
                                 <TableRow>
                                     <TableCell colSpan={9} className="text-center py-10 text-gray-500 dark:text-zinc-400">
                                         No projects found.
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                projects.map((row, idx) => (
+                                paginatedProjects.map((row, idx) => (
                                     <TableRow key={row.id} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors border-b border-gray-50 text-[13px] dark:border-zinc-800">
-                                        <TableCell className="px-4 py-4 font-bold text-gray-500 dark:text-zinc-400">{idx + 1}</TableCell>
+                                        <TableCell className="px-4 py-4 font-bold text-gray-500 dark:text-zinc-400">{(safePage - 1) * pageSize + idx + 1}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-[#495057] text-center dark:text-zinc-400">{row.company}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-emerald-600 text-center">{row.assign || "Not Assigned"}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-gray-600 text-center dark:text-zinc-300">{row.project}</TableCell>
@@ -588,6 +667,33 @@ export default function PmsStatus() {
                         </TableBody>
                     </Table>
                 </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 py-3 border-t border-gray-100 text-[12px] text-[#495057] dark:border-zinc-800 dark:text-zinc-400">
+                    <div>
+                        Showing {pageStart} to {pageEnd} of {totalFiltered} entries
+                        {listSearch ? ` (filtered from ${projects.length})` : ""}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span>Page {safePage} of {totalPages}</span>
+                        <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-zinc-800">
+                            <button
+                                type="button"
+                                disabled={safePage <= 1}
+                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                className="px-3 py-1.5 border-r border-gray-200 dark:border-zinc-800 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-zinc-900"
+                            >
+                                Previous
+                            </button>
+                            <button
+                                type="button"
+                                disabled={safePage >= totalPages}
+                                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                className="px-3 py-1.5 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-zinc-900"
+                            >
+                                Next
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* Project Details Modal */}
@@ -602,7 +708,7 @@ export default function PmsStatus() {
                     <div className="p-8">
                         <div className="mb-6 flex items-center justify-between">
                             <h3 className="text-[15px] font-bold text-[#495057] dark:text-zinc-400">Assign Projects</h3>
-                            {!isExecutive && (
+                            {canAssignTasks && (
                                 <button
                                     onClick={() => setIsAddTaskFormOpen((v) => !v)}
                                     className="flex items-center gap-1.5 bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold"
@@ -614,7 +720,7 @@ export default function PmsStatus() {
                             )}
                         </div>
 
-                        {!isExecutive && isAddTaskFormOpen && (
+                        {canAssignTasks && isAddTaskFormOpen && (
                             <div className="mb-6 bg-white rounded border border-gray-100 shadow-sm p-5 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-1.5">
@@ -803,7 +909,7 @@ export default function PmsStatus() {
                                                         {new Date(task.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
-                                                        {isExecutive ? (
+                                                        {canExecuteTasks ? (
                                                             <button
                                                                 onClick={() => setFilesModalTask(task)}
                                                                 disabled={task.status === 'READY_FOR_QA' || task.status === 'Completed'}
@@ -843,8 +949,8 @@ export default function PmsStatus() {
                                                     {/* Timer/submit controls are the assigned executive's own work
                                                         surface — a manager (who typically assigned the task, not
                                                         worked it) must not get a live Play/Stop button for it.
-                                                        Mirrors pms-tasks.tsx's identical isExecutive gate below. */}
-                                                    {isExecutive && (
+                                                        Mirrors pms-tasks.tsx's identical canExecuteTasks gate below. */}
+                                                    {canExecuteTasks && (
                                                     <TableCell className="px-6 py-5 text-center">
                                                         <div className="flex items-center justify-center gap-2 relative">
                                                             {task.status !== 'READY_FOR_QA' && task.status !== 'Completed' && (
@@ -909,7 +1015,7 @@ export default function PmsStatus() {
                                                         </div>
                                                     </TableCell>
                                                     )}
-                                                    {!isExecutive && (
+                                                    {!canExecuteTasks && (
                                                         <TableCell className="px-6 py-5 text-center text-[11px] text-gray-400 font-medium">
                                                             View Only
                                                         </TableCell>
@@ -1070,7 +1176,7 @@ export default function PmsStatus() {
             {isProductPostingExecutive ? (
                 <AddLinksModal task={filesModalTask} onClose={() => setFilesModalTask(null)} />
             ) : (
-                <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} canUpload={isExecutive} />
+                <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} canUpload={canExecuteTasks} />
             )}
         </div>
     );
@@ -1171,6 +1277,11 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
     const submitMutation = useMutation({
         mutationFn: async () => {
             const validLinks = links.map((l) => l.trim()).filter(Boolean);
+            const existingForCheck = submittedLinks.map((f) =>
+                (editDrafts[f.id] ?? f.description ?? "").trim(),
+            ).filter(Boolean);
+            const dupMsg = validateUniqueTaskLinks(validLinks, existingForCheck);
+            if (dupMsg) throw new Error(dupMsg);
             for (const link of validLinks) {
                 const form = new FormData();
                 form.append("description", link);
@@ -1179,6 +1290,7 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [`/api/tasks/${taskId}/files`] });
+            queryClient.invalidateQueries({ queryKey: ["project-tasks-direct"] });
             setLinks([""]);
             toast({ title: "Sent", description: "Your links were submitted." });
         },
@@ -1194,6 +1306,9 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
                 return draft && draft !== (f.description || "").trim();
             });
             if (changes.length === 0) throw new Error("No link changes to save.");
+            const allAfterEdit = submittedLinks.map((f) => (editDrafts[f.id] || f.description || "").trim()).filter(Boolean);
+            const dupMsg = assertAllTaskLinksUnique(allAfterEdit);
+            if (dupMsg) throw new Error(dupMsg);
             for (const f of changes) {
                 await apiRequestJson("PATCH", `/api/tasks/${taskId}/files/${f.id}`, {
                     description: (editDrafts[f.id] || "").trim(),
@@ -1203,6 +1318,7 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
         },
         onSuccess: (count) => {
             queryClient.invalidateQueries({ queryKey: [`/api/tasks/${taskId}/files`] });
+            queryClient.invalidateQueries({ queryKey: ["project-tasks-direct"] });
             toast({
                 title: "Links updated",
                 description: `${count} link(s) saved. Re-submit the task when ready — updated links need QA approval again.`,

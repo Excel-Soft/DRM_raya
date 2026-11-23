@@ -3,6 +3,7 @@ import { tasks, users, projects, type Task, type InsertTask } from "@shared/sche
 import { eq, and, sql, or, desc, lte, gte, isNotNull, ilike, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { quotedUuidList } from "../utils/sql-safety";
+import { notifyTaskAssignee } from "../utils/task-notifications";
 
 // Deliberately NOT typeof users.$inferSelect — that includes password/
 // passwordHash. GET /api/pms/tasks(+/:id, /board) return this straight to
@@ -28,6 +29,9 @@ let usersSchemaEnsuredForTasks = false;
 async function ensureTasksSchema() {
   if (tasksSchemaEnsured) return;
   tasksSchemaEnsured = true;
+  // Legacy-shape ALTERs (reference tasks.assigned_to, absent on the migrated DB);
+  // skip them when schema ensures are disabled.
+  if (process.env.SKIP_SCHEMA_ENSURE === "true") return;
 
   const alterSql = `
     alter table tasks
@@ -102,6 +106,18 @@ export class TasksRepository {
     await ensureTasksSchema();
     await ensureUsersSchemaForTasks();
     const [task] = await db.insert(tasks).values(data).returning();
+    if (task.assignedToUserId) {
+      try {
+        await notifyTaskAssignee({
+          assigneeUserId: task.assignedToUserId,
+          taskId: task.id,
+          taskTitle: task.title,
+          projectId: task.projectId,
+        });
+      } catch (err) {
+        console.error("[tasks] assignee notification failed (non-fatal):", err);
+      }
+    }
     return task;
   }
 
@@ -180,11 +196,36 @@ export class TasksRepository {
   async update(id: string, data: Partial<InsertTask>): Promise<Task | undefined> {
     await ensureTasksSchema();
     await ensureUsersSchemaForTasks();
+    let previousAssignee: string | null | undefined;
+    if (data.assignedToUserId !== undefined) {
+      const [existing] = await db
+        .select({ assignedToUserId: tasks.assignedToUserId, title: tasks.title, projectId: tasks.projectId })
+        .from(tasks)
+        .where(eq(tasks.id, id));
+      previousAssignee = existing?.assignedToUserId;
+    }
     const [updated] = await db
       .update(tasks)
       .set({ ...data, updatedAt: new Date() })
       .where(eq(tasks.id, id))
       .returning();
+    if (
+      updated?.assignedToUserId &&
+      data.assignedToUserId !== undefined &&
+      updated.assignedToUserId !== previousAssignee
+    ) {
+      try {
+        await notifyTaskAssignee({
+          assigneeUserId: updated.assignedToUserId,
+          taskId: updated.id,
+          taskTitle: updated.title,
+          projectId: updated.projectId,
+          previousAssigneeId: previousAssignee,
+        });
+      } catch (err) {
+        console.error("[tasks] reassignment notification failed (non-fatal):", err);
+      }
+    }
     return updated;
   }
 

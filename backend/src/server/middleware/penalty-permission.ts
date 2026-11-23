@@ -64,6 +64,18 @@ export function canEditOrDeletePenalty(role: string): boolean {
   return isFullAccess(role) || role === "hod" || role === "account_manager";
 }
 
+/**
+ * Add Penalty list buttons (product rule, Nov 2026):
+ *   Edit   -> admin (any status) and account manager (pending only, legacy rule)
+ *   Delete -> admin only
+ */
+export function canEditPenalty(role: string): boolean {
+  return role === "admin" || role === "account_manager";
+}
+export function canDeletePenalty(role: string): boolean {
+  return role === "admin";
+}
+
 /** Review employee rejection and re-assign penalty (admin, super HOD, HOD, account manager). */
 export function canReviewEmployeeRejection(role: string): boolean {
   return canEditOrDeletePenalty(role);

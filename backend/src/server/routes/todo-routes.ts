@@ -4,6 +4,7 @@ import { pool } from "../db";
 import { sendError, sendApiError, errorEnvelope, unauthorized, forbidden, notFound, ApiError } from "../utils/api-error";
 import { ValidationService } from "./services/validation.service";
 import { ActivityLogService } from "./services/activity-service";
+import { ensureTodoTasksSchema } from "../repositories/todo-tasks.repository";
 
 const repeatOptions = ["HOUR", "DAILY", "WEEKLY", "MONTHLY", "YEARLY", "NONE"] as const;
 const reminderOptions = ["same_day", "5m", "10m", "15m", "1d"] as const;
@@ -42,6 +43,10 @@ const todoItemSchema = z.object({
 });
 
 export function registerTodoRoutes(app: Express) {
+  void ensureTodoTasksSchema().catch((e) =>
+    console.warn("[todo] ensureTodoTasksSchema failed:", e),
+  );
+
   // Categories (static list)
   app.get("/api/attendance/todo/categories", (req, res) => {
     if (!req.user) return sendError(res, unauthorized("Not authenticated"));
@@ -78,6 +83,7 @@ export function registerTodoRoutes(app: Express) {
   app.post("/api/attendance/todo", async (req, res) => {
     try {
       if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+      await ensureTodoTasksSchema();
       const parsed = ValidationService.parse(
         z.object({ items: z.array(todoItemSchema).min(1) }),
         req.body,
@@ -134,6 +140,7 @@ export function registerTodoRoutes(app: Express) {
   app.get("/api/attendance/todo", async (req, res) => {
     try {
       if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+      await ensureTodoTasksSchema();
       const userId = req.user.userId;
       const role = req.user.roleId ?? "";
       const isAdmin = role === "admin";
@@ -219,6 +226,7 @@ export function registerTodoRoutes(app: Express) {
   app.patch("/api/attendance/todo/:id/status", async (req, res) => {
     try {
       if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+      await ensureTodoTasksSchema();
       const taskId = req.params.id;
       const parsed = z
         .object({
@@ -269,6 +277,7 @@ export function registerTodoRoutes(app: Express) {
   app.patch("/api/attendance/todo/:id/participants/remove", async (req, res) => {
     try {
       if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+      await ensureTodoTasksSchema();
       const taskId = req.params.id;
       const parsed = z.object({ userId: z.string().min(1) }).parse(req.body);
       const removeId = parsed.userId;
@@ -319,6 +328,7 @@ export function registerTodoRoutes(app: Express) {
   app.get("/api/attendance/todo/summary", async (req, res) => {
     try {
       if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+      await ensureTodoTasksSchema();
       const role = req.user.roleId ?? "";
       const isAdmin = role === "admin";
       const userIdParam = (req.query.userId as string | undefined) ?? undefined;

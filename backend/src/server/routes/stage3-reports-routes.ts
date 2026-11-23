@@ -13,6 +13,7 @@ import {
   createDepartmentCommission,
   COMPLETION_STATUS_MODES,
 } from "./services/department-report.service";
+import { fetchLegacyDailyGmRecords, legacyDailyGmAvailable } from "../utils/daily-gm-record-legacy";
 
 const RAW_ATTENDANCE_LIMITS = [10, 25, 50, 100];
 
@@ -211,6 +212,85 @@ function mapRawAttendanceRow(r: any) {
   };
 }
 
+/**
+ * Old DRM "Raw Attendance" = biometric machine punches (webxl_raw_attendence,
+ * copied to drm.attendance_raw_punches). A punch only carries the device user
+ * id (old webxl_user.att_id), which is reused across branches/people, so the
+ * employee is resolved as: same att_id, branch matching the office, the person
+ * who has an attendance row that day, active (role != 54), newest id.
+ * att_timestamp holds Pakistan wall-clock stored as Europe/Berlin.
+ */
+function buildRawPunchQuery(req: Request): { error?: string; sql: string; params: any[] } {
+  const ymdRe = /^\d{4}-\d{2}-\d{2}$/;
+  const start = String(req.query.startDate ?? "");
+  const end = String(req.query.endDate ?? "");
+  if (!ymdRe.test(start) || !ymdRe.test(end)) return { error: "startDate and endDate are required", sql: "", params: [] };
+  if (start > end) return { error: "startDate must be on or before endDate", sql: "", params: [] };
+  const office = req.query.branch ? String(req.query.branch) : null;
+  const userId = req.query.userId ? String(req.query.userId) : null;
+  const sql = `
+    WITH p AS (
+      SELECT r.id, r.user_id AS direct_user, r.legacy_uid, r.office, r.device_ip, r.state, r.punch_type,
+             r.att_timestamp AT TIME ZONE 'Europe/Berlin' AS pk_ts,
+             r.received_at AT TIME ZONE 'Europe/Berlin' AS pk_recv
+        FROM drm.attendance_raw_punches r
+       WHERE r.att_timestamp >= ($1::date)::timestamp AT TIME ZONE 'Europe/Berlin'
+         AND r.att_timestamp < ($2::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin'
+         AND ($3::text IS NULL OR r.office = $3)
+    ),
+    cand AS MATERIALIZED (
+      SELECT u._legacy_pk AS lid, u.att_id, u.name, u.branch, u."roleId" AS role_id, mu.modern_id
+        FROM legacy_archive.webxl_user u
+        LEFT JOIN migration_meta.migration_legacy_ids mu
+          ON mu.modern_table = 'users' AND mu.legacy_table = 'webxl_user' AND mu.legacy_id = u._legacy_pk
+       WHERE COALESCE(u.att_id, '') <> '' AND u.att_id IN (SELECT DISTINCT legacy_uid FROM p)
+    ),
+    ad AS MATERIALIZED (
+      SELECT DISTINCT a.user_id::text AS uid, a.date::date AS d
+        FROM drm.attendance a
+       WHERE a.date >= $1::date AND a.date < $2::date + 1
+         AND a.user_id::text IN (SELECT modern_id FROM cand WHERE modern_id IS NOT NULL)
+    ),
+    res AS (
+      SELECT DISTINCT ON (p.id) p.*, c.name AS legacy_name,
+             COALESCE(p.direct_user::text, c.modern_id) AS emp_id
+        FROM p
+        LEFT JOIN cand c ON c.att_id = p.legacy_uid
+        LEFT JOIN ad ON ad.uid = c.modern_id AND ad.d = p.pk_ts::date
+       ORDER BY p.id,
+                (c.branch = CASE WHEN p.office ILIKE 'Sialkot%' THEN 'Sialkot' ELSE 'Lahore' END) DESC NULLS LAST,
+                (ad.uid IS NOT NULL) DESC,
+                (c.role_id = '54') ASC NULLS LAST, c.lid::bigint DESC NULLS LAST
+    )
+    SELECT res.id, res.legacy_uid, res.office, res.device_ip, res.state, res.punch_type, res.emp_id,
+           COALESCE(u.full_name, u.name, res.legacy_name) AS employee_name,
+           to_char(res.pk_ts, 'YYYY-MM-DD') AS punch_date,
+           to_char(res.pk_ts, 'HH12:MI:SS AM') AS punch_time,
+           to_char(res.pk_recv, 'YYYY-MM-DD HH12:MI AM') AS received_at,
+           COUNT(*) OVER () AS total
+      FROM res
+      LEFT JOIN drm.users u ON u.id::text = res.emp_id
+     WHERE ($4::text IS NULL OR res.emp_id = $4)
+     ORDER BY res.pk_ts DESC, employee_name ASC`;
+  return { sql, params: [start, end, office, userId] };
+}
+
+function mapRawPunchRow(r: any) {
+  return {
+    id: r.id,
+    employeeId: r.emp_id ?? null,
+    employeeName: r.employee_name ?? null,
+    deviceUserId: r.legacy_uid ?? null,
+    office: r.office ?? null,
+    deviceIp: r.device_ip ?? null,
+    state: r.state ?? null,
+    type: r.punch_type ?? null,
+    date: r.punch_date ?? null,
+    time: r.punch_time ?? null,
+    receivedAt: r.received_at ?? null,
+  };
+}
+
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
   const s = v instanceof Date ? v.toISOString() : String(v);
@@ -283,22 +363,55 @@ export function registerStage3ReportsRoutes(app: Express) {
       }
       if (req.query.company) { params.push(`%${String(req.query.company)}%`); where.push(`g.company_name ILIKE $${params.length}`); }
       if (req.query.status) { params.push(String(req.query.status)); where.push(`g.status = $${params.length}`); }
+      const useLegacy = await legacyDailyGmAvailable(pool);
+
+      if (useLegacy) {
+        let scopedLegacyUserIds: string[] | null = null;
+        if (scopedUserIds?.length) {
+          const mapRes = await pool.query(
+            `SELECT DISTINCT w.user_id
+             FROM drm.users u
+             JOIN legacy_archive.webxl_user w
+               ON lower(btrim(w.email)) = lower(btrim(u.email))
+             WHERE u.id::text = ANY($1::text[]) AND w.user_id IS NOT NULL`,
+            [scopedUserIds],
+          );
+          scopedLegacyUserIds = mapRes.rows.map((r) => String(r.user_id));
+          if (!scopedLegacyUserIds.length) {
+            return res.json({ rows: [], total: 0, page, pageSize, source: "legacy" });
+          }
+        }
+
+        const legacy = await fetchLegacyDailyGmRecords(pool, {
+          start,
+          end,
+          page,
+          pageSize,
+          scopedLegacyUserIds,
+        });
+        return res.json({ ...legacy, page, pageSize, source: "legacy" });
+      }
+
       const clause = `WHERE ${where.join(" AND ")}`;
 
       const countRes = await pool.query(`SELECT COUNT(*)::int AS total FROM drm.gm_entries g ${clause}`, params);
       const total = countRes.rows[0]?.total ?? 0;
 
       const rowsRes = await pool.query(
-        `SELECT g.id, g.drm_id, g.company_name, g.sales_person_name, g.added_by_name,
+        `SELECT g.id, g.drm_id, g.company_name,
+                COALESCE(NULLIF(btrim(g.sales_person_name), ''), sp.full_name, sp.name, ab.full_name, ab.name) AS sales_person_name,
+                COALESCE(NULLIF(btrim(g.added_by_name), ''), ab.full_name, ab.name) AS added_by_name,
                 g.entry_type, g.package_type, g.gm_type, g.status,
                 g.amount_usd, g.amount_pkr, g.created_at
          FROM drm.gm_entries g
+         LEFT JOIN drm.users sp ON sp.id::text = g.sales_person_id::text
+         LEFT JOIN drm.users ab ON ab.id::text = g.created_by::text
          ${clause}
          ORDER BY g.created_at DESC
          LIMIT ${pageSize} OFFSET ${offset}`,
         params,
       );
-      res.json({ rows: rowsRes.rows, total, page, pageSize });
+      res.json({ rows: rowsRes.rows, total, page, pageSize, source: "modern" });
     } catch (err) {
       console.error("Error in daily-added-gm report:", err);
       res.status(500).json({ error: "Failed to load daily added GM report" });
@@ -344,7 +457,7 @@ export function registerStage3ReportsRoutes(app: Express) {
       }
       const { page, pageSize } = parsePaging(req);
 
-      const { rows, total, amountTotal } = await listDepartmentProjectReport({ departmentType, city, status, startDate, endDate, page, pageSize });
+      const { rows, total, amountTotal, companyCount } = await listDepartmentProjectReport({ departmentType, city, status, startDate, endDate, page, pageSize });
 
       let commission: {
         companyCount: number;
@@ -354,7 +467,6 @@ export function registerStage3ReportsRoutes(app: Express) {
         alreadyCreated: boolean;
       } | null = null;
       if (COMPLETION_STATUS_MODES.includes(status)) {
-        const companyCount = new Set(rows.map((r) => r.companyId).filter(Boolean)).size;
         const month = new Date(`${startDate}T00:00:00.000Z`).getUTCMonth() + 1;
         const year = new Date(`${startDate}T00:00:00.000Z`).getUTCFullYear();
         const existing = await getDepartmentCommission(departmentType, month, year);
@@ -624,7 +736,7 @@ export function registerStage3ReportsRoutes(app: Express) {
     async (req: Request, res: Response) => {
       try {
         if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-        const { error, clause, params } = buildRawAttendanceFilters(req);
+        const { error, sql, params } = buildRawPunchQuery(req);
         if (error) return res.status(400).json({ error });
 
         let page = Number(req.query.page ?? 1);
@@ -633,34 +745,23 @@ export function registerStage3ReportsRoutes(app: Express) {
         if (!RAW_ATTENDANCE_LIMITS.includes(limit)) limit = 25;
         const offset = (page - 1) * limit;
 
-        const countRes = await pool.query(
-          `SELECT COUNT(*)::int AS total
-             FROM drm.attendance a
-             LEFT JOIN drm.users u ON u.id = a.user_id
-             ${clause}`,
-          params,
-        );
-        const total = countRes.rows[0]?.total ?? 0;
-
-        const rowsRes = await pool.query(
-          `SELECT a.id, a.user_id, a.date, a.check_in, a.check_out, a.status,
-                  a.late_checkin, a.late_checkout, a.is_late, a.notes,
-                  COALESCE(u.full_name, u.name, u.username) AS employee_name,
-                  u.branch, u.department
-             FROM drm.attendance a
-             LEFT JOIN drm.users u ON u.id = a.user_id
-             ${clause}
-             ORDER BY a.date DESC, employee_name ASC
-             LIMIT ${limit} OFFSET ${offset}`,
-          params,
+        const rowsRes = await pool.query(`${sql} LIMIT ${limit} OFFSET ${offset}`, params);
+        let total = Number(rowsRes.rows[0]?.total ?? 0);
+        if (rowsRes.rows.length === 0 && page > 1) {
+          const c = await pool.query(`SELECT COUNT(*)::int AS n FROM (${sql}) x`, params);
+          total = c.rows[0]?.n ?? 0;
+        }
+        const offices = await pool.query(
+          `SELECT DISTINCT office FROM drm.attendance_raw_punches WHERE office IS NOT NULL ORDER BY 1`,
         );
 
         res.json({
-          rows: rowsRes.rows.map(mapRawAttendanceRow),
+          rows: rowsRes.rows.map(mapRawPunchRow),
           total,
           page,
           limit,
-          source: "attendance",
+          offices: offices.rows.map((o: any) => o.office),
+          source: "raw_punches",
         });
       } catch (err) {
         console.error("Error in raw-attendance report:", err);
@@ -676,41 +777,17 @@ export function registerStage3ReportsRoutes(app: Express) {
     async (req: Request, res: Response) => {
       try {
         if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-        const { error, clause, params } = buildRawAttendanceFilters(req);
+        const { error, sql, params } = buildRawPunchQuery(req);
         if (error) return res.status(400).json({ error });
 
-        const rowsRes = await pool.query(
-          `SELECT a.id, a.user_id, a.date, a.check_in, a.check_out, a.status,
-                  a.late_checkin, a.late_checkout, a.is_late, a.notes,
-                  COALESCE(u.full_name, u.name, u.username) AS employee_name,
-                  u.branch, u.department
-             FROM drm.attendance a
-             LEFT JOIN drm.users u ON u.id = a.user_id
-             ${clause}
-             ORDER BY a.date DESC, employee_name ASC
-             LIMIT 5000`,
-          params,
-        );
-
-        const header = [
-          "Date", "Employee", "Branch", "Department", "Status",
-          "Check In", "Check Out", "Working Minutes", "Is Late", "Source", "Remarks",
-        ];
+        const rowsRes = await pool.query(`${sql} LIMIT 20000`, params);
+        const header = ["Date", "Time", "Employee", "Device User ID", "Office", "Device IP", "State", "Type", "Received At"];
         const lines = [header.join(",")];
         for (const raw of rowsRes.rows) {
-          const r = mapRawAttendanceRow(raw);
+          const r = mapRawPunchRow(raw);
           lines.push([
-            csvCell(r.date),
-            csvCell(r.employeeName),
-            csvCell(r.branch),
-            csvCell(r.department),
-            csvCell(r.status),
-            csvCell(r.checkIn),
-            csvCell(r.checkOut),
-            csvCell(r.workingMinutes),
-            csvCell(r.isLate),
-            csvCell(r.source),
-            csvCell(r.remarks),
+            csvCell(r.date), csvCell(r.time), csvCell(r.employeeName), csvCell(r.deviceUserId),
+            csvCell(r.office), csvCell(r.deviceIp), csvCell(r.state), csvCell(r.type), csvCell(r.receivedAt),
           ].join(","));
         }
 

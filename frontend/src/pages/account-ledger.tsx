@@ -62,6 +62,8 @@ interface LedgerEntry {
     entryDate: string;
     createdAt: string;
     accountName?: string;
+    salePerson?: string | null;
+    discount?: string;
     grandTotal?: string;
     pay?: string;
     due?: string;
@@ -507,7 +509,7 @@ export default function AccountLedger() {
                                     ) : (
                                         entries.map((entry, i) => {
                                             const subTotal = parseFloat(entry.amount);
-                                            const discount = 0;
+                                            const discount = entry.discount ? parseFloat(entry.discount) : 0;
                                             const grandTotal = entry.grandTotal ? parseFloat(entry.grandTotal) : subTotal - discount;
                                             const pay = entry.pay ? parseFloat(entry.pay) : (entry.entryType === "Credit" ? grandTotal : 0);
                                             const due = entry.due ? parseFloat(entry.due) : (entry.entryType === "Debit" ? grandTotal : 0);
@@ -521,9 +523,10 @@ export default function AccountLedger() {
                                                         <Link href={`/account/history/${encodeURIComponent(coName)}`} className="hover:text-emerald-600 hover:underline">
                                                             {coName}
                                                         </Link>
-                                                        {entry.accountName && (
+                                                        {/* Old ledger: sale person under the company name */}
+                                                        {(entry.salePerson || entry.accountName) && (
                                                             <div className="text-[10px] text-slate-400 font-medium tracking-wide mt-1 uppercase">
-                                                                {entry.accountName}
+                                                                {entry.salePerson || entry.accountName}
                                                             </div>
                                                         )}
                                                     </TableCell>

@@ -3,6 +3,10 @@ import { pool } from "../db";
 import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { recordAuditLog } from "./services/activity-service";
 import { buildExportFilename } from "../utils/export-filename";
+import {
+  computeOldSalaryPreview, listOldSlipsForPeriod, getSalaryMakePrefill, computeSalaryMake, insertLegacySalarySlip,
+  type SalaryMakeInput,
+} from "../services/old-salary-compute.service";
 
 // ---------------------------------------------------------------------------
 // Permissions (Patch 2 Stage 4) — action-aware, role-based.
@@ -315,7 +319,22 @@ interface PreviewItem {
   calculationSnapshot: Record<string, unknown>;
 }
 
+// Salary Create computes its lines exactly like the old salary-create.php page
+// (net salary, attendance_month leaves/late minutes, LateComingWitoutInform) —
+// see services/old-salary-compute.service.ts. The old page's columns (paid leave,
+// earn days, absents RS, cutting min RS, total salary, oldSlip...) ride along.
 async function computePreview(
+  month: number,
+  year: number,
+  filters: { branch?: string; department?: string; userId?: string; includePaid?: boolean },
+  manual: Record<string, ManualAdj> = {},
+): Promise<PreviewItem[]> {
+  return computeOldSalaryPreview(month, year, filters, manual);
+}
+
+// Previous new-payroll computation (drm.users.basic_salary + drm.attendance
+// statuses). Kept for reference/tests; basic_salary is empty for every user.
+export async function computeNewPayrollPreview(
   month: number,
   year: number,
   filters: { branch?: string; department?: string; userId?: string },
@@ -357,7 +376,7 @@ async function computePreview(
 
   // Approved leave overlapping the period (Unpaid -> deduction, others informational).
   const leaveRes = await pool.query(
-    `SELECT user_id, type as leave_type, from_date, to_date
+    `SELECT user_id, leave_type, from_date, to_date
        FROM drm.leave_requests
       WHERE status = 'Approved' AND from_date <= $2 AND to_date >= $1`,
     [start, end],
@@ -620,6 +639,8 @@ export function registerSalaryRoutes(app: Express) {
         branch: (req.query.branch as string) || undefined,
         department: (req.query.department as string) || undefined,
         userId: (req.query.employeeId as string) || (req.query.userId as string) || undefined,
+        // old page hides employees who already got a slip for this month; ?includePaid=1 shows them
+        includePaid: req.query.includePaid === "1" || req.query.includePaid === "true",
       });
 
       // Surface employees who would block a later FINALIZE so the UI can warn.
@@ -627,8 +648,13 @@ export function registerSalaryRoutes(app: Express) {
         period.month, period.year, items.map((i) => i.userId),
       );
       const t = sumTotals(items);
+      // The slips the old DRM saved for this worked month (created during the next month).
+      const filterUser = (req.query.employeeId as string) || (req.query.userId as string) || "";
+      const oldSlipRows = (await listOldSlipsForPeriod(period.month, period.year))
+        .filter((r) => !filterUser || r.modernUserId === filterUser);
       res.json({
         period,
+        method: "old-drm",
         items,
         totals: {
           totalGross: round2(t.gross),
@@ -638,10 +664,203 @@ export function registerSalaryRoutes(app: Express) {
         },
         employeeCount: items.length,
         finalizedConflicts: conflicts,
+        oldSlips: {
+          createdMonth: oldSlipRows[0]?.createdMonth
+            ?? `${period.month === 12 ? period.year + 1 : period.year}-${String(period.month === 12 ? 1 : period.month + 1).padStart(2, "0")}`,
+          rows: oldSlipRows,
+          total: Math.round(oldSlipRows.reduce((a, r) => a + r.totalSalary, 0)),
+        },
       });
     } catch (err) {
       console.error("Error computing salary preview:", err);
       res.status(500).json({ error: "Failed to compute salary preview" });
+    }
+  });
+
+  // GET /api/salary/make?month=&year=&userId= — the old "SALARY MAKE" form
+  // (salary-make=<attendance_month id>-<user_id>) prefilled for one employee.
+  app.get("/api/salary/make", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!can(req, "generate")) return deny(res, "make");
+      const period = parsePeriod(req);
+      if (!period) return res.status(400).json({ error: "Valid month (1-12) and year are required" });
+      const userId = String(req.query.userId || "");
+      if (!/^[0-9a-f-]{36}$/i.test(userId)) return res.status(400).json({ error: "userId is required" });
+      const data = await getSalaryMakePrefill(period.month, period.year, userId);
+      if (!data) return res.status(404).json({ error: "Employee not found" });
+      const existing = await pool.query(
+        `SELECT sr.id, sr.status FROM drm.salary_run_items sri JOIN drm.salary_runs sr ON sr.id = sri.run_id
+          WHERE sri.user_id = $1 AND sr.period_month = $2 AND sr.period_year = $3
+            AND sr.deleted_at IS NULL AND sr.status <> 'CANCELLED' LIMIT 1`,
+        [userId, period.month, period.year],
+      );
+      res.json({ ...data, existingRun: existing.rows[0] ?? null });
+    } catch (err) {
+      console.error("Error loading salary make form:", err);
+      res.status(500).json({ error: "Failed to load the salary form" });
+    }
+  });
+
+  // POST /api/salary/make — Submit of the old SALARY MAKE form. Stores the slip as
+  // this employee's line in the period's "Salary Make" DRAFT run (created on first
+  // use), so it shows in Payroll (new) / the run lifecycle and the employee leaves
+  // the Salary Create list (like the old page after webxl_tem_salary_ship INSERT).
+  // Totals are recomputed here from the inputs, never taken from the client.
+  app.post("/api/salary/make", async (req: Request, res: Response) => {
+    const client = await pool.connect();
+    let began = false;
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!can(req, "generate")) return deny(res, "make");
+      const period = parsePeriod(req);
+      if (!period) return res.status(400).json({ error: "Valid month (1-12) and year are required" });
+      const userId = String(req.body?.userId || "");
+      if (!/^[0-9a-f-]{36}$/i.test(userId)) return res.status(400).json({ error: "userId is required" });
+
+      const fields: (keyof SalaryMakeInput)[] = [
+        "grossSalary", "present", "unpaidLeave", "cuttingMin", "pendingLeave", "pendingLeaveRupees",
+        "vasBonus", "bonus5", "alibabaBonus", "projectBonus", "pppBonus", "postingBonus",
+        "overtimeMin", "overtimeRs", "reward", "loan", "unpaidHoliday", "paidHoliday", "penalty", "halfLeave",
+      ];
+      const input: any = {};
+      for (const f of fields) {
+        const raw = req.body?.[f];
+        const v = raw === undefined || raw === null || raw === "" ? 0 : Number(raw);
+        // Cutting Min may be negative (inside relaxation); everything else is >= 0.
+        if (!Number.isFinite(v) || (f !== "cuttingMin" && v < 0)) {
+          return res.status(400).json({ error: `Invalid value for ${f}` });
+        }
+        input[f] = v;
+      }
+      const vasRaw = req.body?.vas;
+      input.vas = vasRaw === undefined || vasRaw === null || vasRaw === "" ? null : Number(vasRaw) || 0;
+      const calc = computeSalaryMake(input as SalaryMakeInput);
+
+      const userRes = await pool.query(
+        `SELECT u.id, COALESCE(NULLIF(trim(u.full_name), ''), u.name, u.username) AS name, u.department, u.branch
+           FROM drm.users u WHERE u.id = $1`,
+        [userId],
+      );
+      const emp = userRes.rows[0];
+      if (!emp) return res.status(404).json({ error: "Employee not found" });
+
+      const finalized = await finalizedConflicts(period.month, period.year, [userId]);
+      if (finalized.length > 0) {
+        return res.status(409).json({ error: "A finalized salary already exists for this employee in this period" });
+      }
+      const active = await activeRunConflicts(period.month, period.year, [userId]);
+      if (active.length > 0) {
+        return res.status(409).json({ error: "This employee's salary for this period was already made (it is in a salary run)" });
+      }
+
+      const perDay = calc.perDay;
+      const allowance = round2(input.paidHoliday * perDay + input.pendingLeaveRupees);
+      const bonus = round2(calc.bonuses + input.reward);
+      const overtime = round2(input.overtimeRs);
+      const absence = round2(calc.leaveCut + calc.halfLeaveCut);
+      const late = round2(calc.lateCut);
+      const unpaidHolidayCut = round2(input.unpaidHoliday * perDay);
+      const gross = round2(input.grossSalary + allowance + bonus + overtime);
+      const totalDed = round2(absence + late + unpaidHolidayCut + input.penalty + input.loan);
+      const net = round2(gross - totalDed);
+      const snapshot = {
+        method: "old-drm salary-make",
+        period,
+        slip: {
+          grossSalary: input.grossSalary, present: input.present, leave: input.unpaidLeave, cuttingMin: input.cuttingMin,
+          pendingLeave: input.unpaidLeave > 1 && input.pendingLeave >= 12 ? input.pendingLeave - (input.unpaidLeave - 1) : input.pendingLeave,
+          pendingleavesrupes: input.pendingLeaveRupees, vas: input.vasBonus, commission3: input.bonus5,
+          alibaba: input.alibabaBonus, projectCommission: input.projectBonus, pppcommission: input.pppBonus,
+          postingCommission: input.postingBonus, overtimemin: input.overtimeMin, overtimers: input.overtimeRs,
+          reward: input.reward, basicCutting: calc.basicSalaryCutting, tcutting: calc.totalCutting,
+          penalty: input.penalty, totalSalary: calc.totalSalary, cus_paid_leave: input.unpaidHoliday,
+          cus_unpaid_leave: input.paidHoliday, halfLeave: input.halfLeave, loan: input.loan, personalVas: input.vas,
+        },
+        inputs: input,
+        outputs: { ...calc, gross, totalDed, net },
+        madeBy: req.user.userId,
+        madeAt: new Date().toISOString(),
+      };
+
+      await client.query("BEGIN"); began = true;
+      let run = (await client.query(
+        `SELECT * FROM drm.salary_runs
+          WHERE period_month = $1 AND period_year = $2 AND status = 'DRAFT' AND deleted_at IS NULL
+            AND notes = 'Salary Make' AND branch IS NULL AND department IS NULL
+          ORDER BY created_at LIMIT 1 FOR UPDATE`,
+        [period.month, period.year],
+      )).rows[0];
+      if (!run) {
+        run = (await client.query(
+          `INSERT INTO drm.salary_runs
+             (period_month, period_year, branch, department, status, notes, remarks,
+              employee_count, total_gross, total_deductions, total_net, created_by_user_id)
+           VALUES ($1, $2, NULL, NULL, 'DRAFT', 'Salary Make', 'Salary Make (old DRM form)', 0, 0, 0, 0, $3)
+           RETURNING *`,
+          [period.month, period.year, req.user.userId],
+        )).rows[0];
+      }
+      const item = (await client.query(
+        `INSERT INTO drm.salary_run_items
+           (run_id, user_id, employee_name, department, branch,
+            basic_salary, gross_salary, per_day_salary, days_present, days_absent,
+            leave_days, unpaid_leave_days, unpaid_leave_deduction, late_minutes, late_deduction,
+            overtime_minutes, overtime_amount, allowance_amount, bonus_amount,
+            absence_deduction, penalty_amount, loan_deduction, other_deductions,
+            total_deductions, net_salary, payable_salary, payment_status, remarks, calculation_snapshot)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,0,$23,$24,$25,'UNPAID',$26,$27)
+         RETURNING *`,
+        [
+          run.id, userId, emp.name, emp.department, emp.branch,
+          round2(input.grossSalary), gross, round2(perDay), Math.round(input.present), Math.round(input.unpaidLeave),
+          Math.round(input.unpaidLeave), Math.round(input.unpaidHoliday), unpaidHolidayCut, Math.round(input.cuttingMin), late,
+          Math.round(input.overtimeMin), overtime, allowance, bonus,
+          absence, round2(input.penalty), round2(input.loan),
+          totalDed, net, round2(Math.max(0, net)),
+          String(req.body?.remarks ?? "").slice(0, 1000) || null, JSON.stringify(snapshot),
+        ],
+      )).rows[0];
+      const tot = (await client.query(
+        `SELECT count(*)::int n, COALESCE(SUM(gross_salary),0) g, COALESCE(SUM(total_deductions),0) d, COALESCE(SUM(net_salary),0) t
+           FROM drm.salary_run_items WHERE run_id = $1`,
+        [run.id],
+      )).rows[0];
+      await client.query(
+        `UPDATE drm.salary_runs SET employee_count = $1, total_gross = $2, total_deductions = $3, total_net = $4, updated_at = now()
+          WHERE id = $5`,
+        [tot.n, round2(toNum(tot.g)), round2(toNum(tot.d)), round2(toNum(tot.t)), run.id],
+      );
+      await client.query("COMMIT"); began = false;
+
+      const leg = await pool.query(
+        `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+          WHERE entity_type = 'user' AND legacy_table = 'webxl_user' AND modern_id = $1 LIMIT 1`,
+        [userId],
+      );
+      const legacyUserId = leg.rows[0]?.legacy_id;
+      if (legacyUserId) {
+        await insertLegacySalarySlip(String(legacyUserId), snapshot.slip as Record<string, unknown>).catch((e) =>
+          console.error("[salary.make] legacy slip insert failed:", e),
+        );
+      }
+
+      await recordAuditLog({
+        actorUserId: req.user.userId,
+        action: "salary.make",
+        module: "salary",
+        entityType: "salary_run_item",
+        entityId: item.id,
+        after: { period, userId, totalSalary: calc.totalSalary, totalCutting: calc.totalCutting },
+        req,
+      });
+      res.status(201).json({ runId: run.id, item, slip: snapshot.slip });
+    } catch (err) {
+      if (began) await client.query("ROLLBACK").catch(() => {});
+      console.error("Error saving salary make:", err);
+      res.status(500).json({ error: "Failed to save the salary" });
+    } finally {
+      client.release();
     }
   });
 
@@ -735,9 +954,10 @@ export function registerSalaryRoutes(app: Express) {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,'UNPAID',$27,$28)`,
           [
             run.id, it.userId, it.employeeName, it.department, it.branch,
-            it.basicSalary, it.grossSalary, it.perDaySalary, it.daysPresent, it.daysAbsent,
-            it.leaveDays, it.unpaidLeaveDays, it.unpaidLeaveDeduction, it.lateMinutes, it.lateDeduction,
-            it.overtimeMinutes, it.overtimeAmount, it.allowanceAmount, it.bonusAmount,
+            // day/minute columns are integers; the exact (half-day) values stay in the snapshot
+            it.basicSalary, it.grossSalary, it.perDaySalary, Math.round(it.daysPresent), Math.round(it.daysAbsent),
+            Math.round(it.leaveDays), Math.round(it.unpaidLeaveDays), it.unpaidLeaveDeduction, Math.round(it.lateMinutes), it.lateDeduction,
+            Math.round(it.overtimeMinutes), it.overtimeAmount, it.allowanceAmount, it.bonusAmount,
             it.absenceDeduction, it.penaltyAmount, it.loanDeduction, it.otherDeductions,
             it.totalDeductions, it.netSalary, it.payableSalary,
             manual[it.userId]?.remarks ?? null, JSON.stringify(it.calculationSnapshot),

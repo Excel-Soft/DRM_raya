@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 
 import { Breadcrumb } from "@/components/breadcrumb";
+import { DashboardPromotionAside } from "@/components/dashboard-promotion-aside";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -231,19 +232,13 @@ export default function SeoSmmManagerDashboard() {
 
     // ── Queries ──────────────────────────────────────────────────────────────
     const { data: projects = [] } = useQuery<Project[]>({
-        queryKey: ["/api/pms/projects?withStats=true"],
-        queryFn: async () => {
-            const res = await apiRequest("GET", "/api/pms/projects?withStats=true");
-            return res.json();
-        }
+        queryKey: ["/api/seo-smm/projects/overview"],
+        queryFn: async () => apiRequestJson("GET", "/api/seo-smm/projects/overview"),
     });
 
-    const { data: hodImportantStats } = useQuery({
-        queryKey: ["/api/hod/dashboard/important-stats"],
-        queryFn: async () => {
-            const res = await apiRequest("GET", "/api/hod/dashboard/important-stats");
-            return res.json();
-        }
+    const { data: seoDeptSummary } = useQuery({
+        queryKey: ["/api/seo-smm/dashboard/summary"],
+        queryFn: async () => apiRequestJson("GET", "/api/seo-smm/dashboard/summary"),
     });
 
     // Live Feed — reuses the same notifications mechanism the rest of the app already
@@ -259,11 +254,8 @@ export default function SeoSmmManagerDashboard() {
     // Daily Report — reuses the same real endpoint already powering the HOD & Product
     // Posting dashboards' Daily Report panels.
     const { data: dailyReportRes, isLoading: dailyReportLoading } = useQuery({
-        queryKey: ["/api/hod/daily-report", dailyReportPeriod],
-        queryFn: async () => {
-            const res = await apiRequest("GET", `/api/hod/daily-report?period=${dailyReportPeriod}`);
-            return res.json();
-        }
+        queryKey: ["/api/seo-smm/daily-report", dailyReportPeriod],
+        queryFn: async () => apiRequestJson("GET", `/api/seo-smm/daily-report?period=${dailyReportPeriod}`),
     });
 
     // Activities — reuses the same real endpoint already powering the Product Posting
@@ -278,21 +270,18 @@ export default function SeoSmmManagerDashboard() {
 
     // ── Derived Data ─────────────────────────────────────────────────────────
     const stats = useMemo(() => {
-        const h = hodImportantStats?.data || {};
-        const inProgress = Number(h.inProgress || 0);
-        const completed = Number(h.completed || 0);
-        const delayed = Number(h.delayProjects || 0);
-        // "Social Media Posts" has no backing table/endpoint anywhere in the codebase
-        // (Today Post / All Social Accounts pages are themselves static mocks with no
-        // API). Total managed projects is the closest real, already-fetched figure.
-        const totalManaged = normalizeList(projects).length;
+        const h = seoDeptSummary?.data || {};
+        const inProgress = Number(h.ongoingTasks ?? 0);
+        const completed = Number(h.completedTasks ?? 0);
+        const delayed = Number(h.criticalDelays ?? 0);
+        const totalManaged = Number(h.totalManaged ?? normalizeList(projects).length);
         return [
             { label: "Ongoing Tasks", value: inProgress.toString(), icon: Zap, color: "text-emerald-600", bg: "bg-emerald-50" },
             { label: "Total Managed Projects", value: totalManaged.toString(), icon: Globe, color: "text-teal-600", bg: "bg-teal-50" },
             { label: "Campaigns Finished", value: completed.toString(), icon: Rocket, color: "text-emerald-500", bg: "bg-emerald-50" },
             { label: "Critical Delays", value: delayed.toString(), icon: AlertCircle, color: "text-rose-500", bg: "bg-rose-50" },
         ];
-    }, [hodImportantStats, projects]);
+    }, [seoDeptSummary, projects]);
 
     const liveFeed = useMemo(() => {
         const list = normalizeList(notificationsRes?.data ?? notificationsRes);
@@ -831,6 +820,7 @@ export default function SeoSmmManagerDashboard() {
 
                     {/* ── Sidebar (Right) ── */}
                     <div className="lg:col-span-4 space-y-8">
+                        <DashboardPromotionAside titleClassName="text-[16px] text-slate-700 dark:text-zinc-400" />
                         {/* Quick Shortcuts */}
                         <Card className="border-none shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-2xl bg-white dark:bg-zinc-900">
                             <CardHeader className="p-6 pb-2">

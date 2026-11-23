@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
-import { db } from "../db";
+import { db, pool } from "../db";
 import { 
   accountHeads, officeExpenses, officeVas, cheques, businessCustomers, invoices, customers, users,
   ledgerEntries, journalVouchers, journalVoucherLines,
@@ -15,7 +15,10 @@ import {
   FINANCIAL_ACTIONS,
   STAGE2_FINANCIAL_ROLES,
 } from "./middleware/financial-permission";
-import { ROLES } from "../utils/role-utils";
+import { ROLES, normalizeRole } from "../utils/role-utils";
+
+// Who may delete an office expense (super_admin normalizes to admin).
+const EXPENSE_DELETE_ROLES: string[] = ["admin", "super_hod", "hod"];
 import { withFinancialTransaction } from "../utils/financial-transaction";
 import { AuditLogService } from "./services/audit-log.service";
 import { pickWritable, assertPositiveAmount, assertValidDate } from "../utils/financial-validation";
@@ -476,7 +479,9 @@ async function loadTrialBalanceData(query: Request["query"]) {
     const cats = accountType.split(",").map((s) => s.trim()).filter(Boolean);
     if (cats.length) accConds.push(inArray(accountHeads.category, cats as any));
   }
-  if (branch) accConds.push(eq(accountHeads.branch, branch));
+  // Office (branch) is a property of the posted entry (expense office), not of the
+  // head - heads carry no branch, so filtering heads by it returned nothing.
+  const branches = branch.split(",").map((b) => b.trim()).filter(Boolean);
 
   const accounts = await db
     .select({
@@ -496,6 +501,7 @@ async function loadTrialBalanceData(query: Request["query"]) {
   if (headIds.length) {
     const ledConds: any[] = [inArray(ledgerEntries.accountHeadId, headIds)];
     if (end) ledConds.push(lte(ledgerEntries.date, end));
+    if (branches.length) ledConds.push(inArray(ledgerEntries.branch, branches));
     ledger = await db
       .select({
         accountHeadId: ledgerEntries.accountHeadId,
@@ -519,6 +525,16 @@ router.get("/trial-balance", requireFinancialPermission(FINANCIAL_ACTIONS.trialB
     const includeZeroBalance = String(req.query.includeZeroBalance ?? "") === "true";
     const result = computeTrialBalance(accounts, ledger, { start, end, includeZeroBalance });
 
+    // Transactions per head within the period (old-DRM Trial Balance "Transactions" column).
+    const periodCounts: Record<string, number> = {};
+    for (const r of ledger) {
+      if (!r.accountHeadId) continue;
+      const d = r.date ? new Date(r.date) : null;
+      if (start && d && d < start) continue;
+      if (end && d && d > end) continue;
+      periodCounts[r.accountHeadId] = (periodCounts[r.accountHeadId] ?? 0) + 1;
+    }
+
     // Currency safety — never sum across currencies. Surface a warning instead.
     const currencies = Array.from(
       new Set(ledger.map((r) => r.currency).filter((c): c is string => !!c)),
@@ -532,6 +548,7 @@ router.get("/trial-balance", requireFinancialPermission(FINANCIAL_ACTIONS.trialB
 
     res.json({
       rows: paged,
+      periodCounts,
       totals: result.totals,
       imbalance: result.imbalance,
       imbalanceAmount: result.imbalanceAmount,
@@ -626,42 +643,137 @@ db.execute(sql`
   ALTER TABLE "drm"."office_expenses" ADD COLUMN IF NOT EXISTS "expense_date" timestamp DEFAULT now();
 `).catch(() => {});
 
+/**
+ * Shared WHERE for GET /expenses and /expenses/export.
+ *  - startDate / endDate: inclusive calendar days (endDate covers the whole day).
+ *  - office: comma list.
+ *  - headIds: comma list of chart-of-account head ids; matches the head itself and
+ *    every head below it (Accounting -> Parent -> Child -> Transactional filters).
+ *    An expense stores the head id (new + migrated) or, for older new-app rows, the
+ *    head name / "code - name" label - all three are matched.
+ *  - accountingHead: legacy raw values (kept for backward compatibility).
+ */
+async function buildExpenseConditions(q: Record<string, any>) {
+  const { startDate, endDate, office, accountingHead, headIds, search } = q;
+  const conditions: any[] = [];
+  const dateOnly = (v: string) => (/^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : new Date(v).toISOString().slice(0, 10));
+  if (startDate) conditions.push(sql`${officeExpenses.expenseDate} >= ${dateOnly(String(startDate))}::date`);
+  if (endDate) conditions.push(sql`${officeExpenses.expenseDate} < (${dateOnly(String(endDate))}::date + 1)`);
+  if (office) {
+    const officeArray = String(office).split(",").filter(Boolean);
+    if (officeArray.length > 0) conditions.push(inArray(officeExpenses.office, officeArray));
+  }
+  if (accountingHead) {
+    const headArray = String(accountingHead).split(",").filter(Boolean);
+    if (headArray.length > 0) conditions.push(inArray(officeExpenses.expenseHead, headArray));
+  }
+  if (headIds) {
+    const ids = String(headIds).split(",").map((s) => s.trim()).filter(Boolean).slice(0, 500);
+    if (ids.length > 0) {
+      const { rows } = await pool.query(
+        `WITH RECURSIVE sub AS (
+           SELECT id, code, name FROM drm.account_heads WHERE id = ANY($1::text[])
+           UNION
+           SELECT a.id, a.code, a.name FROM drm.account_heads a JOIN sub ON a.parent_account_id = sub.id
+         )
+         SELECT id, code, name FROM sub`,
+        [ids],
+      );
+      const values = new Set<string>();
+      for (const r of rows) {
+        values.add(r.id);
+        if (r.name) values.add(r.name);
+        if (r.code && r.name) values.add(`${r.code} - ${r.name}`);
+      }
+      // No head under the selection -> nothing can match.
+      conditions.push(values.size > 0 ? inArray(officeExpenses.expenseHead, Array.from(values)) : sql`false`);
+    }
+  }
+  const searchText = typeof search === "string" ? search.trim() : "";
+  if (searchText) {
+    const pattern = `%${searchText}%`;
+    conditions.push(
+      or(
+        ilike(officeExpenses.detail, pattern),
+        ilike(officeExpenses.office, pattern),
+        ilike(officeExpenses.voucherNumber, pattern),
+        ilike(officeExpenses.chequeNumber, pattern),
+        ilike(officeExpenses.expenseHead, pattern),
+        sql`${officeExpenses.amount}::text ILIKE ${pattern}`,
+        sql`EXISTS (
+          SELECT 1 FROM drm.users u
+           WHERE u.id = ${officeExpenses.createdByUserId}
+             AND (u.full_name ILIKE ${pattern} OR u.username ILIKE ${pattern})
+        )`,
+        sql`EXISTS (
+          SELECT 1 FROM drm.account_heads ah
+           WHERE ah.id::text = ${officeExpenses.expenseHead}
+             AND (
+               ah.name ILIKE ${pattern}
+               OR ah.code ILIKE ${pattern}
+               OR (ah.code || ' - ' || ah.name) ILIKE ${pattern}
+             )
+        )`,
+      )!,
+    );
+  }
+  return conditions;
+}
+
 router.get("/expenses", async (req: Request, res: Response) => {
   try {
-    const { startDate, endDate, office, accountingHead } = req.query;
-    let conditions = [];
-    
-    if (startDate) {
-      conditions.push(gte(officeExpenses.expenseDate, new Date(startDate as string).toISOString().split('T')[0]));
-    }
-    if (endDate) {
-      conditions.push(lte(officeExpenses.expenseDate, new Date(endDate as string).toISOString().split('T')[0]));
-    }
-    if (office) {
-      const officeArray = (office as string).split(",").filter(Boolean);
-      if (officeArray.length > 0) {
-        conditions.push(inArray(officeExpenses.office, officeArray));
-      }
-    }
-    if (accountingHead) {
-      const headArray = (accountingHead as string).split(",").filter(Boolean);
-      if (headArray.length > 0) {
-        conditions.push(inArray(officeExpenses.expenseHead, headArray));
-      }
-    }
-    
-    const results = await db.select({
+    const conditions = await buildExpenseConditions(req.query as Record<string, any>);
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // ?page=N&pageSize=50 -> one page (most recent first) + total count/amount.
+    // Without ?page the full array is returned (used by the CSV / Excel export).
+    const paged = req.query.page !== undefined;
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize) || 50));
+    const page = Math.max(1, Number(req.query.page) || 1);
+
+    let query = db.select({
       expense: officeExpenses,
       createdByName: sql<string>`COALESCE(${users.fullName}, ${users.username}, 'System')`,
       accountHeadName: accountHeads.name,
       accountHeadCode: accountHeads.code
     })
     .from(officeExpenses)
-    .leftJoin(users, sql`${officeExpenses.createdByUserId} = CAST(${users.id} AS VARCHAR)`)
+    // created_by_user_id is uuid; the old CAST(users.id AS VARCHAR) made every call 500.
+    .leftJoin(users, eq(officeExpenses.createdByUserId, users.id))
     .leftJoin(accountHeads, sql`${officeExpenses.expenseHead} = ${accountHeads.id}::text`)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(officeExpenses.createdAt));
-    
+    .where(where)
+    .orderBy(desc(officeExpenses.expenseDate), desc(officeExpenses.createdAt), desc(officeExpenses.id))
+    .$dynamic();
+    if (paged) query = query.limit(pageSize).offset((page - 1) * pageSize);
+    const results = await query;
+
+    // Old-DRM receipts (webxl_expense_images + webxl_expense.bill_image) for migrated
+    // expenses on this page; served through /api/legacy-assets/expense-bill?f=<file>.
+    const legacyReceipts = new Map<string, string[]>();
+    const pageIds = results.map((r) => r.expense.id);
+    if (pageIds.length > 0) {
+      try {
+        const { rows: receiptRows } = await pool.query(
+          `SELECT m.modern_id, array_agg(DISTINCT f.file) AS files
+             FROM migration_meta.migration_legacy_ids m
+             JOIN (
+               SELECT expense_id AS legacy_id, btrim(images) AS file FROM legacy_archive.webxl_expense_images
+                WHERE NULLIF(btrim(images), '') IS NOT NULL
+               UNION ALL
+               SELECT id, btrim(bill_image) FROM legacy_archive.webxl_expense
+                WHERE NULLIF(btrim(bill_image), '') IS NOT NULL
+             ) f ON f.legacy_id = m.legacy_id
+            WHERE m.entity_type = 'expense_row' AND m.legacy_table = 'webxl_expense'
+              AND m.modern_id = ANY($1::text[])
+            GROUP BY m.modern_id`,
+          [pageIds],
+        );
+        for (const r of receiptRows) legacyReceipts.set(r.modern_id, (r.files as string[]).sort());
+      } catch {
+        /* archive not present in this database */
+      }
+    }
+
     const mapped = results.map(row => {
       let headName = row.expense.expenseHead;
       if (row.accountHeadName) {
@@ -670,11 +782,22 @@ router.get("/expenses", async (req: Request, res: Response) => {
       return {
         ...row.expense,
         expenseHead: headName,
-        createdByName: row.createdByName
+        // raw stored value (account head id for chart-of-account heads) - used by Edit
+        expenseHeadId: row.expense.expenseHead,
+        createdByName: row.createdByName,
+        legacyReceipts: legacyReceipts.get(row.expense.id) ?? [],
       };
     });
-    
-    res.json(mapped);
+
+    if (!paged) return res.json(mapped);
+    const [agg] = await db
+      .select({
+        total: sql<number>`count(*)::int`,
+        totalAmount: sql<string>`coalesce(sum(${officeExpenses.amount}), 0)::text`,
+      })
+      .from(officeExpenses)
+      .where(where);
+    res.json({ data: mapped, total: agg?.total ?? 0, totalAmount: agg?.totalAmount ?? "0", page, pageSize });
   } catch (error) {
     console.error("Error fetching expenses:", error);
     sendApiError(res, { status: 500, code: "INTERNAL_ERROR", message: "Failed to fetch expenses" });
@@ -688,26 +811,7 @@ router.get(
   async (req: Request, res: Response) => {
     try {
       const { startDate, endDate, office, accountingHead } = req.query;
-      const conditions = [];
-
-      if (startDate) {
-        conditions.push(gte(officeExpenses.expenseDate, new Date(startDate as string).toISOString().split('T')[0]));
-      }
-      if (endDate) {
-        conditions.push(lte(officeExpenses.expenseDate, new Date(endDate as string).toISOString().split('T')[0]));
-      }
-      if (office) {
-        const officeArray = (office as string).split(",").filter(Boolean);
-        if (officeArray.length > 0) {
-          conditions.push(inArray(officeExpenses.office, officeArray));
-        }
-      }
-      if (accountingHead) {
-        const headArray = (accountingHead as string).split(",").filter(Boolean);
-        if (headArray.length > 0) {
-          conditions.push(inArray(officeExpenses.expenseHead, headArray));
-        }
-      }
+      const conditions = await buildExpenseConditions(req.query as Record<string, any>);
 
       const results = await db.select({
         expense: officeExpenses,
@@ -716,7 +820,7 @@ router.get(
       }).from(officeExpenses)
         .leftJoin(accountHeads, sql`${officeExpenses.expenseHead} = ${accountHeads.id}::text`)
         .where(conditions.length > 0 ? and(...conditions) : undefined)
-        .orderBy(desc(officeExpenses.createdAt));
+        .orderBy(desc(officeExpenses.expenseDate), desc(officeExpenses.createdAt));
 
       const rows = results.map(r => {
         let headName = r.expense.expenseHead;
@@ -963,6 +1067,11 @@ router.delete(
   requireFinancialPermission(FINANCIAL_ACTIONS.expenseDelete),
   async (req: Request, res: Response) => {
     try {
+      // Office Expense delete: admin, super HOD and HOD only (product rule, Nov 2026).
+      const role = normalizeRole(String((req.user as any)?.activeRoleId || (req.user as any)?.roleId || (req.user as any)?.role || ""));
+      if (!EXPENSE_DELETE_ROLES.includes(role)) {
+        return sendApiError(res, { status: 403, code: "FORBIDDEN", message: "Only admin, super HOD or HOD can delete expenses" });
+      }
       const { id } = req.params;
       const reason = getDeleteReason(req);
       const [deleted] = await db.delete(officeExpenses).where(eq(officeExpenses.id, id)).returning();
@@ -996,50 +1105,122 @@ router.delete(
 // Office VAS
 router.get("/vas", async (req: Request, res: Response) => {
   try {
+    // Office VAS = money received against invoices (old DRM drm/office-vas).
+    //  - Old-DRM invoices: one row per payment event from webxl_invoice_item_pay
+    //    (drm.legacy_invoice_item_payments): the item payments of one invoice made in
+    //    the same minute, amount = sum actually paid (partial payments show what was
+    //    received, e.g. 600 of an 800 invoice), method Bank Transfar / cash / Free.
+    //    (The old page collapsed the range to one row per company; every payment is
+    //    listed here instead.)
+    //  - New-app paid invoices without item payments: invoice total / payment_method / paid_at.
+    // Explicit columns only - db.select().from(invoices) asked for invoices.quotation_id,
+    // which this database does not have (every call returned 500).
+    // ?startDate&endDate (inclusive days) &search &page&pageSize(50) -> { data, total, totalAmount }
     const { startDate, endDate, search } = req.query;
-    let conditions = [];
-    
-    if (startDate) {
-      conditions.push(gte(invoices.issueDate, new Date(startDate as string)));
-    }
-    if (endDate) {
-      conditions.push(lte(invoices.issueDate, new Date(endDate as string)));
-    }
-    if (search) {
-      conditions.push(ilike(invoices.customerName, `%${search}%`));
-    }
-    
-    // Exclude Alibaba related companies
-    conditions.push(notIlike(invoices.customerName, '%alibaba%'));
-    
-    // Only show paid invoices since they asked for "amount paid"
-    conditions.push(eq(invoices.status, 'Paid'));
-    
-    const results = await db.select().from(invoices)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(desc(invoices.issueDate));
-      
-    const mapped = results.map(inv => {
-      let method = inv.paymentMethod || "";
-      if (!method && inv.notes) {
-        try {
-          const p = JSON.parse(inv.notes);
-          if (p.paymentMethod) method = p.paymentMethod;
-        } catch (e) {}
-      }
-      
-      return {
-        id: inv.id,
-        companyName: inv.customerName,
-        amount: inv.total,
-        currency: inv.currency || "USD",
-        method: method,
-        vasDate: inv.paidAt || inv.issueDate,
-        createdAt: inv.createdAt
-      };
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize) || 50));
+    const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+    const params: unknown[] = [day(startDate), day(endDate), search ? `%${String(search)}%` : null];
+
+    const base = `
+      WITH legacy_pay AS (
+        SELECT p.invoice_id,
+               date_trunc('minute', p.paid_at) AS pay_minute,
+               max(p.paid_at) AS paid_at,
+               round(sum(COALESCE(p.amount, 0))) AS amount, -- item splits were floats (11999.99 -> 12000)
+               string_agg(DISTINCT NULLIF(btrim(p.method), ''), ', ') AS method
+          FROM drm.legacy_invoice_item_payments p
+         WHERE p.invoice_id IS NOT NULL AND p.paid_at IS NOT NULL
+         GROUP BY p.invoice_id, date_trunc('minute', p.paid_at)
+      ),
+      rows AS (
+        SELECT 'pay:' || lp.invoice_id::text || ':' || extract(epoch FROM lp.pay_minute)::bigint AS id,
+               i.customer_name AS company, lp.amount, lp.method, lp.paid_at::timestamp AS paid_at, i.id::text AS invoice_id
+          FROM legacy_pay lp JOIN drm.invoices i ON i.id = lp.invoice_id::text
+        UNION ALL
+        SELECT 'inv:' || i.id::text, i.customer_name, i.total, NULLIF(btrim(i.payment_method), ''),
+               COALESCE(i.paid_at, i.issue_date), i.id::text
+          FROM drm.invoices i
+         WHERE i.status = 'Paid'
+           AND NOT EXISTS (SELECT 1 FROM drm.legacy_invoice_item_payments p WHERE p.invoice_id::text = i.id)
+      )
+      SELECT rows.*, to_char(paid_at, 'YYYY-MM-DD HH24:MI:SS') AS paid_at_text FROM rows
+       WHERE COALESCE(company, '') NOT ILIKE '%alibaba%'
+         AND ($1::date IS NULL OR paid_at >= $1::date)
+         AND ($2::date IS NULL OR paid_at < $2::date + 1)
+         AND ($3::text IS NULL OR company ILIKE $3)`;
+
+    // Old DRM "Department Wise Summary" (func.php total_vas_view): each invoice gets ONE
+    // department = MIN(dep_id) of webxl_quotation_services whose name equals an invoice
+    // item; amounts of the listed rows are summed per department ('Unknown' if none).
+    // Old invoices: webxl_invoice_item. New-app invoices: item productId -> catalog
+    // service project/route department (stored as a department code), else item name.
+    const deptSql = `
+      WITH r AS (${base}),
+      legacy_dep AS (
+        SELECT m.modern_id AS invoice_id, MIN(NULLIF(btrim(qs.dep_id), '')::int) AS dep_id
+          FROM migration_meta.migration_legacy_ids m
+          JOIN legacy_archive.webxl_invoice_item ii ON ii.invoice_id = m.legacy_id
+          JOIN legacy_archive.webxl_quotation_services qs ON btrim(qs.name) = btrim(ii.item)
+         WHERE m.modern_table = 'invoices' AND m.legacy_table = 'webxl_invoice'
+           AND m.modern_id IN (SELECT invoice_id FROM r)
+           AND NULLIF(btrim(qs.dep_id), '') ~ '^[0-9]+$'
+         GROUP BY m.modern_id
+      ),
+      modern_items AS (
+        SELECT i.id::text AS invoice_id, it->>'productId' AS product_id, NULLIF(btrim(COALESCE(it->>'detail', it->>'name')), '') AS item_name
+          FROM drm.invoices i
+          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN i.items ~ '^\\s*\\[' THEN i.items::jsonb ELSE '[]'::jsonb END) it
+         WHERE i.id::text IN (SELECT invoice_id FROM r)
+           AND NOT EXISTS (SELECT 1 FROM migration_meta.migration_legacy_ids m WHERE m.modern_table = 'invoices' AND m.modern_id = i.id::text)
+      ),
+      modern_dep AS (
+        SELECT mi.invoice_id,
+               MIN(COALESCE(
+                 (SELECT d.name FROM drm.departments d
+                   WHERE d.code = COALESCE(ss.project_department, ss.route_departments[1], sv.project_department, sv.route_departments[1])),
+                 (SELECT ld.name FROM legacy_archive.webxl_department ld
+                   WHERE ld._legacy_pk = (SELECT MIN(NULLIF(btrim(qs.dep_id), '')::int)::text FROM legacy_archive.webxl_quotation_services qs
+                                           WHERE btrim(qs.name) = mi.item_name AND NULLIF(btrim(qs.dep_id), '') ~ '^[0-9]+$'))
+               )) AS dep_name
+          FROM modern_items mi
+          LEFT JOIN drm.service_subservices ss ON ss.id::text = mi.product_id
+          LEFT JOIN drm.services sv ON sv.id::text = mi.product_id
+         GROUP BY mi.invoice_id
+      )
+      SELECT COALESCE(NULLIF(btrim(regexp_replace(COALESCE(ld.name, md.dep_name), '\\s+', ' ', 'g')), ''), 'Unknown') AS department, COALESCE(sum(r.amount), 0)::float8 AS amount
+        FROM r
+        LEFT JOIN legacy_dep l ON l.invoice_id = r.invoice_id
+        LEFT JOIN legacy_archive.webxl_department ld ON ld._source_table = 'webxl_department' AND ld._legacy_pk = l.dep_id::text
+        LEFT JOIN modern_dep md ON md.invoice_id = r.invoice_id
+       GROUP BY 1
+       ORDER BY 2 DESC`;
+
+    const [{ rows }, { rows: aggRows }, { rows: deptRows }] = await Promise.all([
+      pool.query(
+        `${base} ORDER BY paid_at DESC NULLS LAST, id DESC LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
+        params,
+      ),
+      pool.query(`SELECT count(*)::int AS total, COALESCE(sum(amount), 0)::text AS total_amount FROM (${base}) x`, params),
+      pool.query(deptSql, params),
+    ]);
+
+    res.json({
+      data: rows.map((r: any) => ({
+        id: r.id,
+        companyName: r.company,
+        amount: r.amount != null ? String(r.amount) : "0",
+        currency: "PKR",
+        method: r.method || "",
+        // naive local time, formatted like the old page (YYYY-MM-DD HH:mm:ss)
+        vasDate: r.paid_at_text || null,
+      })),
+      total: aggRows[0]?.total ?? 0,
+      totalAmount: aggRows[0]?.total_amount ?? "0",
+      departmentSummary: deptRows.map((d: any) => ({ department: d.department, amount: Number(d.amount) || 0 })),
+      page,
+      pageSize,
     });
-    
-    res.json(mapped);
   } catch (error) {
     console.error("Error fetching VAS entries:", error);
     sendApiError(res, { status: 500, code: "INTERNAL_ERROR", message: "Failed to fetch VAS entries" });
@@ -1271,60 +1452,66 @@ router.delete(
 // Business Customers
 router.get("/business-customers", async (req: Request, res: Response) => {
   try {
-    const { search } = req.query;
-    let conditions = [];
-    
-    if (search) {
-      conditions.push(or(
-        ilike(customers.companyName, `%${search}%`),
-        ilike(customers.phone, `%${search}%`),
-        ilike(customers.cnic, `%${search}%`),
-        ilike(customers.ntn, `%${search}%`)
-      ));
-    }
-    
-    const results = await db.select().from(customers)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(desc(customers.createdAt));
-      
-    // Fetch live invoices to calculate real totalPaid and totalDue
-    const allInvoices = await db.select().from(invoices);
-    
-    // Create a map of customer id/name to amounts
-    const companyTotals = allInvoices.reduce((acc, inv) => {
-       // Match by customerId first, then by customerName fallback
-       const matchKey = inv.customerId || (inv.customerName || '').toLowerCase().trim();
-       if (!matchKey) return acc;
-       
-       if (!acc[matchKey]) {
-           acc[matchKey] = { paid: 0, due: 0 };
-       }
-       const amount = parseFloat(inv.total as string) || 0;
-       if (inv.status === 'Paid') {
-           acc[matchKey].paid += amount;
-       } else if (inv.status === 'Pending' || inv.status === 'Sent' || inv.status === 'Overdue') {
-           acc[matchKey].due += amount;
-       }
-       return acc;
-    }, {} as Record<string, { paid: number, due: number }>);
-    
-    // Map the results to include real live data
-    const liveResults = results.map(customer => {
-       const nameMatch = (customer.companyName || '').toLowerCase().trim();
-       const liveTotals = companyTotals[customer.id] || companyTotals[nameMatch];
-       
-       return {
-           id: customer.id,
-           companyName: customer.companyName,
-           phone: customer.phone,
-           cnic: customer.cnic,
-           ntn: customer.ntn,
-           createdAt: customer.createdAt,
-           totalPaid: liveTotals ? liveTotals.paid.toString() : "0",
-           totalDue: liveTotals ? liveTotals.due.toString() : "0"
-       };
-    });
-    
+    // Business Customer = companies whose invoices were paid in installments (old DRM).
+    // Per invoice: payments come from webxl_invoice_item_pay (drm.legacy_invoice_item_payments);
+    // payments of one invoice in the same minute are one installment. An invoice counts
+    // when it has 2+ installments or is part-paid (paid < total). Per company:
+    //   Amount Paid = sum received, Amount Due = sum(invoice total - paid, never < 0).
+    // Filters: companyName, phone, cnic (CNIC or NTN), date (invoice date, YYYY-MM-DD).
+    // (Replaces db.select().from(invoices), which asked for the missing quotation_id
+    //  column and made every call 500.)
+    const q = req.query as Record<string, any>;
+    const like = (v: unknown) => (typeof v === "string" && v.trim() ? `%${v.trim()}%` : null);
+    const day = typeof q.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(q.date) ? q.date : null;
+    const { rows } = await pool.query(
+      `WITH pay AS (
+         SELECT p.invoice_id::text AS invoice_id,
+                sum(COALESCE(p.amount, 0)) AS paid,
+                count(DISTINCT date_trunc('minute', p.paid_at)) AS installments,
+                max(p.paid_at) AS last_paid_at
+           FROM drm.legacy_invoice_item_payments p
+          WHERE p.invoice_id IS NOT NULL
+          GROUP BY 1
+       ),
+       inv AS (
+         SELECT i.id, i.customer_id, i.customer_name, i.issue_date,
+                COALESCE(i.total, 0) AS total, pay.paid, pay.installments, pay.last_paid_at
+           FROM drm.invoices i
+           JOIN pay ON pay.invoice_id = i.id
+          WHERE (pay.installments > 1 OR (pay.paid > 0 AND pay.paid < COALESCE(i.total, 0) - 1))
+            AND ($4::date IS NULL OR i.issue_date::date = $4::date)
+       )
+       SELECT COALESCE(c.id::text, 'name:' || lower(btrim(inv.customer_name))) AS id,
+              COALESCE(c.company_name, inv.customer_name) AS company_name,
+              c.phone, c.cnic, c.ntn, c.drm_id,
+              count(*)::int AS invoices,
+              sum(inv.installments)::int AS installments,
+              round(sum(inv.paid), 2)::text AS total_paid,
+              round(sum(GREATEST(inv.total - inv.paid, 0)), 2)::text AS total_due,
+              max(inv.last_paid_at) AS last_paid_at
+         FROM inv
+         LEFT JOIN drm.customers c ON c.id = inv.customer_id
+        WHERE ($1::text IS NULL OR COALESCE(c.company_name, inv.customer_name) ILIKE $1)
+          AND ($2::text IS NULL OR c.phone ILIKE $2)
+          AND ($3::text IS NULL OR c.cnic ILIKE $3 OR c.ntn ILIKE $3)
+        GROUP BY 1, 2, 3, 4, 5, 6
+        ORDER BY max(inv.last_paid_at) DESC NULLS LAST`,
+      [like(q.companyName ?? q.search), like(q.phone), like(q.cnic), day],
+    );
+    const liveResults = rows.map((r: any) => ({
+      id: r.id,
+      companyName: r.company_name,
+      phone: r.phone,
+      cnic: r.cnic,
+      ntn: r.ntn,
+      drmId: r.drm_id,
+      invoices: r.invoices,
+      installments: r.installments,
+      totalPaid: r.total_paid,
+      totalDue: r.total_due,
+      lastPaidAt: r.last_paid_at,
+    }));
+
     res.json(liveResults);
   } catch (error) {
     console.error("Error fetching business customers:", error);
@@ -1896,7 +2083,13 @@ function buildLedgerConditions(query: Request["query"]) {
   const { startDate, endDate, accountHeadId, branch, referenceType, status, q } = query;
   const conditions: any[] = [isNotNull(ledgerEntries.accountHeadId)];
   if (startDate) conditions.push(gte(ledgerEntries.date, new Date(startDate as string)));
-  if (endDate) conditions.push(lte(ledgerEntries.date, new Date(endDate as string)));
+  // "To" is inclusive of the whole day (a bare date parsed to its midnight before).
+  if (endDate) {
+    const end = /^\d{4}-\d{2}-\d{2}$/.test(String(endDate))
+      ? sql`${ledgerEntries.date} < (${String(endDate)}::date + 1)`
+      : lte(ledgerEntries.date, new Date(endDate as string));
+    conditions.push(end);
+  }
   if (accountHeadId) conditions.push(eq(ledgerEntries.accountHeadId, accountHeadId as string));
   if (branch) conditions.push(eq(ledgerEntries.branch, branch as string));
   if (referenceType) conditions.push(eq(ledgerEntries.referenceType, referenceType as string));

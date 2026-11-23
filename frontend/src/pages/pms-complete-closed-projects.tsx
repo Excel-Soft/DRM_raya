@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useQuery } from "@tanstack/react-query";
@@ -18,7 +19,11 @@ interface ClosedProjectRow {
     projectName: string | null;
     executive: { id: string; name: string | null } | null;
     timeSpentMinutes: number;
+    /** closed in the old DRM (QA + VM done there) */
+    legacyReadOnly?: boolean;
 }
+
+const PAGE_SIZE = 50;
 
 function formatDuration(minutes: number): string {
     if (!minutes || minutes <= 0) return "0m";
@@ -36,6 +41,7 @@ function formatDateTime(value: string | null): string {
 
 export default function PmsCompleteClosedProjects() {
     const [searchQuery, setSearchQuery] = useState("");
+    const [page, setPage] = useState(1);
 
     const { data, isLoading, isError, error } = useQuery<ClosedProjectRow[]>({
         queryKey: ["/api/pms/complete-closed-projects"],
@@ -54,6 +60,11 @@ export default function PmsCompleteClosedProjects() {
             (row.executive?.name || "").toLowerCase().includes(q)
         );
     }, [searchQuery, rows]);
+
+    useEffect(() => { setPage(1); }, [searchQuery]);
+    const pages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+    const curPage = Math.min(page, pages);
+    const pageRows = filteredRows.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
     return (
         <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans dark:bg-zinc-950">
@@ -119,12 +130,17 @@ export default function PmsCompleteClosedProjects() {
                                     </td>
                                 </tr>
                             ) : (
-                                filteredRows.map((row) => (
+                                pageRows.map((row) => (
                                     <tr key={row.taskId} className="hover:bg-gray-50 transition-colors dark:hover:bg-zinc-800">
                                         <td className="px-4 py-4 text-[13px] border-r border-gray-100 font-bold dark:border-zinc-800">{row.companyName || "—"}</td>
                                         <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
                                             <div className="flex flex-col">
-                                                <span className="font-semibold text-gray-700 dark:text-zinc-300">{row.projectName || "—"}</span>
+                                                <span className="font-semibold text-gray-700 dark:text-zinc-300">
+                                                    {row.projectName || "—"}
+                                                    {row.legacyReadOnly && (
+                                                        <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 align-middle text-[10px] font-semibold uppercase text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">Old DRM</span>
+                                                    )}
+                                                </span>
                                                 <span className="text-[11px] text-gray-400">{row.title}</span>
                                             </div>
                                         </td>
@@ -157,6 +173,18 @@ export default function PmsCompleteClosedProjects() {
                         </tbody>
                     </table>
                 </div>
+                {filteredRows.length > PAGE_SIZE && (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-[#6c757d]">
+                        <span>
+                            Showing {((curPage - 1) * PAGE_SIZE + 1).toLocaleString()}–{Math.min(curPage * PAGE_SIZE, filteredRows.length).toLocaleString()} of {filteredRows.length.toLocaleString()}
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <Button size="sm" variant="outline" className="h-7" disabled={curPage <= 1} onClick={() => setPage(curPage - 1)}>Previous</Button>
+                            <span>Page {curPage} of {pages}</span>
+                            <Button size="sm" variant="outline" className="h-7" disabled={curPage >= pages} onClick={() => setPage(curPage + 1)}>Next</Button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

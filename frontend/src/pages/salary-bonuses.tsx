@@ -12,6 +12,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 // ---------------------------------------------------------------------------
 // Types mirror the server bonus shapes (drm.employee_bonuses + joined names).
@@ -199,12 +200,14 @@ export default function SalaryBonuses() {
             <div className="flex flex-wrap items-end gap-4">
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Employee</Label>
-                <Select value={formEmployee} onValueChange={setFormEmployee}>
-                  <SelectTrigger className="h-9 w-[220px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="Select employee" /></SelectTrigger>
-                  <SelectContent>
-                    {employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.fullName || e.id}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  grouped={false}
+                  users={employees}
+                  value={formEmployee}
+                  onChange={setFormEmployee}
+                  placeholder="Select employee"
+                  className="h-9 w-[220px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Month</Label>

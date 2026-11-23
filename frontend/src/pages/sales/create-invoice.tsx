@@ -22,29 +22,13 @@ import html2canvas from "html2canvas";
 import { useReactToPrint } from "react-to-print";
 import { useServiceExecutiveCreateGates } from "@/hooks/use-ui-workflow-config";
 import Swal from "sweetalert2";
+import { isDepartmentAllowedFor, useDepartmentCodeNames } from "@/lib/department-access";
 
-const isDepartmentAllowed = (userRole: string, allowedDeps: string[]) => {
-    const normalizedRole = (userRole || "").toLowerCase();
-    // Allow admin/manager overrides if needed
-    if (normalizedRole.includes('admin') || normalizedRole.includes('super_hod')) return true;
-    
-    if (!allowedDeps || allowedDeps.length === 0) return false;
-    
-    return allowedDeps.some((dep: string) => {
-        const d = dep.toLowerCase();
-        if (d === 'sales') return normalizedRole.includes('sales');
-        if (d === 'support') return normalizedRole.includes('support');
-        if (d === 'product posting') return normalizedRole.includes('product_posting');
-        if (d === 'dnd') return normalizedRole.includes('dnd');
-        if (d === 'marketing') return normalizedRole.includes('marketing');
-        if (d === 'accounts') return normalizedRole.includes('account');
-        if (d === 'qa') return normalizedRole.includes('qa');
-        if (d === 'manager') return normalizedRole.includes('manager');
-        if (d === 'human resource' || d === 'hr') return normalizedRole.includes('hr');
-        if (d === 'training') return normalizedRole.includes('training');
-        return normalizedRole.includes(d);
-    });
-};
+// Allowed departments are stored as department codes (e.g. "LEGACY-2" = Sales Department);
+// resolved to names with the /api/drm/departments list loaded by CreateInvoice.
+let deptCodeNames: Map<string, string> = new Map();
+const isDepartmentAllowed = (userRole: string, allowedDeps: string[]) =>
+    isDepartmentAllowedFor(userRole, allowedDeps, deptCodeNames);
 
 interface InvoiceItem {
     id: string;
@@ -124,6 +108,7 @@ function ProductCombobox({ item, products, flatProducts, updateItemProduct }: { 
 }
 
 export default function CreateInvoice() {
+    deptCodeNames = useDepartmentCodeNames();
     const [, params] = useRoute("/sales/create-invoice/:customerId");
     const [, setLocation] = useLocation();
     const { toast } = useToast();

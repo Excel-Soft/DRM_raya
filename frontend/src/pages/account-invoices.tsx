@@ -34,6 +34,14 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Search, FileText, ChevronLeft, ChevronRight, DollarSign, Eye, PlusCircle, X } from "lucide-react";
 import type { GmEntry } from "@shared/schema";
 import { GmEntryInvoiceForm } from "@/components/gm-entry-invoice-form";
+import { MakeInvoiceList } from "@/components/make-invoice-list";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ChevronsUpDown } from "lucide-react";
+
+// The company search shows at most this many matches (old DRM has ~4,000 companies).
+const COMPANY_MATCH_LIMIT = 50;
+const companyValue = (gm: any) =>
+  (gm.companyName || gm.drmId || gm.orderId || gm.id || "").toLowerCase().trim() || "unknown";
 
 const TAX_RATE = 0.05; // 5% tax
 
@@ -42,7 +50,7 @@ export default function AccountInvoices() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedEntry, setSelectedEntry] = useState<GmEntry | null>(null);
-  const rowsPerPage = 10;
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [showForm, setShowForm] = useState(true);
   const [modalMode, setModalMode] = useState<'view' | 'create'>('view');
@@ -77,13 +85,49 @@ export default function AccountInvoices() {
     },
   });
 
+  // One dropdown option per company (old-DRM data has many GMs per company; a
+  // Select with duplicate values misbehaves). Latest GM first, as the list is sorted.
+  const companyOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return gmEntries.filter((gm: any) => {
+      const val = (gm.companyName || gm.drmId || gm.orderId || gm.id || "").toLowerCase().trim() || "unknown";
+      if (seen.has(val)) return false;
+      seen.add(val);
+      return true;
+    });
+  }, [gmEntries]);
+
+  const [companyOpen, setCompanyOpen] = useState(false);
+  const [companyQuery, setCompanyQuery] = useState("");
+  const matchedCompanies = useMemo(() => {
+    const q = companyQuery.toLowerCase().trim();
+    const out: any[] = [];
+    for (const gm of companyOptions as any[]) {
+      if (
+        !q ||
+        (gm.companyName || "").toLowerCase().includes(q) ||
+        (gm.drmId || "").toLowerCase().includes(q) ||
+        (gm.memberId || "").toLowerCase().includes(q)
+      ) {
+        out.push(gm);
+        if (out.length >= COMPANY_MATCH_LIMIT) break;
+      }
+    }
+    return out;
+  }, [companyOptions, companyQuery]);
+  const selectedCompanyLabel = useMemo(() => {
+    if (!searchQuery || searchQuery === "none") return "";
+    const m = (companyOptions as any[]).find((gm) => companyValue(gm) === searchQuery);
+    return m ? (m.companyName || m.drmId || m.orderId || "") : "";
+  }, [companyOptions, searchQuery]);
+
   const filteredEntries = useMemo(() => {
     if (!searchQuery) return gmEntries;
     const query = searchQuery.toLowerCase();
     return gmEntries.filter(
       (entry) =>
-        entry.companyName.toLowerCase().includes(query) ||
-        entry.drmId.toLowerCase().includes(query) ||
+        (entry.companyName || "").toLowerCase().includes(query) ||
+        (entry.drmId || "").toLowerCase().includes(query) ||
         (entry.memberId && entry.memberId.toLowerCase().includes(query))
     );
   }, [gmEntries, searchQuery]);
@@ -150,193 +194,75 @@ export default function AccountInvoices() {
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-slate-500 dark:text-zinc-400">Company Name</Label>
               <div className="relative">
-                <Select
-                    value={searchQuery}
-                    onValueChange={(v) => {
-                        setSearchQuery(v);
-                        setCurrentPage(1);
-                        if (v === "none") return;
-                        const match = gmEntries?.find((gm: any) => {
-                            const val = (gm.companyName || gm.drmId || gm.orderId || gm.id || "").toLowerCase().trim();
-                            return (val || "unknown") === v;
-                        });
-                        if (match) {
-                            setSelectedEntry(match);
-                            setModalMode('create');
-                        }
-                    }}
-                >
-                    <SelectTrigger className="w-full text-sm h-11 border-slate-200 dark:border-zinc-800">
-                        <SelectValue placeholder="Search Company Through Id/Name" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="none">Search Company Through Id/Name</SelectItem>
-                        {gmEntries?.map((gm: any) => {
-                            const val = (gm.companyName || gm.drmId || gm.orderId || gm.id || "").toLowerCase().trim();
-                            return (
-                                <SelectItem key={gm.id} value={val || "unknown"}>
-                                    {gm.companyName || gm.drmId || gm.orderId || "Unnamed Company"}
-                                </SelectItem>
-                            );
-                        })}
-                    </SelectContent>
-                </Select>
+                <Popover open={companyOpen} onOpenChange={(o) => { setCompanyOpen(o); if (!o) setCompanyQuery(""); }}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="w-full h-11 px-3 flex items-center justify-between text-sm rounded-md border border-slate-200 bg-slate-50 text-left dark:border-zinc-800 dark:bg-zinc-900"
+                    >
+                      <span className={selectedCompanyLabel ? "text-slate-800 dark:text-zinc-100" : "text-slate-500 dark:text-zinc-400"}>
+                        {selectedCompanyLabel || "Search Company Through Id/Name"}
+                      </span>
+                      <ChevronsUpDown className="h-4 w-4 opacity-50" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="p-0 w-[var(--radix-popover-trigger-width)]">
+                    <div className="p-2 border-b dark:border-zinc-800">
+                      <Input
+                        autoFocus
+                        placeholder="Type company name or DRM ID..."
+                        value={companyQuery}
+                        onChange={(e) => setCompanyQuery(e.target.value)}
+                        className="h-9 text-sm"
+                      />
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1">
+                      {searchQuery && searchQuery !== "none" && (
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-zinc-800"
+                          onClick={() => { setSearchQuery(""); setCurrentPage(1); setCompanyOpen(false); }}
+                        >
+                          Clear selection
+                        </button>
+                      )}
+                      {matchedCompanies.length === 0 ? (
+                        <div className="px-3 py-4 text-center text-sm text-slate-400">No company found</div>
+                      ) : (
+                        matchedCompanies.map((gm: any) => (
+                          <button
+                            key={gm.id}
+                            type="button"
+                            className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-100 dark:hover:bg-zinc-800 flex items-center justify-between gap-2"
+                            onClick={() => {
+                              const v = companyValue(gm);
+                              setSearchQuery(v);
+                              setCurrentPage(1);
+                              setCompanyOpen(false);
+                              setCompanyQuery("");
+                              setSelectedEntry(gm);
+                              setModalMode('create');
+                            }}
+                          >
+                            <span className="truncate">{gm.companyName || gm.drmId || gm.orderId || "Unnamed Company"}</span>
+                            {gm.drmId && <span className="text-[11px] text-slate-400 shrink-0">{gm.drmId}</span>}
+                          </button>
+                        ))
+                      )}
+                      {matchedCompanies.length === COMPANY_MATCH_LIMIT && (
+                        <div className="px-3 py-1.5 text-[11px] text-slate-400">Showing first {COMPANY_MATCH_LIMIT} - type more to narrow down</div>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
             </div>
           </CardContent>
         </Card>
       )}
 
-      <Card className="border-0 shadow-sm rounded-md overflow-hidden bg-white dark:bg-zinc-900">
-        <CardContent className="p-0">
-          <div className="p-5 flex flex-row items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-semibold text-slate-600 dark:text-zinc-300">Show</span>
-              <div className="flex items-center gap-2">
-                <Select defaultValue="10">
-                  <SelectTrigger className="w-[70px] h-9 text-xs">
-                    <SelectValue placeholder="10" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="25">25</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                </SelectContent>
-              </Select>
-              <span className="text-xs font-semibold text-slate-600 dark:text-zinc-300">entries</span>
-              </div>
-            </div>
-
-            <div className="flex flex-col items-end gap-1">
-              <span className="text-xs font-semibold text-slate-600 dark:text-zinc-300">Search:</span>
-              <Input
-                className="w-[200px] h-9 text-sm border-slate-200 dark:border-zinc-800"
-                value={searchQuery === 'none' ? '' : searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="px-5 pb-5">
-            {isLoading ? (
-              <div className="text-center py-8 text-muted-foreground">Loading...</div>
-            ) : filteredEntries.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                {searchQuery ? "No entries found matching your search" : "No GM entries available"}
-              </div>
-            ) : (
-              <>
-                <div className="overflow-x-auto">
-                  <Table className="border-t border-slate-100 table-fixed w-full dark:border-zinc-800">
-                    <TableHeader>
-                      <TableRow className="bg-slate-100/50 hover:bg-slate-100/50 border-b-0 dark:bg-zinc-900/80 dark:hover:bg-zinc-900/80">
-                        <TableHead className="w-[60px] font-bold text-slate-700 text-xs py-4 pl-4 truncate dark:text-zinc-400">No</TableHead>
-                        <TableHead className="font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Company</TableHead>
-                        <TableHead className="font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Sale Person</TableHead>
-                        <TableHead className="font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Create</TableHead>
-                        <TableHead className="font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Payment</TableHead>
-                        <TableHead className="w-[80px] text-center font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {paginatedEntries.map((entry: any, index: number) => {
-                          const paymentValue = parseInt(entry.amountPkr || entry.amountUsd || "0");
-                          const isRed = index % 3 === 0 || paymentValue >= 25000;
-                          return (
-                        <TableRow
-                          key={entry.id}
-                          className="hover:bg-slate-50/50 border-b border-slate-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50"
-                        >
-                          <TableCell className="text-slate-500 text-[11px] font-medium pl-4 py-4 truncate dark:text-zinc-400">
-                            {(currentPage - 1) * rowsPerPage + index + 1}
-                          </TableCell>
-                          <TableCell className="text-slate-800 text-[11px] font-bold uppercase py-4 truncate max-w-[150px] dark:text-zinc-100">
-                            {entry.companyName}
-                          </TableCell>
-                          <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
-                            {entry.salesPersonName || entry.agentName || "-"}
-                          </TableCell>
-                          <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
-                            {format(new Date(entry.createdAt), "M/d/yyyy")}
-                          </TableCell>
-                          <TableCell className="text-slate-800 text-[11px] font-bold py-4 truncate dark:text-zinc-100">
-                            {entry.amountPkr || (Number(entry.amountUsd || 0) * 277).toFixed(2)}
-                          </TableCell>
-                          <TableCell className="text-center py-4">
-                            <div className="flex items-center justify-center gap-2">
-                              <button
-                                className="text-emerald-500 hover:text-emerald-600 transition-colors"
-                                onClick={() => {
-                                  setSelectedEntry(entry);
-                                  setModalMode('view');
-                                }}
-                                title="View"
-                              >
-                                <Eye className="h-[14px] w-[14px]" />
-                              </button>
-                              {!isPaid(entry.status) ? (
-                                <button
-                                  className={`${isRed ? 'text-rose-500 hover:text-rose-600' : 'text-emerald-500 hover:text-emerald-600'} transition-colors`}
-                                  onClick={() => {
-                                    setSelectedEntry(entry);
-                                    setModalMode('create');
-                                  }}
-                                  title="Add Invoice"
-                                >
-                                  <PlusCircle className="h-[14px] w-[14px]" />
-                                </button>
-                              ) : (
-                                <button
-                                  className="text-emerald-500 hover:text-emerald-600 transition-colors"
-                                  title="Remove/Void"
-                                >
-                                  <PlusCircle className="h-[14px] w-[14px]" />
-                                </button>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )})}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <p className="text-sm text-muted-foreground">
-                      Showing {(currentPage - 1) * rowsPerPage + 1} to{" "}
-                      {Math.min(currentPage * rowsPerPage, filteredEntries.length)} of{" "}
-                      {filteredEntries.length} entries
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                        disabled={currentPage === 1}
-                        data-testid="button-prev-page"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <span className="text-sm">
-                        Page {currentPage} of {totalPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                        disabled={currentPage === totalPages}
-                        data-testid="button-next-page"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      {/* Old-DRM invoice list (drm/make-invoice) */}
+      <MakeInvoiceList />
 
       <Dialog open={!!selectedEntry} onOpenChange={(open) => !open && setSelectedEntry(null)}>
         <DialogContent className={`${modalMode === 'create' ? 'sm:max-w-[98vw] w-[98vw] h-[94vh] max-h-[94vh]' : 'sm:max-w-4xl max-h-[90vh]'} overflow-y-auto bg-white dark:bg-zinc-900 p-0 border-0`}>

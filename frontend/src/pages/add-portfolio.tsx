@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -11,14 +11,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
-import { Loader2, Upload, X, ImageIcon, Plus } from "lucide-react";
+import { Loader2, X } from "lucide-react";
+import { PortfolioCategorySelect } from "@/lib/portfolio-category-select";
+
+type PortfolioCategoryTree = {
+    mainCategories: { id: string; name: string }[];
+    subCategoriesByMainId: Record<string, { id: string; name: string }[]>;
+};
 
 export default function AddPortfolio() {
     const { toast } = useToast();
@@ -32,6 +31,20 @@ export default function AddPortfolio() {
     const [bodyImage, setBodyImage] = useState<File | null>(null);
     const [fullImage, setFullImage] = useState<File | null>(null);
     const [sliders, setSliders] = useState<File[]>([]);
+
+    const { data: categoryTree, isLoading: categoriesLoading } = useQuery<PortfolioCategoryTree>({
+        queryKey: ["/api/portfolio/categories"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/portfolio/categories");
+            if (!res.ok) throw new Error("Failed to load categories");
+            return res.json();
+        },
+    });
+
+    const subCategoryOptions = useMemo(() => {
+        if (!categoryTree || !mainCategory) return [];
+        return categoryTree.subCategoriesByMainId[mainCategory] ?? [];
+    }, [categoryTree, mainCategory]);
 
     const createMutation = useMutation({
         mutationFn: async (formData: FormData) => {
@@ -71,10 +84,32 @@ export default function AddPortfolio() {
     };
 
     const handleSave = () => {
+        const mainName =
+            categoryTree?.mainCategories.find((m) => m.id === mainCategory)?.name || "";
+        const subName =
+            subCategoryOptions.find((s) => s.id === subCategory)?.name || "";
+
+        if (!mainName) {
+            toast({
+                title: "Validation",
+                description: "Please select a main category.",
+                variant: "destructive",
+            });
+            return;
+        }
+        if (subCategoryOptions.length > 0 && !subName) {
+            toast({
+                title: "Validation",
+                description: "Please select a sub category.",
+                variant: "destructive",
+            });
+            return;
+        }
+
         const formData = new FormData();
         formData.append("keyword", keyword);
-        formData.append("mainCategory", mainCategory);
-        formData.append("subCategory", subCategory);
+        formData.append("mainCategory", mainName);
+        formData.append("subCategory", subName);
         formData.append("serverLink", serverLink);
         if (topHeaderImage) formData.append("topHeaderImage", topHeaderImage);
         if (bodyImage) formData.append("bodyImage", bodyImage);
@@ -119,34 +154,30 @@ export default function AddPortfolio() {
                                 className="h-10 border-gray-200 focus:ring-[#00a65a] focus:border-[#00a65a] dark:border-zinc-800" 
                             />
                         </div>
-                        <div className="space-y-2">
-                            <Label className="text-[13px] font-semibold text-gray-600 dark:text-zinc-300">Main Category</Label>
-                            <Select value={mainCategory} onValueChange={setMainCategory}>
-                                <SelectTrigger className="h-10 border-gray-200 focus:ring-[#00a65a] focus:border-[#00a65a] dark:border-zinc-800">
-                                    <SelectValue placeholder="Choose..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="Website">Website</SelectItem>
-                                    <SelectItem value="Graphic">Graphic Design</SelectItem>
-                                    <SelectItem value="Alibaba">Alibaba</SelectItem>
-                                    <SelectItem value="SocialMedia">Social Media</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="space-y-2">
-                            <Label className="text-[13px] font-semibold text-gray-600 dark:text-zinc-300">Sub Category</Label>
-                            <Select value={subCategory} onValueChange={setSubCategory}>
-                                <SelectTrigger className="h-10 border-gray-200 focus:ring-[#00a65a] focus:border-[#00a65a] dark:border-zinc-800">
-                                    <SelectValue placeholder="Choose..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="Static">Static Website</SelectItem>
-                                    <SelectItem value="Ecom">E-Commerce</SelectItem>
-                                    <SelectItem value="Logo">Logo Design</SelectItem>
-                                    <SelectItem value="Poster">Poster Design</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        <PortfolioCategorySelect
+                            label="Main Category"
+                            options={categoryTree?.mainCategories ?? []}
+                            value={mainCategory}
+                            disabled={categoriesLoading}
+                            onChange={(id) => {
+                                setMainCategory(id);
+                                setSubCategory("");
+                            }}
+                        />
+                        <PortfolioCategorySelect
+                            label="Sub Category"
+                            options={subCategoryOptions}
+                            value={subCategory}
+                            disabled={!mainCategory || subCategoryOptions.length === 0}
+                            placeholder={
+                                !mainCategory
+                                  ? "Choose main category first"
+                                  : subCategoryOptions.length === 0
+                                    ? "No sub category"
+                                    : "Choose..."
+                            }
+                            onChange={setSubCategory}
+                        />
                     </div>
 
                     {/* Second Row */}
@@ -227,7 +258,7 @@ export default function AddPortfolio() {
                     {/* Bottom Action */}
                     <div className="pt-4">
                         <Button 
-                            className="w-full bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold h-11 uppercase"
+                            className="w-full max-w-xs bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold h-11 uppercase"
                             onClick={handleSave}
                             disabled={createMutation.isPending}
                         >

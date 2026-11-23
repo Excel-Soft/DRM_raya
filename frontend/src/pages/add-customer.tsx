@@ -1325,19 +1325,30 @@ export default function AddCustomer() {
                   )}
                 />
 
-                <div className="space-y-2">
-                  <FormLabel>Business Line (Posting Products)</FormLabel>
-                  {!products ? (
-                    <p className="text-sm text-slate-400 border rounded-md p-3 dark:border-zinc-800">Loading products...</p>
-                  ) : (
-                    <BusinessLineTreeSelect
-                      options={products.map((p: any) => p.name)}
-                      value={form.watch("businessLine") ? form.watch("businessLine")!.split("\n").filter(Boolean) : []}
-                      onChange={(vals) => form.setValue("businessLine", vals.join("\n"))}
-                    />
+                <FormField
+                  control={form.control}
+                  name="businessLine"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Business Line (Posting Products)</FormLabel>
+                      {!products ? (
+                        <p className="text-sm text-slate-400 border rounded-md p-3 dark:border-zinc-800">Loading products...</p>
+                      ) : (
+                        <FormControl>
+                          <BusinessLineTreeSelect
+                            options={products.map((p: { id: string; name: string }) => ({
+                              id: String(p.id),
+                              name: String(p.name),
+                            }))}
+                            value={field.value ? field.value.split("\n").filter(Boolean) : []}
+                            onChange={(vals) => field.onChange(vals.join("\n"))}
+                          />
+                        </FormControl>
+                      )}
+                      <FormMessage />
+                    </FormItem>
                   )}
-                  <FormMessage />
-                </div>
+                />
               </CardContent>
             </Card>
 

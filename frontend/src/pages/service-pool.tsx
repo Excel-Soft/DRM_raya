@@ -16,6 +16,7 @@ import { ServiceAppointmentModal } from "@/components/service-appointment-modal"
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type ServicePoolSummary = {
     allInService: number;
@@ -135,16 +136,15 @@ function ManagePoolDialog({
 
                     <div className="space-y-1.5">
                         <label className="text-sm font-medium text-slate-600 dark:text-zinc-400">User</label>
-                        <Select value={assignTo} onValueChange={setAssignTo}>
-                            <SelectTrigger className="w-full text-sm border-slate-300 dark:border-zinc-700">
-                                <SelectValue placeholder="Choose .." />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {userOptions.map((u) => (
-                                    <SelectItem key={u.id} value={u.id}>{userLabel(u)}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                        <RoleGroupedUserSelect
+                            grouped={false}
+                            users={userOptions}
+                            value={assignTo}
+                            onChange={setAssignTo}
+                            getLabel={userLabel}
+                            placeholder="Choose .."
+                            className="w-full text-sm border-slate-300 dark:border-zinc-700"
+                        />
                     </div>
                 </div>
 
@@ -241,16 +241,15 @@ function AssignGmToPoolDialog({
 
                     <div className="space-y-1.5">
                         <label className="text-sm font-medium text-slate-600 dark:text-zinc-400">Select User</label>
-                        <Select value={assignTo} onValueChange={setAssignTo}>
-                            <SelectTrigger className="w-full text-sm border-slate-300 dark:border-zinc-700">
-                                <SelectValue placeholder="Choose..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {userOptions.map((u) => (
-                                    <SelectItem key={u.id} value={u.id}>{userLabel(u)}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                        <RoleGroupedUserSelect
+                            grouped={false}
+                            users={userOptions}
+                            value={assignTo}
+                            onChange={setAssignTo}
+                            getLabel={userLabel}
+                            placeholder="Choose..."
+                            className="w-full text-sm border-slate-300 dark:border-zinc-700"
+                        />
                     </div>
 
                     <div className="space-y-1.5">

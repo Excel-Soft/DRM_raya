@@ -1,0 +1,245 @@
+legacy_id,refId,status,reason,category,name,date_label,branch,prospective_uuid_valid
+9,1,valid,,Company Business Type,Exporter,,,yes
+12,4,valid,,Company Detail,Webxl,,,yes
+13,5,valid,,Source,FaceBook,,,yes
+14,3,excluded,excluded_refid_services,,,,,
+15,3,excluded,excluded_refid_services,,,,,
+17,3,excluded,excluded_refid_services,,,,,
+18,3,excluded,excluded_refid_services,,,,,
+19,3,excluded,excluded_refid_services,,,,,
+20,3,excluded,excluded_refid_services,,,,,
+21,3,excluded,excluded_refid_services,,,,,
+22,3,excluded,excluded_refid_services,,,,,
+23,3,excluded,excluded_refid_services,,,,,
+24,3,excluded,excluded_refid_services,,,,,
+26,3,excluded,excluded_refid_services,,,,,
+28,3,excluded,excluded_refid_services,,,,,
+29,3,excluded,excluded_refid_services,,,,,
+30,3,excluded,excluded_refid_services,,,,,
+31,3,excluded,excluded_refid_services,,,,,
+32,3,excluded,excluded_refid_services,,,,,
+33,2,valid,,Service Type,Agriculture & Food,,,yes
+34,2,valid,,Service Type,"Apparel,Textiles & Accessories",,,yes
+35,2,valid,,Service Type,Auto & Transportation,,,yes
+36,2,valid,,Service Type,"Bags, Shoes & Accessories",,,yes
+37,2,valid,,Service Type,Electronics,,,yes
+38,2,valid,,Service Type,"Electrical Equipment, Componen",,,yes
+39,2,valid,,Service Type,"Gifts, Sports & Toys",,,yes
+40,2,valid,,Service Type,Health & Beauty,,,yes
+42,2,valid,,Service Type,"Home, Lights & Construction",,,yes
+43,2,valid,,Service Type,"Machinery, Industrial Parts &",,,yes
+44,2,valid,,Service Type,"Metallurgy, Chemicals, Rubber",,,yes
+45,2,valid,,Service Type,"Packaging, Advertising & Offic",,,yes
+58,5,valid,,Source,Instagram,,,yes
+59,5,valid,,Source,Twitter,,,yes
+60,5,valid,,Source,LinkedIn,,,yes
+61,5,valid,,Source,YouTube,,,yes
+62,4,valid,,Company Detail,AI,,,yes
+63,4,valid,,Company Detail,NS,,,yes
+64,4,valid,,Company Detail,TM,,,yes
+65,4,valid,,Company Detail,NB,,,yes
+66,4,valid,,Company Detail,DZ,,,yes
+67,4,valid,,Company Detail,RB,,,yes
+69,5,valid,,Source,SCCI,,,yes
+70,4,valid,,Company Detail,Sial Web,,,yes
+71,6,valid,,Job Designation,CEO,,,yes
+72,6,valid,,Job Designation,Executive,,,yes
+73,6,valid,,Job Designation,Partner,,,yes
+74,6,valid,,Job Designation,Manager,,,yes
+75,6,valid,,Job Designation,Director,,,yes
+76,6,valid,,Job Designation,Staff,,,yes
+77,6,valid,,Job Designation,Supervisor,,,yes
+78,6,valid,,Job Designation,Representative,,,yes
+79,6,valid,,Job Designation,Other,,,yes
+80,1,valid,,Company Business Type,Manufacturer,,,yes
+81,1,valid,,Company Business Type,Trading Company,,,yes
+82,1,valid,,Company Business Type,Buying Office,,,yes
+83,1,valid,,Company Business Type,Agent,,,yes
+84,1,valid,,Company Business Type,Business Service,,,yes
+85,1,valid,,Company Business Type,Government,,,yes
+86,1,valid,,Company Business Type,Association,,,yes
+87,1,valid,,Company Business Type,Distributor / Wholesaler,,,yes
+88,1,valid,,Company Business Type,Others,,,yes
+89,5,valid,,Source,GCCI,,,yes
+90,5,valid,,Source,LCCI,,,yes
+91,5,valid,,Source,FCCI,,,yes
+92,5,valid,,Source,KCCI,,,yes
+93,5,valid,,Source,PCCI,,,yes
+94,5,valid,,Source,ICCI,,,yes
+95,4,valid,,Company Detail,Pixel2URL,,,yes
+96,4,valid,,Company Detail,E Creator,,,yes
+97,4,valid,,Company Detail,Dynamic Experts Solution,,,yes
+98,4,valid,,Company Detail,Softy Solutions,,,yes
+99,4,valid,,Company Detail,WEB DESIGN,,,yes
+100,4,valid,,Company Detail,Design Markaz,,,yes
+101,4,valid,,Company Detail,WebCodifier,,,yes
+102,4,valid,,Company Detail,Design Xpert,,,yes
+103,4,valid,,Company Detail,Progressive Marketing Network,,,yes
+104,4,valid,,Company Detail,Innovative Technologies and So,,,yes
+105,4,valid,,Company Detail,Computer Xperts,,,yes
+106,4,valid,,Company Detail,Astapor Technologies,,,yes
+107,7,valid,,Service Type,Agriculture,,,yes
+108,5,valid,,Source,Office Visit,,,yes
+109,5,valid,,Source,Google,,,yes
+111,5,valid,,Source,others,,,yes
+112,4,valid,,Company Detail,others,,,yes
+113,5,valid,,Source,Alibaba,,,yes
+122,5,valid,,Source,Zain Reference,,,yes
+123,3,excluded,excluded_refid_services,,,,,
+124,5,valid,,Source,Arooj Reference,,,yes
+125,5,valid,,Source,Webxl,,,yes
+126,3,excluded,excluded_refid_services,,,,,
+127,3,excluded,excluded_refid_services,,,,,
+128,3,excluded,excluded_refid_services,,,,,
+129,3,excluded,excluded_refid_services,,,,,
+130,3,excluded,excluded_refid_services,,,,,
+131,3,excluded,excluded_refid_services,,,,,
+132,3,excluded,excluded_refid_services,,,,,
+133,3,excluded,excluded_refid_services,,,,,
+134,5,valid,,Source,Random Visit,,,yes
+135,5,valid,,Source,Random Call,,,yes
+136,5,valid,,Source,Seminar,,,yes
+137,8,valid,,Contact Attribute,Mobile,,,yes
+138,8,valid,,Contact Attribute,OnSite Visit,,,yes
+139,8,valid,,Contact Attribute,Whatsapp,,,yes
+140,8,valid,,Contact Attribute,Group Whatsapp (Broadcast),,,yes
+141,8,valid,,Contact Attribute,VAS Call,,,yes
+142,8,valid,,Contact Attribute,Facebook Post,,,yes
+143,8,valid,,Contact Attribute,Facebook Message,,,yes
+146,8,valid,,Contact Attribute,E-mail,,,yes
+147,8,valid,,Contact Attribute,Talk Time,,,yes
+148,5,valid,,Source,Refer Partner,,,yes
+149,3,excluded,excluded_refid_services,,,,,
+150,3,excluded,excluded_refid_services,,,,,
+152,8,valid,,Contact Attribute,Webinar,,,yes
+153,8,valid,,Contact Attribute,Seminar,,,yes
+154,8,valid,,Contact Attribute,Copy Product,,,yes
+155,8,valid,,Contact Attribute,New Product,,,yes
+156,8,valid,,Contact Attribute,VM-Call,,,yes
+157,8,valid,,Contact Attribute,VM-Met,,,yes
+158,8,valid,,Contact Attribute,ShowCase,,,yes
+159,8,valid,,Contact Attribute,Diagnose,,,yes
+160,9,valid,,Whatsapp Message,Seminar,,,yes
+161,9,valid,,Whatsapp Message,Webinar,,,yes
+162,9,valid,,Whatsapp Message,Social Media,,,yes
+164,8,valid,,Contact Attribute,Reel Shoot + Edit,,,yes
+165,8,valid,,Contact Attribute,TikTok,,,yes
+166,8,valid,,Contact Attribute,Service Animation,,,yes
+167,8,valid,,Contact Attribute,Ebay Course,,,yes
+168,8,valid,,Contact Attribute,Amazon Fba,,,yes
+169,8,valid,,Contact Attribute,LLC Reg Followup,,,yes
+170,3,excluded,excluded_refid_services,,,,,
+171,11,valid,,Govt Leave,Labour Day,2026-5-1,,yes
+172,10,excluded,excluded_refid_branches,,,,,
+173,10,excluded,excluded_refid_branches,,,,,
+174,10,excluded,excluded_refid_branches,,,,,
+175,11,valid,,Govt Leave,Independence Day,2026-8-14,,yes
+177,11,valid,,Govt Leave,Kashmir Day,2024-2-5,,yes
+178,11,valid,,Govt Leave,Pakistan Day,2024-3-23,,yes
+179,11,valid,,Govt Leave,Christmas Day & Quaid-e-Azam,2024-12-25,,yes
+181,12,valid,,Account Monthly Task,Electricity Bill SKT,2023-11-15,Sialkot,yes
+182,12,valid,,Account Monthly Task,Electricity Bill Askari Home,2023-11-7,Sialkot,yes
+183,12,valid,,Account Monthly Task,Electricity Bill Sambrial Home,2023-11-21,Sialkot,yes
+184,12,valid,,Account Monthly Task,Ptcl Bill SKT Office,2023-11-7,Sialkot,yes
+185,12,valid,,Account Monthly Task,Ptcl Bill SKT Home,2023-11-21,Sialkot,yes
+186,12,valid,,Account Monthly Task,Gas Bill Askari Home,2023-11-4,Sialkot,yes
+187,12,valid,,Account Monthly Task,Gas Bill Sambrial Home,2023-11-4,Sialkot,yes
+188,12,valid,,Account Monthly Task,Ufone Bills,2023-11-1,Sialkot,yes
+189,12,valid,,Account Monthly Task,SKT Office Rent,2023-11-16,Sialkot,yes
+190,12,valid,,Account Monthly Task,Karachi Office Rent,2023-11-5,Karachi,yes
+191,12,valid,,Account Monthly Task,Milk Bill,2023-11-6,Sialkot,yes
+192,12,valid,,Account Monthly Task,Credit Card Bank Alfalah Bill,2023-11-1,Sialkot,yes
+193,12,valid,,Account Monthly Task,Credit Card Bank Askari Bill,2023-11-1,Sialkot,yes
+194,11,valid,,Govt Leave,Iqbal Day,2023-11-9,,yes
+197,8,excluded,excluded_misfile_grade,,,,,
+198,8,excluded,excluded_misfile_grade,,,,,
+199,12,valid,,Account Monthly Task,House Rent,2023-12-7,Lahore,yes
+201,12,valid,,Account Monthly Task,Utility Bill - Water/Sewerage,2023-12-9,Lahore,yes
+202,12,valid,,Account Monthly Task,Utility Bill - Electricity,2023-12-10,Lahore,yes
+203,12,valid,,Account Monthly Task,Utility Bill - Internet Transworld,2023-12-7,Lahore,yes
+204,12,valid,,Account Monthly Task,Utility Bill - Gas,2023-12-11,Lahore,yes
+210,12,valid,,Account Monthly Task,Office Rent Gulberg,2023-12-7,Lahore,yes
+213,12,valid,,Account Monthly Task,Utility Bill - Water/Sewerage Gulberg,2023-12-3,Lahore,yes
+214,12,valid,,Account Monthly Task,Utility Bill - Electricity Gulberg,2023-12-15,Lahore,yes
+215,12,valid,,Account Monthly Task,Klass Security,2023-12-4,Lahore,yes
+220,13,valid,,Portfolio Categories,Varsity,,,yes
+221,13,valid,,Portfolio Categories,Silver,,,yes
+222,13,valid,,Portfolio Categories,Denim,,,yes
+224,13,valid,,Portfolio Categories,Knife,,,yes
+225,13,valid,,Portfolio Categories,Sward,,,yes
+226,13,valid,,Portfolio Categories,Champion,,,yes
+227,13,valid,,Portfolio Categories,Mask,,,yes
+228,13,valid,,Portfolio Categories,Caps,,,yes
+229,13,valid,,Portfolio Categories,Disposable,,,yes
+230,13,valid,,Portfolio Categories,Dry Fit,,,yes
+231,13,valid,,Portfolio Categories,Gown,,,yes
+232,13,valid,,Portfolio Categories,Boxer,,,yes
+233,13,valid,,Portfolio Categories,Durable,,,yes
+234,12,valid,,Account Monthly Task,Kids Fee,2024-2-1,Lahore,yes
+236,1,valid,,Company Business Type,Exporter & Manufacturer,,,yes
+242,8,valid,,Contact Attribute,W-Call,,,yes
+246,9,valid,,Whatsapp Message,Hum Mashal-e-Rah(lahore,,,yes
+249,13,valid,,Portfolio Categories,Pioneer,,,yes
+250,13,valid,,Portfolio Categories,NIKE,,,yes
+251,13,valid,,Portfolio Categories,starbucks,,,yes
+252,13,valid,,Portfolio Categories,",sp5der",,,yes
+253,13,valid,,Portfolio Categories,Balenciaga,,,yes
+254,13,valid,,Portfolio Categories,Disney,,,yes
+255,13,valid,,Portfolio Categories,police/military/army description,,,yes
+256,13,valid,,Portfolio Categories,Disney t,,,yes
+257,13,valid,,Portfolio Categories,BURBERRY,,,yes
+258,13,valid,,Portfolio Categories,New Balance,,,yes
+259,13,valid,,Portfolio Categories,Calvin Klein,,,yes
+260,13,valid,,Portfolio Categories,Sony,,,yes
+261,13,valid,,Portfolio Categories,Gucci,,,yes
+262,13,valid,,Portfolio Categories,Balenciaga,,,yes
+263,13,valid,,Portfolio Categories,Louis Vuitton,,,yes
+264,13,valid,,Portfolio Categories,OhPolly,,,yes
+265,13,valid,,Portfolio Categories,LV,,,yes
+266,13,valid,,Portfolio Categories,SKIMS,,,yes
+268,13,valid,,Portfolio Categories,playstation,,,yes
+269,13,valid,,Portfolio Categories,BARBIE,,,yes
+270,13,valid,,Portfolio Categories,RHUDE,,,yes
+271,13,valid,,Portfolio Categories,TIK TOK,,,yes
+274,13,valid,,Portfolio Categories,LOEWE,,,yes
+275,9,valid,,Whatsapp Message,Tanveer Gujranwala,,,yes
+277,13,valid,,Portfolio Categories,Denim Tears,,,yes
+278,14,valid,,Country,PK,,,yes
+279,14,valid,,Country,CN,,,yes
+280,14,valid,,Country,UAE,,,yes
+281,14,valid,,Country,USA,,,yes
+282,13,valid,,Portfolio Categories,PHILLIES,,,yes
+283,11,valid,,Govt Leave,Excel Fest,2025-2-25,,yes
+284,11,valid,,Govt Leave,Eid-ul-Fitr,2025-3-31,,yes
+285,11,valid,,Govt Leave,Eid-ul-Fitr,2025-4-1,,yes
+286,11,valid,,Govt Leave,Eid-ul-Fitr,2025-4-2,,yes
+287,11,valid,,Govt Leave,Youm-e-Takbir,2025-5-28,,yes
+288,9,valid,,Whatsapp Message,Afzal Sambrial,,,yes
+297,10,excluded,excluded_refid_branches,,,,,
+298,10,excluded,excluded_refid_branches,,,,,
+299,10,excluded,excluded_refid_branches,,,,,
+300,10,excluded,excluded_refid_branches,,,,,
+309,11,valid,,Govt Leave,Defence Day,2025-9-6,,yes
+311,3,excluded,excluded_refid_services,,,,,
+312,3,excluded,excluded_refid_services,,,,,
+313,3,excluded,excluded_refid_services,,,,,
+315,10,excluded,excluded_refid_branches,,,,,
+316,0,valid,,Alibaba Packages,Alibaba Membership,,,yes
+317,0,valid,,Alibaba Packages,Alibaba Services,,,yes
+318,0,valid,,Alibaba Packages,Design Development,,,yes
+319,0,valid,,Alibaba Packages,Domain Hosting,,,yes
+320,8,valid,,Contact Attribute,In-meeting,,,yes
+321,8,valid,,Contact Attribute,WH-Call,,,yes
+322,8,valid,,Contact Attribute,In-meeting,,,yes
+323,8,valid,,Contact Attribute,Out-meeting,,,yes
+324,8,valid,,Contact Attribute,Appointment,,,yes
+325,8,valid,,Contact Attribute,OL-Meeting,,,yes
+326,11,valid,,Govt Leave,EID UL ADHA,2026-5-26,,yes
+327,11,valid,,Govt Leave,EID UL ADHA,2026-5-27,,yes
+328,11,valid,,Govt Leave,EID UL ADHA,2026-5-28,,yes
+329,11,valid,,Govt Leave,09 Muharram-ul-Haram,2026-6-25,,yes
+331,11,valid,,Govt Leave,10 Muharram-ul-Haram,2026-6-26,,yes
+332,0,valid,,Alibaba Packages,AI Services,,,yes
+333,10,excluded,excluded_refid_branches,,,,,
+334,10,excluded,excluded_refid_branches,,,,,
+335,11,valid,,Govt Leave,12 Rabi ul Awal,2026-8-26,,yes

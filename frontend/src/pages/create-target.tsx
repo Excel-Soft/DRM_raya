@@ -18,6 +18,11 @@ const KWA_PACKAGES = new Set(["Basic", "Standard", "Premium", "Verified Supplier
 // VAS is only relevant for Basic Plus — exact match with the legacy condition.
 const VAS_PACKAGE = "Basic Plus";
 
+function amountToConversion(amount: string): number {
+  const n = Number(amount);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
+}
+
 export default function CreateTarget() {
   const [showForm, setShowForm] = useState(false);
   const { toast } = useToast();
@@ -33,10 +38,10 @@ export default function CreateTarget() {
   const [maxPrice, setMaxPrice] = useState(0);
   const [penalty, setPenalty] = useState(100);
   const [amount, setAmount] = useState("");
-  const [number, setNumber] = useState(0);
   const [kwa, setKwa] = useState(0);
   const [vas, setVas] = useState(0);
-  const [conversion, setConversion] = useState(0);
+  // Row being edited (null = creating a new target).
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const showKwaField = KWA_PACKAGES.has(pkg);
   const showVasField = pkg === VAS_PACKAGE;
@@ -64,8 +69,8 @@ export default function CreateTarget() {
   const createMutation = useMutation({
     mutationFn: async (newTarget: any) => {
       const token = sessionStorage.getItem("token");
-      const res = await fetch("/api/target-system/targets", {
-        method: "POST",
+      const res = await fetch(editingId ? `/api/target-system/targets/${editingId}` : "/api/target-system/targets", {
+        method: editingId ? "PATCH" : "POST",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {})
@@ -74,13 +79,22 @@ export default function CreateTarget() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to create target");
+        throw new Error(err.error || (editingId ? "Failed to update target" : "Failed to create target"));
       }
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/target-system/targets"] });
-      toast({ title: "Target created successfully" });
+      toast({ title: editingId ? "Target updated successfully" : "Target created successfully" });
+      resetForm();
+    },
+    onError: (error: Error) => {
+      toast({ title: editingId ? "Error updating target" : "Error creating target", description: error.message, variant: "destructive" });
+    }
+  });
+
+  function resetForm() {
+      setEditingId(null);
       setTargetName("");
       setCategory("none");
       setPkg("");
@@ -90,16 +104,27 @@ export default function CreateTarget() {
       setMaxPrice(0);
       setPenalty(100);
       setAmount("");
-      setNumber(0);
       setKwa(0);
       setVas(0);
-      setConversion(0);
       setShowForm(false);
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error creating target", description: error.message, variant: "destructive" });
-    }
-  });
+  }
+
+  const handleEdit = (row: any) => {
+    setEditingId(String(row.id));
+    setTargetName(row.targetName ?? "");
+    setCategory(row.category || "none");
+    setPkg(row.package || "");
+    setReward(Number(row.reward) || 0);
+    setBonus(row.bonus || "");
+    setPrice(Number(row.price) || 0);
+    setMaxPrice(Number(row.maxPrice) || 0);
+    setPenalty(Number(row.penalty) || 0);
+    setAmount(row.amount ?? String(row.conversion ?? ""));
+    setKwa(Number(row.kwa) || 0);
+    setVas(Number(row.vas) || 0);
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const handleCreate = () => {
     if (!targetName) {
@@ -116,10 +141,11 @@ export default function CreateTarget() {
       maxPrice,
       penalty,
       amount,
-      number,
       kwa: showKwaField ? kwa : 0,
       vas: showVasField ? vas : 0,
-      conversion,
+      // Legacy targetcreate.php posted the "Amount" field as `vas`, stored in
+      // webxl_terget.conversion — the bonus amount used by Set/View Target.
+      conversion: amountToConversion(amount),
     });
   };
 
@@ -203,6 +229,7 @@ export default function CreateTarget() {
                     <SelectItem value="KWA-KAP">KWA-KAP</SelectItem>
                     <SelectItem value="China Trip">China Trip</SelectItem>
                     <SelectItem value="Kwa-Pro">Kwa-Pro</SelectItem>
+                    <SelectItem value="Renewal">Renewal</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -303,19 +330,11 @@ export default function CreateTarget() {
               </div>
               <div>
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Amount:</label>
-                <Input value={amount} onChange={e => setAmount(e.target.value)} placeholder="Enter amount name" className="h-9" />
+                <Input type="number" min={0} value={amount} onChange={e => setAmount(e.target.value)} placeholder="Enter amount" className="h-9" />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mt-4">
-              <div>
-                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Number (quota):</label>
-                <Input type="number" value={number} onChange={e => setNumber(Number(e.target.value))} className="h-9" />
-              </div>
-              <div>
-                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Conversion:</label>
-                <Input type="number" value={conversion} onChange={e => setConversion(Number(e.target.value))} className="h-9" />
-              </div>
               {showKwaField && (
                 <div>
                   <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">KWA:</label>
@@ -335,8 +354,13 @@ export default function CreateTarget() {
                   disabled={createMutation.isPending}
                 >
                   {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                  Create
+                  {editingId ? "Update" : "Create"}
                 </Button>
+                {editingId && (
+                  <Button variant="outline" className="w-full h-9 mt-2" onClick={resetForm}>
+                    Cancel
+                  </Button>
+                )}
               </div>
             </div>
           </CardContent>
@@ -387,8 +411,8 @@ export default function CreateTarget() {
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">KWA</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">VAS</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Conversion</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Create</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -411,18 +435,19 @@ export default function CreateTarget() {
                       <TableCell className="text-center">{row.targetName}</TableCell>
                       <TableCell className="text-center">{row.category || "-"}</TableCell>
                       <TableCell className="text-center">{row.number}</TableCell>
+                      <TableCell className="text-center">{Number(row.price) || 0}</TableCell>
+                      {/* Legacy "Bonus" column: the bonus amount (conversion), with % when the bonus type is Percentage. */}
                       <TableCell className="text-center">
-                        {row.price}
+                        {row.conversion ?? 0}{row.bonus === "Percentage %" ? "%" : ""}
                       </TableCell>
-                      <TableCell className="text-center">{row.bonus}</TableCell>
                       <TableCell className="text-center">{row.package === "none" ? "" : row.package}</TableCell>
-                      <TableCell className="text-center">
-                        {row.bonus === "Percentage %" ? `${row.reward}%` : row.reward}
-                      </TableCell>
+                      <TableCell className="text-center">{row.reward}</TableCell>
                       <TableCell className="text-center">{row.kwa}</TableCell>
                       <TableCell className="text-center">{row.vas}</TableCell>
-                      <TableCell className="text-center">{row.conversion}</TableCell>
                       <TableCell className="text-center">{format(new Date(row.createdAt), "dd MMM yyyy hh:mm a")}</TableCell>
+                      <TableCell className="text-center">
+                        <button onClick={() => handleEdit(row)} className="text-[12px] text-[#00a65a] hover:underline">Edit</button>
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
@@ -431,7 +456,10 @@ export default function CreateTarget() {
           </div>
 
           <div className="p-4 flex items-center justify-between border-t text-sm text-gray-600 dark:text-zinc-300">
-            <div>Showing {pagedTargets.length} of {filteredTargets.length} entries</div>
+            <div>
+              Showing {filteredTargets.length === 0 ? 0 : (currentPage - 1) * limit + 1} to{" "}
+              {(currentPage - 1) * limit + pagedTargets.length} of {filteredTargets.length} entries
+            </div>
             <div className="flex space-x-1">
               <Button
                 variant="outline"

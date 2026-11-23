@@ -1,0 +1,16 @@
+refId,category,row_count,disposition,approval_status,user_decision,evidence
+0,Alibaba Packages,5,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,Modern UI ATTRIBUTE_CATEGORIES; dry-run 201 valid
+1,Company Business Type,11,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,Archive Exporter/Manufacturer cluster
+2,Service Type,12,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,Industry/service type list refId 2
+3,EXCLUDED_SERVICES,31,EXCLUDE_FUTURE_SERVICES,BUSINESS_MAPPING_APPROVED_2026-11-04,User 2026-11-04 — 31 excluded from attributes,services catalog API not attributes
+4,Company Detail,21,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,Partner company names
+5,Source,23,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,Lead source list
+6,Job Designation,9,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,CEO/Director/Manager
+7,Service Type,1,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,User 2026-11-04 — id 107 Agriculture same category as refId 2,Distinct legacy row required
+8,Contact Attribute,32,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved; ids 197/198 excluded separately,Follow-up methods; 30 ETL rows after misfile exclude
+9,Whatsapp Message,6,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,User 2026-11-04 — all six names unchanged,ids 160-288 per profile
+10,EXCLUDED_BRANCHES,10,EXCLUDE_FUTURE_BRANCHES,BUSINESS_MAPPING_APPROVED_2026-11-04,User 2026-11-04 — 10 excluded from attributes,drm.branches in modern UI
+11,Govt Leave,18,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,time→date_label
+12,Account Monthly Task,23,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,time→date_label; branch→branch
+13,Portfolio Categories,38,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,Brand/category names
+14,Country,4,INCLUDE_ATTRIBUTES,BUSINESS_MAPPING_APPROVED_2026-11-04,Approved with Phase 2F table,CN PK UAE USA

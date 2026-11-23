@@ -30,6 +30,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
+import { MonthlyAttendanceSheet } from "@/components/monthly-attendance-sheet";
 
 type AttendanceEdit = {
   id: string;
@@ -243,6 +245,13 @@ export default function EditAtt() {
           </Button>
         </div>
 
+        {/* Old DRM edit-att: monthly attendance / salary sheet */}
+        <div className="space-y-2">
+          <h2 className="text-[15px] font-bold text-[#555] dark:text-zinc-300 uppercase">Attendance Report</h2>
+          <MonthlyAttendanceSheet canEdit={isManager} />
+        </div>
+
+        <h2 className="text-[15px] font-bold text-[#555] dark:text-zinc-300 uppercase">Edit Requests</h2>
         <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-4 space-y-4">
 
@@ -357,12 +366,14 @@ export default function EditAtt() {
             {isManager ? (
               <div className="space-y-1">
                 <Label className="text-xs font-semibold text-slate-500">Employee</Label>
-                <Select value={form.userId} onValueChange={(v) => setField("userId", v)}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select employee" /></SelectTrigger>
-                  <SelectContent>
-                    {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.name || u.id}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  grouped={false}
+                  users={users}
+                  value={form.userId}
+                  onChange={(v) => setField("userId", v)}
+                  placeholder="Select employee"
+                  className="h-8 text-xs"
+                />
               </div>
             ) : (
               <p className="text-xs text-slate-500">This request will be submitted for your own attendance.</p>

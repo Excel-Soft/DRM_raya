@@ -55,9 +55,7 @@ router.get("/me/navigation", authMiddleware, async (req: Request, res: Response)
         const navigation = getNavigationForRole(currentRole, isCurrentRoleAdmin);
 
         // Manageable roles (for Admin and Super HOD) — show ALL roles when admin is impersonating
-        const manageableRoles = isAdmin
-            ? ROLE_REGISTRY.filter(r => r.key !== ROLES.ADMIN)
-            : [];
+        const manageableRoles = isAdmin ? ROLE_REGISTRY : [];
 
         // Debug logging
         console.log(`[RBAC] User: ${req.user.email}, Role: ${currentRole}, IsAdmin: ${isAdmin}, Impersonating: ${!!req.user.impersonatorId}, ManageableRoles: ${manageableRoles.length}`);

@@ -9,12 +9,14 @@
  *
  * Primary path:        /api/dd-manager/project-report
  * Compatibility paths: /api/reports/projects
+ * Company suggestions: /api/dd-manager/project-report/companies?q=...
+ *                      /api/reports/projects/companies?q=...
  * (The /api/pms/project-report alias delegates to the same service from
  *  server/pms-routes.ts.)
  */
 import type { Express, Request, Response } from "express";
 import { normalizeRole, isManagerialRole } from "../utils/role-utils";
-import { listProjectReport } from "./services/project-report.service";
+import { listProjectReport, suggestProjectReportCompanies } from "./services/project-report.service";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_LIMITS = [10, 25, 50, 100];
@@ -101,7 +103,35 @@ export async function handleProjectReport(req: Request, res: Response) {
   }
 }
 
+/**
+ * Type-ahead for the report's "Company Name" filter. Same access rule as the
+ * report itself. Returns { companies: string[] } (up to 20, prefix matches first).
+ */
+export async function handleProjectReportCompanies(req: Request, res: Response) {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+    const role = getActiveRole(req);
+    if (!canViewProjectReport(role)) {
+      return res
+        .status(403)
+        .json({ error: "Forbidden", message: "You are not authorized to view the project report" });
+    }
+
+    const q = req.query.q ? String(req.query.q).trim().slice(0, 100) : "";
+    if (!q) return res.json({ companies: [] });
+
+    const companies = await suggestProjectReportCompanies(q, 20);
+    res.json({ companies });
+  } catch (err) {
+    console.error("[project-report] company suggestions error", err);
+    res.status(500).json({ error: "InternalError", message: "Failed to fetch company suggestions" });
+  }
+}
+
 export function registerProjectReportRoutes(app: Express) {
+  app.get("/api/dd-manager/project-report/companies", handleProjectReportCompanies);
+  app.get("/api/reports/projects/companies", handleProjectReportCompanies);
   app.get("/api/dd-manager/project-report", handleProjectReport);
   app.get("/api/reports/projects", handleProjectReport);
 }

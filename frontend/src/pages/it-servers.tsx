@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
+import { planDomainRenewal, renewalQuotationUrl, customerDetailUrl } from "@/lib/domain-renewal";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequestJson } from "@/lib/queryClient";
-import { Loader2, Search, User, RefreshCw, Plus, Server, Database, Trash2, Globe, HardDrive, Pencil, AlertCircle, Copy, FileText, Download, Printer, ShieldCheck } from "lucide-react";
+import { Loader2, Search, User, RefreshCw, Plus, Server, Database, Trash2, Globe, HardDrive, Pencil, AlertCircle, Copy, FileText, Download, Printer, ShieldCheck, Check, ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,6 +24,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 import { utils, writeFile } from "xlsx";
 
 const SERVER_STATUS_OPTIONS = ["ACTIVE", "INACTIVE", "SUSPENDED", "ARCHIVED"] as const;
@@ -105,6 +111,22 @@ interface DomainForm {
   activationDate: string;
   expiryDate: string;
   cpanelUsername: string;
+  ssl: boolean; // legacy "SSL" checkbox -> ssl_expiry_date = expiry
+  duration: string; // legacy "Active Duration" (years) -> expiry = activation + N years
+}
+
+const DURATION_OPTIONS = ["1", "2", "3", "4", "5"];
+
+/** yyyy-mm-dd + N years (date-only math, no timezone shift). */
+function addYears(dateStr: string, years: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m || !years) return "";
+  const y = Number(m[1]) + years;
+  const mo = Number(m[2]);
+  // 29 Feb + N years -> 28 Feb when the target year is not a leap year.
+  const lastDay = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  const d = Math.min(Number(m[3]), lastDay);
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 const EMPTY_DOMAIN_FORM: DomainForm = {
@@ -116,6 +138,8 @@ const EMPTY_DOMAIN_FORM: DomainForm = {
   activationDate: "",
   expiryDate: "",
   cpanelUsername: "",
+  ssl: false,
+  duration: "",
 };
 
 const DOMAIN_HOSTNAME_RE =
@@ -183,6 +207,14 @@ export default function ItServers() {
   // --- Domain Hosting create form state (Patch 6 Stage 6) ---
   const [domainForm, setDomainForm] = useState<DomainForm>(EMPTY_DOMAIN_FORM);
   const [domainFormError, setDomainFormError] = useState<string | null>(null);
+  const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+  const [companySearch, setCompanySearch] = useState("");
+  const [companySearchDebounced, setCompanySearchDebounced] = useState("");
+  const [selectedCompanyLabel, setSelectedCompanyLabel] = useState("");
+  const [domainPageSize, setDomainPageSize] = useState(10);
+  const [domainPage, setDomainPage] = useState(1);
+  const [, setLocation] = useLocation();
+  const [renewingId, setRenewingId] = useState<string | null>(null);
 
   // --- Registry / Hosting Package inline create state ---
   const [registryName, setRegistryName] = useState("");
@@ -284,9 +316,18 @@ export default function ItServers() {
   // with real customer rows (the search endpoint can yield synthetic ids that
   // break the it_domains.customer_id FK), so we load real rows here. The default
   // queryFn joins the key into the URL, so we supply a custom queryFn for params.
-  const { data: customersResp } = useQuery<{ customers: any[] }>({
-    queryKey: ["/api/customers", "domain-picker"],
-    queryFn: () => apiRequestJson("GET", "/api/customers?pageSize=200"),
+  useEffect(() => {
+    const t = setTimeout(() => setCompanySearchDebounced(companySearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [companySearch]);
+  const { data: customersResp, isFetching: customersFetching } = useQuery<{ customers: any[] }>({
+    queryKey: ["/api/customers", "domain-picker", companySearchDebounced],
+    queryFn: () =>
+      apiRequestJson(
+        "GET",
+        `/api/customers?pageSize=50&page=1${companySearchDebounced ? `&search=${encodeURIComponent(companySearchDebounced)}` : ""}`,
+      ),
+    enabled: companyPickerOpen,
   });
   const customersList = Array.isArray(customersResp?.customers) ? customersResp!.customers : [];
 
@@ -297,6 +338,7 @@ export default function ItServers() {
       toast({ title: "Domain added" });
       queryClient.invalidateQueries({ queryKey: ["/api/it/domains"] });
       setDomainForm(EMPTY_DOMAIN_FORM);
+      setSelectedCompanyLabel("");
       setDomainFormError(null);
     },
     onError: (err) => {
@@ -411,7 +453,52 @@ export default function ItServers() {
     if (domainForm.activationDate) body.activationDate = domainForm.activationDate;
     if (domainForm.expiryDate) body.expiryDate = domainForm.expiryDate;
     if (domainForm.cpanelUsername.trim()) body.cpanelUsername = domainForm.cpanelUsername.trim();
+    // Legacy: the SSL tick and the chosen hosting renew together with the domain.
+    if (domainForm.expiryDate && domainForm.ssl) body.sslExpiryDate = domainForm.expiryDate;
+    if (domainForm.expiryDate && (domainForm.serverId || domainForm.hostingPackageId)) {
+      body.hostingExpiryDate = domainForm.expiryDate;
+    }
     saveDomainMutation.mutate(body);
+  };
+
+  // Same as IT -> Domains: person icon = company detail page, renew = follow-up check -> quotation.
+  const openCompanyDetail = (item: any) => {
+    if (!item.customerId) {
+      toast({ title: "No company linked", description: "Select the company on this domain first.", variant: "destructive" });
+      return;
+    }
+    setLocation(customerDetailUrl(item.customerId));
+  };
+  const startRenewal = async (item: any) => {
+    if (renewingId) return;
+    setRenewingId(item.id);
+    try {
+      const plan = await planDomainRenewal(item);
+      if (plan.kind === "no-company") {
+        toast({ title: "No company linked", description: "Select the company on this domain first.", variant: "destructive" });
+        return;
+      }
+      if (plan.kind === "need-followup") {
+        toast({
+          title: "Add a follow-up first",
+          description: `No follow-up in the last 60 days for ${plan.services.join(", ")}. Opening the company page to add it.`,
+          variant: "destructive",
+        });
+        setLocation(customerDetailUrl(plan.customerId));
+        return;
+      }
+      if (plan.skipped.length > 0) {
+        toast({
+          title: "Some services need a follow-up",
+          description: `Added: ${plan.services.join(", ")}. Not added (no follow-up): ${plan.skipped.join(", ")}.`,
+        });
+      }
+      setLocation(renewalQuotationUrl(plan));
+    } catch (err) {
+      toast({ title: extractErrorMessage(err, "Could not start the renewal"), variant: "destructive" });
+    } finally {
+      setRenewingId(null);
+    }
   };
 
   const submitRegistry = () => {
@@ -447,6 +534,11 @@ export default function ItServers() {
   const serversList = Array.isArray(servers) ? servers : []; const registriesList = Array.isArray(registries) ? registries : []; const hostingPackagesList = Array.isArray(hostingPackages) ? hostingPackages : []; const domainsList = Array.isArray(domains) ? domains : []; const filteredDomains = domainsList.filter(d => 
     d && (d.domainName || d.domain || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const domainTotalPages = Math.max(1, Math.ceil(filteredDomains.length / domainPageSize));
+  const domainCurrentPage = Math.min(domainPage, domainTotalPages);
+  const domainPageStart = (domainCurrentPage - 1) * domainPageSize;
+  const pagedDomains = filteredDomains.slice(domainPageStart, domainPageStart + domainPageSize);
 
   const serverSearchLc = serverSearch.trim().toLowerCase();
   const filteredServers = serversList.filter((s: any) => {
@@ -550,21 +642,64 @@ export default function ItServers() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* Row 1 */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Company</label>
-              <Select
-                value={domainForm.customerId || "none"}
-                onValueChange={(v) => setDomainForm((f) => ({ ...f, customerId: v === "none" ? "" : v }))}
-              >
-                <SelectTrigger className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
-                  <SelectValue placeholder="Select a company (optional)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">— None —</SelectItem>
-                  {customersList.map((c: any) => c && (
-                    <SelectItem key={c.id} value={c.id}>{customerLabel(c)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Company Name</label>
+              <Popover open={companyPickerOpen} onOpenChange={setCompanyPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={companyPickerOpen}
+                    className="w-full h-11 justify-between font-normal bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+                  >
+                    <span className={cn("truncate", !domainForm.customerId && "text-muted-foreground")}>
+                      {domainForm.customerId ? selectedCompanyLabel || "Selected company" : "Search Company Through Id/Name"}
+                    </span>
+                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                  <Command shouldFilter={false}>
+                    <CommandInput placeholder="Type company name or ID..." value={companySearch} onValueChange={setCompanySearch} />
+                    <CommandList className="max-h-72">
+                      {customersFetching ? (
+                        <div className="py-6 flex justify-center"><Loader2 className="h-4 w-4 animate-spin text-slate-400" /></div>
+                      ) : (
+                        <CommandEmpty>No company found.</CommandEmpty>
+                      )}
+                      <CommandGroup>
+                        {domainForm.customerId && (
+                          <CommandItem
+                            value="__none__"
+                            onSelect={() => {
+                              setDomainForm((f) => ({ ...f, customerId: "" }));
+                              setSelectedCompanyLabel("");
+                              setCompanyPickerOpen(false);
+                            }}
+                          >
+                            <span className="text-slate-500">— Clear selection —</span>
+                          </CommandItem>
+                        )}
+                        {!customersFetching && customersList.map((c: any) => c && (
+                          <CommandItem
+                            key={c.id}
+                            value={c.id}
+                            onSelect={() => {
+                              setDomainForm((f) => ({ ...f, customerId: c.id }));
+                              setSelectedCompanyLabel(customerLabel(c));
+                              setCompanyPickerOpen(false);
+                            }}
+                          >
+                            <Check className={cn("mr-2 h-4 w-4", domainForm.customerId === c.id ? "opacity-100" : "opacity-0")} />
+                            <span className="truncate">{customerLabel(c)}</span>
+                            {c.drmId && <span className="ml-auto pl-2 text-xs text-slate-400">#{c.drmId}</span>}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
 
             <div className="space-y-2">
@@ -648,9 +783,41 @@ export default function ItServers() {
               <Input
                 type="date"
                 value={domainForm.activationDate}
-                onChange={(e) => setDomainForm((f) => ({ ...f, activationDate: e.target.value }))}
+                onChange={(e) => {
+                  const activationDate = e.target.value;
+                  setDomainForm((f) => ({
+                    ...f,
+                    activationDate,
+                    expiryDate: f.duration ? addYears(activationDate, Number(f.duration)) || f.expiryDate : f.expiryDate,
+                  }));
+                }}
                 className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100 [&::-webkit-calendar-picker-indicator]:dark:invert"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Active Duration</label>
+              <Select
+                value={domainForm.duration || "none"}
+                onValueChange={(v) => {
+                  const duration = v === "none" ? "" : v;
+                  setDomainForm((f) => ({
+                    ...f,
+                    duration,
+                    expiryDate: duration && f.activationDate ? addYears(f.activationDate, Number(duration)) : f.expiryDate,
+                  }));
+                }}
+              >
+                <SelectTrigger className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
+                  <SelectValue placeholder="Choose..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Choose...</SelectItem>
+                  {DURATION_OPTIONS.map((y) => (
+                    <SelectItem key={y} value={y}>{y} Year{y === "1" ? "" : "s"}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
@@ -661,6 +828,20 @@ export default function ItServers() {
                 onChange={(e) => setDomainForm((f) => ({ ...f, expiryDate: e.target.value }))}
                 className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100 [&::-webkit-calendar-picker-indicator]:dark:invert"
               />
+              {domainForm.duration && !domainForm.activationDate && (
+                <p className="text-[11px] text-slate-400">Pick an Activation Date to fill this from the duration.</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">SSL</label>
+              <label className="h-11 flex items-center gap-2 cursor-pointer select-none text-sm text-slate-600 dark:text-zinc-300">
+                <Checkbox
+                  checked={domainForm.ssl}
+                  onCheckedChange={(v) => setDomainForm((f) => ({ ...f, ssl: v === true }))}
+                />
+                SSL included (expires with the domain)
+              </label>
             </div>
           </div>
 
@@ -687,7 +868,7 @@ export default function ItServers() {
           <div className="p-4 border-b flex items-center justify-between bg-white dark:bg-zinc-900 dark:bg-zinc-900">
             <div className="flex items-center gap-2">
               <span className="text-sm text-slate-500 dark:text-zinc-400">Show</span>
-              <Select defaultValue="10">
+              <Select value={String(domainPageSize)} onValueChange={(v) => { setDomainPageSize(Number(v)); setDomainPage(1); }}>
                 <SelectTrigger className="w-16 h-8">
                   <SelectValue />
                 </SelectTrigger>
@@ -701,7 +882,7 @@ export default function ItServers() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-slate-500 dark:text-zinc-400">Search:</span>
-              <Input className="h-8 w-48" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              <Input className="h-8 w-48" value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setDomainPage(1); }} />
             </div>
           </div>
           <Table>
@@ -718,9 +899,9 @@ export default function ItServers() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredDomains.map((item: any, idx: number) => item && (
+              {pagedDomains.map((item: any, idx: number) => item && (
                 <TableRow key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800">
-                  <TableCell className="text-slate-500 font-medium dark:text-zinc-400">{idx + 1}</TableCell>
+                  <TableCell className="text-slate-500 font-medium dark:text-zinc-400">{domainPageStart + idx + 1}</TableCell>
                   <TableCell className="font-semibold text-slate-700 dark:text-zinc-400">{item.company || "N/A"}</TableCell>
                   <TableCell>
                     <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100 transition-colors">
@@ -736,158 +917,35 @@ export default function ItServers() {
                     <Badge variant="secondary" className="text-[10px] bg-slate-700 text-white leading-none px-1.5 py-0.5">Renew</Badge>
                   </TableCell>
                   <TableCell>
-                    {item.ssl && <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-200" />}
+                    {(item.ssl || item.sslExpiryDate) && (
+                      <div className="text-xs font-semibold text-slate-600 dark:text-zinc-300" title="SSL expiry">
+                        {item.sslExpiryDate ? new Date(item.sslExpiryDate).toLocaleDateString() : "Yes"}
+                      </div>
+                    )}
                   </TableCell>
-                  <TableCell className="text-slate-600 text-sm dark:text-zinc-300">{item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "N/A"}</TableCell>
+                  <TableCell className="text-slate-600 text-sm dark:text-zinc-300">{fmtDate(item.activationDate || item.createdAt)}</TableCell>
                   <TableCell className="text-right flex items-center justify-end gap-2">
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button size="icon" variant="ghost" className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full">
-                          <User className="h-4 w-4" />
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="max-w-[95vw] w-[1200px] p-0 gap-0 overflow-hidden border-none shadow-2xl bg-[#f8f9fa] dark:bg-zinc-900">
-                        <DialogHeader className="p-4 bg-white dark:bg-zinc-900 border-b flex flex-row items-center justify-between space-y-0">
-                          <DialogTitle className="text-sm font-bold text-slate-700 uppercase tracking-wider dark:text-zinc-400">Attribute</DialogTitle>
-                        </DialogHeader>
-                        <div className="p-6 overflow-y-auto max-h-[85vh]">
-                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-                            {/* Left Column: Client Info */}
-                            <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden">
-                              <CardContent className="p-6 flex flex-col items-center text-center">
-                                <h3 className="font-bold text-slate-800 text-lg mb-2 dark:text-zinc-100">{item.company || "N/A"}</h3>
-                                <div className="h-12 w-12 rounded-full bg-blue-100/50 flex items-center justify-center text-blue-600 font-bold text-xl mb-4">
-                                  {(item.company || "N").charAt(0)}
-                                </div>
-                                <h4 className="font-bold text-slate-700 dark:text-zinc-400">Client Contact</h4>
-                                <p className="text-xs text-slate-400 mb-4">{item.email || "N/A"}</p>
-
-                                <div className="flex gap-2 mb-6">
-                                  <Badge className="bg-emerald-600 hover:bg-emerald-600 px-3 py-1 text-[10px] font-bold">{item.contactNo || "N/A"}</Badge>
-                                </div>
-                              </CardContent>
-                            </Card>
-
-                            {/* Middle Column: Expiry History */}
-                            <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden">
-                              <CardContent className="p-6">
-                                <h3 className="font-bold text-slate-700 text-sm mb-6 flex items-center gap-2 dark:text-zinc-400">
-                                  Expiry Date
-                                </h3>
-                                <div className="space-y-8 relative before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-100">
-                                  <div className="flex gap-4 relative">
-                                    <div className="h-6 w-6 rounded-full bg-white dark:bg-zinc-900 border border-slate-200 flex items-center justify-center z-10 shrink-0 mt-1 dark:border-zinc-800">
-                                      <div className="h-1.5 w-1.5 rounded-full bg-slate-300" />
-                                    </div>
-                                    <div className="flex flex-col gap-2">
-                                      <div className="flex items-center gap-2">
-                                        <div className="h-8 w-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                                          <Globe className="h-4 w-4" />
-                                        </div>
-                                        <div>
-                                          <p className="text-[11px] font-bold text-slate-700 dark:text-zinc-400">Domain</p>
-                                          <p className="text-[10px] text-slate-400 italic font-mono">{item.domainName || item.domain}</p>
-                                        </div>
-                                      </div>
-                                      <Badge className="bg-slate-800 text-white font-mono text-[9px] w-fit">Exp: {fmtDate(item.expiryDate)}</Badge>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex gap-4 relative">
-                                    <div className="h-6 w-6 rounded-full bg-white dark:bg-zinc-900 border border-slate-200 flex items-center justify-center z-10 shrink-0 mt-1 dark:border-zinc-800">
-                                      <div className="h-1.5 w-1.5 rounded-full bg-slate-300" />
-                                    </div>
-                                    <div className="flex flex-col gap-2">
-                                      <div className="flex items-center gap-2">
-                                        <div className="h-8 w-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                                          <ShieldCheck className="h-4 w-4" />
-                                        </div>
-                                        <div>
-                                          <p className="text-[11px] font-bold text-slate-700 dark:text-zinc-400">SSL</p>
-                                          <p className="text-[10px] text-slate-400 italic font-mono">{item.domainName || item.domain}</p>
-                                        </div>
-                                      </div>
-                                      <Badge className="bg-slate-800 text-white font-mono text-[9px] w-fit">Exp: {fmtDate(item.sslExpiryDate)}</Badge>
-                                    </div>
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
-
-                            {/* Right Column: Message composer */}
-                            <div className="space-y-6">
-                              <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden">
-                                <CardContent className="p-6">
-                                  <h3 className="font-bold text-slate-700 text-sm mb-4 dark:text-zinc-400">Renewal Message</h3>
-                                  <MessageComposer
-                                    item={item}
-                                    onCopied={() => toast({ title: "Copied!", description: "Message copied to clipboard" })}
-                                  />
-                                </CardContent>
-                              </Card>
-                            </div>
-                          </div>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button size="icon" variant="ghost" className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full">
-                          <RefreshCw className="h-4 w-4" />
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="max-w-[95vw] w-[1200px] p-0 gap-0 overflow-hidden border-none shadow-2xl bg-[#f8f9fa] dark:bg-zinc-900">
-                        <DialogHeader className="p-4 bg-white dark:bg-zinc-900 border-b">
-                          <div className="flex items-center gap-2">
-                            <DialogTitle className="text-sm font-bold text-slate-700 uppercase tracking-wider dark:text-zinc-400">Quotation</DialogTitle>
-                            <span className="text-xs font-bold text-emerald-500">{new Date().toLocaleString()}</span>
-                          </div>
-                        </DialogHeader>
-                        <div className="p-6 overflow-y-auto max-h-[85vh]">
-                          <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden p-6 mb-6 text-slate-800 dark:text-zinc-100">
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                              <div className="space-y-1">
-                                <label className="text-[11px] font-bold text-slate-500 uppercase dark:text-zinc-400">Company</label>
-                                <Input value={item.company || "N/A"} readOnly className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800" />
-                              </div>
-                            </div>
-                            <Table>
-                              <TableHeader className="bg-slate-50/80 dark:bg-zinc-900/80">
-                                <TableRow>
-                                  <TableHead className="text-xs font-bold">Product</TableHead>
-                                  <TableHead className="text-xs font-bold">Detail</TableHead>
-                                  <TableHead className="text-xs font-bold text-right">Total</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                <TableRow>
-                                  <TableCell className="text-xs">Domain Renewal</TableCell>
-                                  <TableCell className="text-xs">{item.domainName || item.domain}</TableCell>
-                                  <TableCell className="text-xs text-right font-mono">$15.00</TableCell>
-                                </TableRow>
-                                {item.hostingPackageName && (
-                                  <TableRow>
-                                    <TableCell className="text-xs">Hosting Package ({item.hostingPackageName})</TableCell>
-                                    <TableCell className="text-xs">Capacity: {item.capacity || item.hostingPackageCapacity || "N/A"}</TableCell>
-                                    <TableCell className="text-xs text-right font-mono">
-                                      ${item.hostingPackagePrice ? parseFloat(item.hostingPackagePrice).toFixed(2) : "0.00"}
-                                    </TableCell>
-                                  </TableRow>
-                                )}
-                                <TableRow className="border-t font-bold">
-                                  <TableCell className="text-xs">Total Renewal Amount</TableCell>
-                                  <TableCell className="text-xs"></TableCell>
-                                  <TableCell className="text-xs text-right font-mono">
-                                    ${(15.00 + (item.hostingPackagePrice ? parseFloat(item.hostingPackagePrice) : 0)).toFixed(2)}
-                                  </TableCell>
-                                </TableRow>
-                              </TableBody>
-                            </Table>
-                          </Card>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full"
+                      onClick={() => openCompanyDetail(item)}
+                      title="Company detail"
+                      aria-label="Company detail"
+                    >
+                      <User className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full"
+                      onClick={() => startRenewal(item)}
+                      disabled={renewingId === item.id}
+                      title="Renew (quotation)"
+                      aria-label="Renew domain"
+                    >
+                      {renewingId === item.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -899,11 +957,29 @@ export default function ItServers() {
             </TableBody>
           </Table>
           <div className="p-4 border-t flex items-center justify-between bg-white dark:bg-zinc-900 dark:bg-zinc-900">
-            <span className="text-sm text-slate-500 dark:text-zinc-400">Showing {filteredDomains.length} entries</span>
-            <div className="flex gap-1">
-              <Button variant="outline" size="sm" disabled>Previous</Button>
-              <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700">1</Button>
-              <Button variant="outline" size="sm" disabled>Next</Button>
+            <span className="text-sm text-slate-500 dark:text-zinc-400">
+              {filteredDomains.length === 0
+                ? "Showing 0 entries"
+                : `Showing ${domainPageStart + 1} to ${domainPageStart + pagedDomains.length} of ${filteredDomains.length} entries`}
+            </span>
+            <div className="flex flex-wrap gap-1">
+              <Button variant="outline" size="sm" disabled={domainCurrentPage <= 1} onClick={() => setDomainPage(domainCurrentPage - 1)}>Previous</Button>
+              {Array.from({ length: domainTotalPages }, (_, i) => i + 1)
+                .filter((p) => p === 1 || p === domainTotalPages || Math.abs(p - domainCurrentPage) <= 1)
+                .map((p, i, arr) => (
+                  <span key={p} className="flex gap-1">
+                    {i > 0 && p - arr[i - 1] > 1 && <span className="px-1 self-center text-slate-400">…</span>}
+                    <Button
+                      size="sm"
+                      variant={p === domainCurrentPage ? "default" : "outline"}
+                      className={p === domainCurrentPage ? "bg-emerald-600 hover:bg-emerald-700" : ""}
+                      onClick={() => setDomainPage(p)}
+                    >
+                      {p}
+                    </Button>
+                  </span>
+                ))}
+              <Button variant="outline" size="sm" disabled={domainCurrentPage >= domainTotalPages} onClick={() => setDomainPage(domainCurrentPage + 1)}>Next</Button>
             </div>
           </div>
         </CardContent>
@@ -1040,7 +1116,7 @@ export default function ItServers() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Registry List */}
         <Card className="border-none shadow-sm overflow-hidden flex flex-col dark:bg-zinc-900 dark:border-zinc-800">
-          <CardHeader className="bg-slate-50 dark:bg-zinc-800 py-3 px-4 flex flex-row items-center justify-between space-y-0 text-white dark:bg-zinc-900">
+          <CardHeader className="bg-slate-500 dark:bg-zinc-700 py-3 px-4 flex flex-row items-center justify-between space-y-0 text-white">
             <CardTitle className="text-white text-sm font-semibold flex items-center gap-2">
               <Plus className="h-4 w-4 text-white" /> Add Registry
             </CardTitle>
@@ -1140,7 +1216,10 @@ export default function ItServers() {
                       {deletePackageMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                     </Button>
                   </div>
-                  <span className="text-[10px] text-emerald-600 font-semibold tracking-wide">Capacity: {pkg.capacity || "N/A"}</span>
+                  <span className="text-[11px] text-emerald-600 font-semibold tracking-wide">
+                    Space : {pkg.capacityMb ? `${pkg.capacityMb}Mb` : pkg.capacity || "Unlimited"}
+                    {pkg.price ? <span className="ml-2 text-slate-500">· {parseFloat(pkg.price).toFixed(2)}</span> : null}
+                  </span>
                 </div>
               ))}
               {hostingPackagesList.length === 0 && <div className="text-center py-4 text-slate-400 text-sm">No packages listed</div>}

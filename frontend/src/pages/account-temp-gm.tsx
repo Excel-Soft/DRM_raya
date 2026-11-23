@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Trash2, Search } from "lucide-react";
+import { Trash2, Search, Pencil } from "lucide-react";
 import { useState, useMemo } from "react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -7,6 +7,7 @@ import { apiRequest, queryClient, extractApiError, mutationRequest } from "@/lib
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 // ─── Types ─────────────────────────────────────────────────────────────
 interface TempGmEntry {
@@ -54,6 +55,16 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
+// Edit (and Refund GM status) is for admin, Account and HOD only (backend enforces the same).
+const GM_EDIT_ROLES = ["admin", "super_admin", "adm", "account_manager", "account", "super_hod", "hod"];
+function canEditGmEntries(): boolean {
+  let role = "";
+  try { role = sessionStorage.getItem("userRole") || ""; } catch { /* ignore */ }
+  return GM_EDIT_ROLES.includes(role.toLowerCase().replace(/[\s-]+/g, "_"));
+}
+
+type EditForm = { companyName: string; personName: string; amount: string; amountType: string; reason: string; comment: string };
+
 // ─── Component ──────────────────────────────────────────────────────────
 export default function AccountTempGm() {
   const { toast } = useToast();
@@ -63,6 +74,20 @@ export default function AccountTempGm() {
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TempGmEntry | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
+  const [editTarget, setEditTarget] = useState<TempGmEntry | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>({ companyName: "", personName: "", amount: "", amountType: "PKR", reason: "", comment: "" });
+  const canEdit = canEditGmEntries();
+  const openEdit = (e: TempGmEntry) => {
+    setEditTarget(e);
+    setEditForm({
+      companyName: e.company_name || "",
+      personName: e.person_name || "",
+      amount: e.amount != null ? String(parseFloat(String(e.amount))) : "",
+      amountType: e.amount_type === "USD" ? "USD" : "PKR",
+      reason: e.reason || "",
+      comment: e.comment || "",
+    });
+  };
   const pageSize = 10;
 
   const form = useForm<FormValues>({
@@ -151,6 +176,26 @@ export default function AccountTempGm() {
       toast({ title: "Delete failed", description: err.message, variant: "destructive" }),
   });
 
+  const editMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: EditForm }) =>
+      mutationRequest("PATCH", `/api/account/temp-gm/${id}`, {
+        companyName: data.companyName.trim(),
+        personName: data.personName.trim(),
+        amount: data.amount,
+        amountType: data.amountType,
+        reason: data.reason.trim(),
+        comment: data.comment.trim() || null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/account/temp-gm"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account/temp-gm/eligibility"] });
+      setEditTarget(null);
+      toast({ title: "Updated", description: "Temp GM updated" });
+    },
+    onError: (err: Error) =>
+      toast({ title: "Update failed", description: err.message, variant: "destructive" }),
+  });
+
   // ── Helpers ──────────────────────────────────────────────────────────
   const totalAmount = entries.reduce((s, e) => s + parseFloat(e.amount || "0"), 0);
   const totalPages = Math.ceil(entries.length / pageSize);
@@ -160,7 +205,7 @@ export default function AccountTempGm() {
       toast({
         title: "Cannot add Temp GM",
         description: eligibility.hasActiveGm
-          ? "This company already has a GM (Full, Loan, or Partial)."
+          ? "This company already has a GM (Full / Loan / Partial, an old-DRM GM account or a GM pool entry)."
           : "This company already has an active Temp GM.",
         variant: "destructive",
       });
@@ -243,7 +288,7 @@ export default function AccountTempGm() {
                   {watchedCompany?.trim() && eligibility && !eligibility.canAddTempGm && (
                     <p className="text-[10px] text-red-600 mt-1">
                       {eligibility.hasActiveGm
-                        ? "This company already has a GM. Temp GM is not allowed."
+                        ? "This company already has a GM (GM entry, old GM account or GM pool). Temp GM is not allowed."
                         : "An active Temp GM already exists for this company."}
                     </p>
                   )}
@@ -278,15 +323,15 @@ export default function AccountTempGm() {
                 {/* Person — real users from DB */}
                 <div>
                   <label className="block text-[11px] font-semibold text-gray-600 mb-1 dark:text-zinc-300">Person:</label>
-                  <select
-                    {...form.register("personName")}
-                    className="w-full text-[11px] border border-gray-300 rounded px-2 py-1.5 text-gray-700 focus:outline-none focus:border-green-500 bg-white dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"
-                  >
-                    <option value="">Choose...</option>
-                    {users.map(u => (
-                      <option key={u.id} value={u.full_name}>{u.full_name}</option>
-                    ))}
-                  </select>
+                  <RoleGroupedUserSelect
+                    grouped={false}
+                    users={users}
+                    value={form.watch("personName") || ""}
+                    onChange={(v) => form.setValue("personName", v, { shouldValidate: true, shouldDirty: true })}
+                    getValue={(u: any) => String(u.full_name || "")}
+                    placeholder="Choose..."
+                    className="h-auto w-full text-[11px] border border-gray-300 rounded px-2 py-1.5 text-gray-700 bg-white dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"
+                  />
                   {form.formState.errors.personName && (
                     <p className="text-[10px] text-red-500 mt-0.5">{form.formState.errors.personName.message}</p>
                   )}
@@ -388,6 +433,17 @@ export default function AccountTempGm() {
                           </span>
                         </td>
                         <td className="px-3 py-2">
+                          <div className="flex items-center gap-2">
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => openEdit(entry)}
+                              className="text-blue-500 hover:text-blue-700"
+                              title="Edit"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
@@ -400,6 +456,7 @@ export default function AccountTempGm() {
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -436,6 +493,92 @@ export default function AccountTempGm() {
                 disabled={currentPage === totalPages}
                 className="text-[11px] px-2 py-1 border rounded disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-zinc-800"
               >Next</button>
+            </div>
+          </div>
+        )}
+
+        {editTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg max-w-md w-full p-4 border dark:border-zinc-800">
+              <h2 className="text-sm font-bold text-gray-800 dark:text-zinc-100 mb-3">Edit Temp GM</h2>
+              <div className="space-y-2">
+                {([["companyName", "Company"], ["personName", "Person"]] as const).map(([k, label]) => (
+                  <div key={k}>
+                    <label className="block text-[11px] font-semibold text-gray-600 dark:text-zinc-300 mb-1">{label} <span className="text-red-500">*</span></label>
+                    <input
+                      value={editForm[k]}
+                      onChange={(e) => setEditForm((f) => ({ ...f, [k]: e.target.value }))}
+                      className="w-full text-[11px] border border-gray-300 rounded px-2 py-1.5 bg-transparent dark:border-zinc-700"
+                    />
+                  </div>
+                ))}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-600 dark:text-zinc-300 mb-1">Amount <span className="text-red-500">*</span></label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.amount}
+                      onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
+                      className="w-full text-[11px] border border-gray-300 rounded px-2 py-1.5 bg-transparent dark:border-zinc-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-600 dark:text-zinc-300 mb-1">Amount Type</label>
+                    <select
+                      value={editForm.amountType}
+                      onChange={(e) => setEditForm((f) => ({ ...f, amountType: e.target.value }))}
+                      className="w-full text-[11px] border border-gray-300 rounded px-2 py-1.5 bg-transparent dark:border-zinc-700 dark:bg-zinc-900"
+                    >
+                      <option value="PKR">PKR</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-600 dark:text-zinc-300 mb-1">Reason <span className="text-red-500">*</span></label>
+                  <select
+                    value={editForm.reason}
+                    onChange={(e) => setEditForm((f) => ({ ...f, reason: e.target.value }))}
+                    className="w-full text-[11px] border border-gray-300 rounded px-2 py-1.5 bg-transparent dark:border-zinc-700 dark:bg-zinc-900"
+                  >
+                    {/* old-DRM reasons that are not in today's list stay selectable */}
+                    {(REASONS.includes(editForm.reason) || !editForm.reason ? REASONS : [editForm.reason, ...REASONS]).map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-600 dark:text-zinc-300 mb-1">Comment</label>
+                  <textarea
+                    value={editForm.comment}
+                    onChange={(e) => setEditForm((f) => ({ ...f, comment: e.target.value }))}
+                    rows={3}
+                    className="w-full text-[11px] border border-gray-300 rounded px-2 py-1.5 bg-transparent dark:border-zinc-700"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={() => setEditTarget(null)}
+                  className="text-[11px] px-3 py-1.5 border rounded dark:border-zinc-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    editMutation.isPending ||
+                    !editForm.companyName.trim() || !editForm.personName.trim() ||
+                    !(parseFloat(editForm.amount) > 0) || !editForm.reason.trim()
+                  }
+                  onClick={() => editMutation.mutate({ id: editTarget.id, data: editForm })}
+                  className="text-[11px] px-3 py-1.5 bg-blue-600 text-white rounded disabled:opacity-50"
+                >
+                  {editMutation.isPending ? "Saving..." : "Update"}
+                </button>
+              </div>
             </div>
           </div>
         )}

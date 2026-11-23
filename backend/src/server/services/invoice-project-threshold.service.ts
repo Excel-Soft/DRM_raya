@@ -189,7 +189,10 @@ export async function tryAutoCreateProjectAfterPayment(params: {
   }
 
   const existing = await pool.query(
-    `SELECT id FROM drm.projects WHERE invoice_id = $1 AND COALESCE(is_deleted, false) = false LIMIT 1`,
+    `SELECT id FROM drm.projects
+       WHERE COALESCE(is_deleted, false) = false
+         AND (legacy_source_id = $1::text OR invoice_id = $1::uuid)
+       LIMIT 1`,
     [params.invoiceId],
   );
   if (existing.rows[0]) {
@@ -227,7 +230,10 @@ export async function shouldRunProjectGenerationForApproval(
   if (!fin) return { allowed: true, financials: null, existingProject: false };
 
   const existing = await pool.query(
-    `SELECT id FROM drm.projects WHERE invoice_id = $1 AND COALESCE(is_deleted, false) = false LIMIT 1`,
+    `SELECT id FROM drm.projects
+       WHERE COALESCE(is_deleted, false) = false
+         AND (legacy_source_id = $1::text OR invoice_id = $1::uuid)
+       LIMIT 1`,
     [invoiceId],
   );
   const existingProject = !!existing.rows[0];

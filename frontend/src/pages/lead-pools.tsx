@@ -92,6 +92,7 @@ import {
 import type { Customer } from "@shared/schema";
 import InvoiceCreateForm from "@/components/InvoiceCreateForm";
 import { exportToCSV, exportToPDF } from "@/lib/export-utils";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 
 const WHATSAPP_TEMPLATES = [
@@ -3472,16 +3473,14 @@ export default function LeadPools() {
           </DialogHeader>
           <div className="py-4">
             <label className="text-sm font-medium mb-2 block">Select Sales Executive</label>
-            <Select value={transferUserId} onValueChange={setTransferUserId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select user..." />
-              </SelectTrigger>
-              <SelectContent>
-                {allUsers?.filter(u => (u.roleId || u.role || "").toLowerCase().trim().replace(/\s+/g, '_') === 'sales_executive').map(user => (
-                  <SelectItem key={user.id} value={user.id}>{user.fullName || user.username}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <RoleGroupedUserSelect
+              grouped={false}
+              users={allUsers?.filter(u => (u.roleId || u.role || "").toLowerCase().trim().replace(/\s+/g, '_') === 'sales_executive')}
+              value={transferUserId}
+              onChange={setTransferUserId}
+              getLabel={(user) => String(user.fullName || user.username || "")}
+              placeholder="Select user..."
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTransferLead(null)}>Cancel</Button>
@@ -3622,33 +3621,68 @@ function PrivatePoolFollowupDetail({ activeService, onBack }: { activeService: s
   const [followPage, setFollowPage] = useState(1);
   const followPageSize = 10;
 
-  const { data: followupsRes } = useQuery({ queryKey: ["/api/dashboard/followups?pageSize=50&pool=private"] });
-  const followupsData = (followupsRes as any)?.data?.items || [];
+  const { data: tracingSummary } = useQuery<Record<string, number>>({
+    queryKey: ["/api/sales/tracing/summary", "private"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/sales/tracing/summary?pool=private");
+      return response.json();
+    },
+  });
+
+  const { data: followupDetailsRes } = useQuery({
+    queryKey: [
+      "/api/sales/tracing/followup-details",
+      activeFollowService,
+      activeFollowGrade,
+      appliedStartDate,
+      appliedEndDate,
+      followPage,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        pool: "private",
+        page: String(followPage),
+        pageSize: String(followPageSize),
+      });
+      if (activeFollowService && activeFollowService !== "All") {
+        params.set("mainService", activeFollowService);
+      }
+      if (activeFollowGrade !== "All") params.set("grade", activeFollowGrade);
+      if (appliedStartDate) params.set("dateFrom", appliedStartDate);
+      if (appliedEndDate) params.set("dateTo", appliedEndDate);
+      const response = await apiRequest("GET", `/api/sales/tracing/followup-details?${params.toString()}`);
+      return response.json();
+    },
+  });
+
+  const followupsData = followupDetailsRes?.items || [];
+  const followupTotal = followupDetailsRes?.total ?? followupsData.length;
 
   const handleFollowFilter = () => {
     setAppliedStartDate(followStartDate);
     setAppliedEndDate(followEndDate);
   };
 
-  const getCount = (serviceName: string) => {
-    if (serviceName === "All") return followupsData.length;
-    return followupsData.filter((r: any) => (r.serviceType || "").toLowerCase() === serviceName.toLowerCase()).length;
+  const tracingServiceKeyMap: Record<string, string> = {
+    "Alibaba Membership": "Alibaba_Membership",
+    "Alibaba Services": "Alibaba_Services",
+    "Design Development": "Design_Development",
+    "Domain Hosting": "Domain_Hosting",
+    "AI Services": "AI_Services",
   };
 
-  const filteredByServiceAndDate = followupsData.filter((row: any) => {
-    if (activeFollowService && activeFollowService !== "All") {
-      const sType = row.serviceType || "";
-      if (sType.toLowerCase() !== activeFollowService.toLowerCase()) return false;
+  const getCount = (serviceName: string) => {
+    if (serviceName === "All") {
+      return Object.values(tracingServiceKeyMap).reduce(
+        (sum, key) => sum + (tracingSummary?.[key] ?? 0),
+        0,
+      );
     }
-    if (appliedStartDate && appliedEndDate) {
-      const rowDate = row.createdAt ? new Date(row.createdAt) : new Date();
-      const start = new Date(appliedStartDate);
-      const end = new Date(appliedEndDate);
-      end.setHours(23, 59, 59, 999);
-      if (rowDate < start || rowDate > end) return false;
-    }
-    return true;
-  });
+    const key = tracingServiceKeyMap[serviceName];
+    return key ? (tracingSummary?.[key] ?? 0) : 0;
+  };
+
+  const filteredByServiceAndDate = followupsData;
 
   const getSubtypeCount = (subtype: string) => {
     if (subtype === "All") return filteredByServiceAndDate.filter((r: any) => activeFollowGrade === "All" || (r.grade || "A").toLowerCase() === activeFollowGrade.toLowerCase()).length;
@@ -3712,8 +3746,8 @@ function PrivatePoolFollowupDetail({ activeService, onBack }: { activeService: s
   const uniqueServices = Array.from(new Set(followupsData.map((r: any) => r.serviceType || "Alibaba Membership"))).filter(Boolean) as string[];
   const allTabServices = Array.from(new Set([...standardServices, ...uniqueServices]));
 
-  const totalFollowPages = Math.max(1, Math.ceil(filteredFollowups.length / followPageSize));
-  const pagedFollowups = filteredFollowups.slice((followPage - 1) * followPageSize, followPage * followPageSize);
+  const totalFollowPages = Math.max(1, Math.ceil(followupTotal / followPageSize));
+  const pagedFollowups = filteredFollowups;
 
   const exportColumns = [
     { key: "id", header: "#" },

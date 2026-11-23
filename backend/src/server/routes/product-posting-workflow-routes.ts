@@ -9,6 +9,7 @@ import { tasksRepository } from "../repositories/tasks.repository";
 import { taskStatusHistoryRepository } from "../repositories/task-status-history.repository";
 import { insertTaskSchema } from "@shared/schema";
 import { getStatsPeriodRange } from "./pms-routes";
+import { sqlDepartmentFamilyIn } from "@shared/project-department-variants";
 
 const router = Router();
 
@@ -55,7 +56,10 @@ const qaRejectImageUpload = multer({
 // Same department scope as GET /manager/queue above, so a submitted link
 // "lands with the manager" via the identical, already-working mechanism —
 // not a new manager_id/under_works relationship this department doesn't use.
-const PRODUCT_POSTING_DEPARTMENT_TYPES_SQL = `p.department_type IN ('PRODUCT_POSTING', 'Product Posting', '9')`;
+const PRODUCT_POSTING_DEPARTMENT_TYPES_SQL = sqlDepartmentFamilyIn(
+  "p.department_type",
+  "product_posting",
+);
 
 // GET /api/product-posting/manager/links/summary?mode=qa|reject — one row
 // per (task, tasker) with aggregate counts, matching the legacy "Links for
@@ -408,7 +412,15 @@ router.post("/:id/account-approve", async (req: any, res: any) => {
                         [catalogServiceName]
                     );
                     if (svcRes.rows[0]?.project_department) {
-                        deptType = svcRes.rows[0].project_department;
+                        // Attributes saves a department CODE (e.g. "LEGACY-9" = Product Posting);
+                        // projects.department_type expects PRODUCT_POSTING / DND, so map by name.
+                        const raw = String(svcRes.rows[0].project_department);
+                        const nameRes = await pool.query(
+                            `SELECT name FROM drm.departments WHERE code = $1 LIMIT 1`, [raw]);
+                        const deptName = String(nameRes.rows[0]?.name ?? raw).toLowerCase();
+                        if (deptName.includes('posting')) deptType = 'PRODUCT_POSTING';
+                        else if (/d\s*&\s*d|dnd/.test(deptName)) deptType = 'DND';
+                        else if (!nameRes.rows[0]) deptType = raw;
                     }
                 }
 
@@ -577,7 +589,7 @@ router.get("/manager/project-stats", async (req: any, res: any) => {
                 SUM(CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END)::integer as complete,
                 SUM(CASE WHEN p.status = 'OnHold' THEN 1 ELSE 0 END)::integer as free
             FROM drm.projects p
-            WHERE p.department_type IN ('PRODUCT_POSTING', 'Product Posting', '9')
+            WHERE ${PRODUCT_POSTING_DEPARTMENT_TYPES_SQL}
         `);
         return res.json(rows[0] || { total: 0, pending: 0, complete: 0, free: 0 });
     } catch (error) {
@@ -605,7 +617,7 @@ router.get("/manager/daily-submissions", async (req: any, res: any) => {
             JOIN drm.users u ON u.id = w.executive_user_id
             JOIN drm.projects p ON p.id = w.project_id
             WHERE w.executive_submitted_at >= CURRENT_DATE
-              AND p.department_type IN ('PRODUCT_POSTING', 'Product Posting', '9')
+              AND ${PRODUCT_POSTING_DEPARTMENT_TYPES_SQL}
             GROUP BY u.name, w.executive_user_id
         `);
         return res.json({ success: true, data: rows });
@@ -625,7 +637,15 @@ router.get("/manager/queue", async (req: any, res: any) => {
                 w.overtime_requested_minutes as "overtimeRequestedMinutes",
                 w.overtime_approved_minutes as "overtimeApprovedMinutes",
                 w.overtime_reason as "overtimeReason",
-                p.id as project_id, p.name as project_name, COALESCE(c.company_name, i.company_name) as company_name, p.project_number as project_number, p.department_type as department_type,
+                p.id as project_id, p.name as project_name, COALESCE(c.company_name, i.company_name) as company_name, COALESCE(
+                    (
+                      SELECT mli.legacy_id
+                      FROM migration_meta.migration_legacy_ids mli
+                      WHERE mli.modern_table = 'projects' AND mli.modern_id = p.id::text
+                      LIMIT 1
+                    ),
+                    NULLIF(p.project_number, '')
+                ) as project_number, p.department_type as department_type,
                 i.project_name as invoice_project_name,
                 COALESCE((
                     SELECT json_agg(json_build_object('id', d.id, 'documentUrl', d.document_url)) 
@@ -636,7 +656,7 @@ router.get("/manager/queue", async (req: any, res: any) => {
             JOIN drm.projects p ON p.id = w.project_id
             LEFT JOIN drm.customers c ON c.id = p.customer_id
             LEFT JOIN drm.product_posting_invoices i ON i.id = p.invoice_id
-            WHERE p.department_type IN ('PRODUCT_POSTING', 'Product Posting', '9')
+            WHERE ${PRODUCT_POSTING_DEPARTMENT_TYPES_SQL}
             ORDER BY w.updated_at DESC
         `);
 
@@ -718,6 +738,35 @@ router.post("/projects/:id/assign-task", async (req: any, res: any) => {
             createdBy: userId,
         } as any);
 
+        if (minutes > 0) {
+            await pool.query(
+                `ALTER TABLE drm.tasks ADD COLUMN IF NOT EXISTS remaining_seconds integer`,
+            );
+            await pool.query(
+                `UPDATE drm.tasks SET remaining_seconds = $2 WHERE id = $1`,
+                [task.id, minutes * 60],
+            );
+        }
+
+        try {
+            await pool.query(
+                `UPDATE drm.product_posting_workflows
+                    SET executive_user_id = COALESCE(executive_user_id, $2::uuid),
+                        task_id = COALESCE(task_id, $3::uuid),
+                        assigned_at = COALESCE(assigned_at, now()),
+                        current_phase = CASE
+                          WHEN current_phase IN ('VERIFICATION_COMPLETE', 'PROJECT_OVERVIEW', 'TASK_ASSIGNMENT')
+                            THEN 'RUNNING_PROJECT'
+                          ELSE current_phase
+                        END,
+                        updated_at = now()
+                  WHERE project_id = $1`,
+                [projectId, assigneeId, task.id],
+            );
+        } catch (wfErr) {
+            console.error("[assign-task] workflow update (non-fatal):", wfErr);
+        }
+
         res.status(201).json({ taskId: task.id, ...task });
     } catch (error: any) {
         console.error("Error assigning product posting task:", error);
@@ -787,7 +836,7 @@ router.get("/qa/queue", async (req: any, res: any) => {
             JOIN drm.projects p ON p.id = t.project_id
             LEFT JOIN drm.customers c ON c.id = p.customer_id
             LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
-            LEFT JOIN drm.invoices rinv ON rinv.id = p.invoice_id
+            LEFT JOIN drm.invoices rinv ON rinv.id::text = p.legacy_source_id
             LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
             WHERE COALESCE(t.is_deleted, false) = false
               AND (
@@ -1069,9 +1118,9 @@ router.get("/verification/queue", async (req: any, res: any) => {
                 t.notes,
                 t.qa_reviewed_at as "qaReviewedAt",
                 t.updated_at as "updatedAt",
-                COALESCE(c.company_name, inv.company_name, p.name) as "companyName",
+                COALESCE(c.company_name, inv.company_name, rinv.customer_name, p.name) as "companyName",
                 p.id as "projectId",
-                inv.invoice_number as "invoiceNumber",
+                COALESCE(inv.invoice_number, rinv.invoice_number) as "invoiceNumber",
                 jsonb_build_object('id', au.id, 'name', COALESCE(au.full_name, au.name, au.username)) as "assignee",
                 (SELECT count(*) FROM drm.task_status_history h
                    WHERE h.task_id = t.id AND h.notes LIKE '%"verificationReturn":true%') as "returnCount"
@@ -1079,6 +1128,7 @@ router.get("/verification/queue", async (req: any, res: any) => {
             JOIN drm.projects p ON p.id = t.project_id
             LEFT JOIN drm.customers c ON c.id = p.customer_id
             LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+            LEFT JOIN drm.invoices rinv ON rinv.id::text = p.legacy_source_id
             LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
             WHERE COALESCE(t.is_deleted, false) = false
               AND t.qa_reviewed_at IS NOT NULL
@@ -1199,8 +1249,136 @@ router.get("/task/:id/rework-history", async (req: any, res: any) => {
     res.json({ success: true, data: [] });
 });
 
+// Evidence links submitted for one task (WorkflowTimeline).
 router.get("/task/:id/report-links", async (req: any, res: any) => {
-    res.json({ success: true, data: [] });
+    try {
+        const { rows } = await pool.query(
+            `SELECT id, workflow_id AS "workflowId", project_id AS "projectId", task_id AS "taskId",
+                    url, label, link_type AS "linkType", created_by_user_id AS "createdByUserId",
+                    created_at AS "createdAt", updated_at AS "updatedAt"
+             FROM drm.product_posting_evidence_links
+             WHERE task_id::text = $1
+             ORDER BY created_at DESC`,
+            [String(req.params.id)],
+        );
+        res.json({ success: true, data: rows });
+    } catch (error: any) {
+        console.error("[product-posting] task report-links error", error);
+        res.status(500).json({ success: false, error: "Failed to fetch report links" });
+    }
+});
+
+// GET /report-links — Posting Data "link report" list (restored: it was lost in
+// the MVC refactor, so the page's request fell through and returned 500).
+// ?userFilter=<userId>|all &startDate= &endDate=  (YYYY-MM-DD, end inclusive).
+// Shape kept from the original: { id, title (project name), keywords (url), createdAt }.
+router.get("/report-links", async (req: any, res: any) => {
+    try {
+        const { userFilter, startDate, endDate } = req.query as Record<string, string | undefined>;
+        const where: string[] = [];
+        const params: unknown[] = [];
+        if (userFilter && userFilter !== "all") {
+            params.push(String(userFilter));
+            where.push(`l.created_by_user_id::text = $${params.length}`);
+        }
+        if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+            params.push(startDate);
+            where.push(`l.created_at >= $${params.length}::date`);
+        }
+        if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+            params.push(endDate);
+            where.push(`l.created_at < ($${params.length}::date + 1)`);
+        }
+        const { rows } = await pool.query(
+            `SELECT l.id, COALESCE(p.name, 'Unknown Project') AS title, l.url AS keywords, l.created_at AS "createdAt"
+             FROM drm.product_posting_evidence_links l
+             LEFT JOIN drm.projects p ON p.id = l.project_id
+             ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+             ORDER BY l.created_at DESC`,
+            params,
+        );
+        res.json({ success: true, data: rows });
+    } catch (error: any) {
+        console.error("[product-posting] report-links error", error);
+        res.status(500).json({ success: false, error: "Failed to fetch report links" });
+    }
+});
+
+// GET /api/product-posting/commission/me — posting executive dashboard card
+router.get("/commission/me", async (req: any, res) => {
+    try {
+        const userId = req.user?.userId || req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Not authenticated" });
+        }
+
+        let postCount = 0;
+        try {
+            const countRes = await pool.query(
+                `SELECT COUNT(*)::int AS n
+                 FROM drm.product_posting_evidence_links
+                 WHERE created_by_user_id = $1::uuid
+                   AND created_at >= date_trunc('month', CURRENT_DATE)`,
+                [userId],
+            );
+            postCount = countRes.rows[0]?.n ?? 0;
+        } catch {
+            postCount = 0;
+        }
+
+        let tierName = "—";
+        let ratePercent = 0;
+        try {
+            const slabRes = await pool.query(
+                `SELECT name, commission_rate::float8 AS rate
+                 FROM drm.product_posting_commission_slabs
+                 WHERE is_active = true
+                   AND effective_from <= now()
+                   AND (effective_to IS NULL OR effective_to > now())
+                   AND min_value <= $1::int
+                   AND (max_value IS NULL OR max_value >= $1::int)
+                 ORDER BY min_value DESC
+                 LIMIT 1`,
+                [postCount],
+            );
+            if (slabRes.rows[0]) {
+                tierName = slabRes.rows[0].name || "—";
+                ratePercent = Number(slabRes.rows[0].rate) || 0;
+            }
+        } catch {
+            /* slabs table may be empty on stage */
+        }
+
+        let paidTotal = 0;
+        try {
+            const paidRes = await pool.query(
+                `SELECT COALESCE(SUM(paid_amount), 0)::float8 AS total
+                 FROM drm.product_posting_invoices
+                 WHERE sales_exec_id = $1::uuid
+                   AND COALESCE(LOWER(status::text), '') IN ('paid', 'completed', 'approved')`,
+                [userId],
+            );
+            paidTotal = Number(paidRes.rows[0]?.total) || 0;
+        } catch {
+            paidTotal = 0;
+        }
+
+        const commissionAmount = paidTotal * (ratePercent / 100);
+
+        return res.json({
+            success: true,
+            data: {
+                postCount,
+                tierName,
+                ratePercent,
+                paidTotal,
+                commissionAmount,
+            },
+        });
+    } catch (error: any) {
+        console.error("[product-posting] commission/me error", error);
+        return res.status(500).json({ success: false, message: "Failed to load commission" });
+    }
 });
 
 export const productPostingWorkflowRouter = router;

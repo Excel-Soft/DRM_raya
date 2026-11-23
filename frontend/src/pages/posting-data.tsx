@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Database, Plus, Search, Filter, FileText, CheckCircle2, AlertCircle, Download, Upload, Loader2, Save as SaveIcon, Image as ImageIcon, PlusCircle, Trash2 } from "lucide-react";
+import { Database, Plus, Search, Filter, FileText, CheckCircle2, AlertCircle, Download, Upload, Loader2, Save as SaveIcon, Image as ImageIcon, PlusCircle, Trash2, Pencil, Check, X } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLocation } from "wouter";
 import { 
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { LegacyProductCatalog } from "@/components/legacy-product-catalog";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ProductPostingData, InsertProductPostingData } from "@shared/schema";
@@ -40,6 +41,10 @@ export default function PostingDataPage() {
 
     const [newRestrictedKeyword, setNewRestrictedKeyword] = useState("");
     const [restrictedSearch, setRestrictedSearch] = useState("");
+    const [editingKeywordId, setEditingKeywordId] = useState<string | null>(null);
+    const [editingKeywordValue, setEditingKeywordValue] = useState("");
+    const [restrictedPage, setRestrictedPage] = useState(1);
+    const [showAddRestricted, setShowAddRestricted] = useState(false); // legacy: "Add Keyword" opens the form
 
     const expectArray = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
 
@@ -48,7 +53,9 @@ export default function PostingDataPage() {
         queryKey: ["/api/users"],
         queryFn: async () => {
             const res = await apiRequest("GET", "/api/users");
-            return expectArray(await res.json());
+            // /api/users returns { users: [...] } — unwrap it (was always [] before).
+            const json = await res.json();
+            return expectArray(json?.users ?? json);
         }
     });
 
@@ -80,24 +87,62 @@ export default function PostingDataPage() {
     const addRestrictedMutation = useMutation({
         mutationFn: async (keyword: string) => {
             const res = await apiRequest("POST", "/api/restricted-keywords", { keyword });
-            return res.json();
+            const body = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(body?.error || "Failed to add keyword");
+            return body;
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/restricted-keywords"] });
             setNewRestrictedKeyword("");
             toast({ title: "Success", description: "Keyword added to restricted list." });
-        }
+        },
+        onError: (err: any) => toast({ title: "Error", description: err?.message, variant: "destructive" }),
+    });
+
+    const updateRestrictedMutation = useMutation({
+        mutationFn: async ({ id, keyword }: { id: string; keyword: string }) => {
+            const res = await apiRequest("PATCH", `/api/restricted-keywords/${id}`, { keyword });
+            const body = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(body?.error || "Failed to update keyword");
+            return body;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["/api/restricted-keywords"] });
+            setEditingKeywordId(null);
+            toast({ title: "Updated", description: "Restricted keyword updated." });
+        },
+        onError: (err: any) => toast({ title: "Error", description: err?.message, variant: "destructive" }),
     });
 
     const deleteRestrictedMutation = useMutation({
         mutationFn: async (id: string) => {
-            await apiRequest("DELETE", `/api/restricted-keywords/${id}`);
+            const res = await apiRequest("DELETE", `/api/restricted-keywords/${id}`);
+            if (!res.ok) {
+                const body = await res.json().catch(() => null);
+                throw new Error(body?.error || "Failed to delete keyword");
+            }
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/restricted-keywords"] });
             toast({ title: "Removed", description: "Keyword removed from restricted list." });
-        }
+        },
+        onError: (err: any) => toast({ title: "Error", description: err?.message, variant: "destructive" }),
     });
+
+    // Restricted Keywords list: search + 25 per page.
+    const RESTRICTED_PAGE_SIZE = 25;
+    const filteredRestricted = restrictedKeywords.filter((k: any) =>
+        k.keyword?.toLowerCase().includes(restrictedSearch.trim().toLowerCase()),
+    );
+    const restrictedTotalPages = Math.max(1, Math.ceil(filteredRestricted.length / RESTRICTED_PAGE_SIZE));
+    const restrictedCurrentPage = Math.min(restrictedPage, restrictedTotalPages);
+    const restrictedPageStart = (restrictedCurrentPage - 1) * RESTRICTED_PAGE_SIZE;
+    const restrictedPageRows = filteredRestricted.slice(restrictedPageStart, restrictedPageStart + RESTRICTED_PAGE_SIZE);
+    const saveKeywordEdit = () => {
+        const keyword = editingKeywordValue.trim();
+        if (!editingKeywordId || !keyword) return;
+        updateRestrictedMutation.mutate({ id: editingKeywordId, keyword });
+    };
 
     const { data: categoryCounts = [] } = useQuery<{category: string, count: number}[]>({
         queryKey: ["/api/posting-data/counts"],
@@ -125,8 +170,48 @@ export default function PostingDataPage() {
             if (end) params.append("endDate", end);
             const res = await apiRequest("GET", `${url}?${params.toString()}`);
             return expectArray(await res.json());
-        }
+        },
+        // View Keywords / View Products have their own small queries — don't pull ~67k rows there.
+        enabled: location !== "/posting-data/view-keywords" && location !== "/posting-data/view-products"
+            && location !== "/posting-data/restricted-products" && location !== "/posting-data/trash-products",
     });
+
+    // ---- View Keywords: keyword rows only (incl. old-DRM webxl_posting_keywords) ----
+    const isViewKeywords = location === "/posting-data/view-keywords";
+    const { data: keywordCategories = [] } = useQuery<{ value: string; label: string; count: number }[]>({
+        queryKey: ["/api/posting-data/keyword-categories"],
+        enabled: isViewKeywords,
+        queryFn: async () => expectArray(await (await apiRequest("GET", "/api/posting-data/keyword-categories")).json()),
+    });
+    const { data: keywordRows = [], isLoading: isLoadingKeywords, refetch: refetchKeywords } = useQuery<any[]>({
+        queryKey: ["/api/posting-data", "keywords", categoryFilter, startDate, endDate],
+        enabled: isViewKeywords,
+        queryFn: async () => {
+            const params = new URLSearchParams({ type: "keywords" });
+            if (categoryFilter && categoryFilter !== "all") params.append("category", categoryFilter);
+            if (startDate) params.append("startDate", startDate);
+            if (endDate) params.append("endDate", endDate);
+            return expectArray(await (await apiRequest("GET", `/api/posting-data?${params.toString()}`)).json());
+        },
+    });
+    const [keywordPage, setKeywordPage] = useState(1);
+    const keywordQuery = searchTerm.trim().toLowerCase();
+    const filteredKeywords = keywordRows.filter((d: any) =>
+        !keywordQuery ||
+        [d.title, d.keywords, d.description, d.categoryName].some((v) => String(v ?? "").toLowerCase().includes(keywordQuery)),
+    );
+    const keywordLimit = parseInt(entriesCount) || 10;
+    const keywordTotalPages = Math.max(1, Math.ceil(filteredKeywords.length / keywordLimit));
+    const keywordCurrentPage = Math.min(keywordPage, keywordTotalPages);
+    const pagedKeywords = filteredKeywords.slice((keywordCurrentPage - 1) * keywordLimit, keywordCurrentPage * keywordLimit);
+    const keywordFirstRow = filteredKeywords.length === 0 ? 0 : (keywordCurrentPage - 1) * keywordLimit + 1;
+    const keywordPageButtons: (number | "gap")[] = [];
+    for (let p = 1; p <= keywordTotalPages; p++) {
+        if (p === 1 || p === keywordTotalPages || Math.abs(p - keywordCurrentPage) <= 1) keywordPageButtons.push(p);
+        else if (keywordPageButtons[keywordPageButtons.length - 1] !== "gap") keywordPageButtons.push("gap");
+    }
+    // Back to page 1 whenever the filters/search/page size change.
+    useEffect(() => { setKeywordPage(1); }, [categoryFilter, startDate, endDate, searchTerm, entriesCount]);
 
     const { data: linkReportData = [], isLoading: isLoadingReport, refetch: refetchReport } = useQuery<any[]>({
         queryKey: ["/api/product-posting/report-links", userFilter, startDate, endDate],
@@ -529,10 +614,9 @@ export default function PostingDataPage() {
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="all">All Categories</SelectItem>
-                                        <SelectItem value="electronics">Electronics</SelectItem>
-                                        <SelectItem value="clothing">Clothing</SelectItem>
-                                        <SelectItem value="home">Home & Garden</SelectItem>
-                                        <SelectItem value="industrial">Industrial</SelectItem>
+                                        {keywordCategories.map((c) => (
+                                            <SelectItem key={c.value} value={c.value}>{c.label} ({c.count})</SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -555,7 +639,7 @@ export default function PostingDataPage() {
                                 />
                             </div>
                             <Button 
-                                onClick={() => refetch()}
+                                onClick={() => refetchKeywords()}
                                 className="h-9 px-8 bg-[#00a65a] hover:bg-[#008d4c] text-white text-sm font-medium shadow-sm"
                             >
                                 View
@@ -592,6 +676,7 @@ export default function PostingDataPage() {
                                 <TableHeader className="bg-slate-50 dark:bg-zinc-900/50">
                                     <TableRow className="border-b border-slate-100 dark:border-zinc-800 hover:bg-transparent">
                                         <TableHead className="w-12 text-[11px] font-bold text-slate-700 dark:text-zinc-400 h-10">#</TableHead>
+                                        <TableHead className="text-[11px] font-bold text-slate-700 dark:text-zinc-400 h-10">Category</TableHead>
                                         <TableHead className="text-[11px] font-bold text-slate-700 dark:text-zinc-400 h-10">Title</TableHead>
                                         <TableHead className="text-[11px] font-bold text-slate-700 dark:text-zinc-400 h-10">Keywords</TableHead>
                                         <TableHead className="text-[11px] font-bold text-slate-700 dark:text-zinc-400 h-10">Description</TableHead>
@@ -599,16 +684,17 @@ export default function PostingDataPage() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {isLoading ? (
+                                    {isLoadingKeywords ? (
                                         <TableRow>
-                                            <TableCell colSpan={5} className="text-center py-12">
+                                            <TableCell colSpan={6} className="text-center py-12">
                                                 <Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-300" />
                                             </TableCell>
                                         </TableRow>
-                                    ) : filteredData.length > 0 ? (
-                                        filteredData.map((item, idx) => (
+                                    ) : pagedKeywords.length > 0 ? (
+                                        pagedKeywords.map((item: any, idx: number) => (
                                             <TableRow key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800 border-b border-slate-100 dark:border-zinc-800">
-                                                <TableCell className="text-slate-600 text-xs font-medium dark:text-zinc-400 py-3">{idx + 1}</TableCell>
+                                                <TableCell className="text-slate-600 text-xs font-medium dark:text-zinc-400 py-3">{keywordFirstRow + idx}</TableCell>
+                                                <TableCell className="text-slate-600 text-xs whitespace-nowrap dark:text-zinc-300 py-3">{item.categoryName}</TableCell>
                                                 <TableCell className="text-slate-800 text-xs font-medium dark:text-zinc-100 py-3">{item.title}</TableCell>
                                                 <TableCell className="text-slate-600 text-xs max-w-[200px] truncate dark:text-zinc-300 py-3">{item.keywords}</TableCell>
                                                 <TableCell className="text-slate-600 text-xs max-w-[300px] truncate dark:text-zinc-400 py-3">{item.description}</TableCell>
@@ -626,7 +712,7 @@ export default function PostingDataPage() {
                                         ))
                                     ) : (
                                         <TableRow>
-                                            <TableCell colSpan={5} className="text-center py-12 text-slate-400 text-sm font-medium">
+                                            <TableCell colSpan={6} className="text-center py-12 text-slate-400 text-sm font-medium">
                                                 No records found matching your criteria
                                             </TableCell>
                                         </TableRow>
@@ -634,11 +720,33 @@ export default function PostingDataPage() {
                                 </TableBody>
                             </Table>
                             <div className="p-4 flex items-center justify-between border-t border-slate-100 dark:border-zinc-800 text-[11px] text-slate-500 dark:text-zinc-400">
-                                <div>Showing 1 to {filteredData.length} of {filteredData.length} entries</div>
-                                <div className="flex items-center gap-1 rounded-md border border-slate-200 overflow-hidden dark:border-zinc-800">
-                                    <Button variant="ghost" size="sm" className="h-8 px-3 rounded-none text-[11px] hover:bg-slate-50 dark:hover:bg-zinc-800" disabled>Previous</Button>
-                                    <Button variant="default" size="sm" className="h-8 px-3 w-8 rounded-none text-[11px] bg-[#00a65a] hover:bg-[#008d4c]">1</Button>
-                                    <Button variant="ghost" size="sm" className="h-8 px-3 rounded-none text-[11px] hover:bg-slate-50 dark:hover:bg-zinc-800" disabled>Next</Button>
+                                <div>
+                                    Showing {keywordFirstRow} to {keywordFirstRow === 0 ? 0 : keywordFirstRow + pagedKeywords.length - 1} of {filteredKeywords.length} entries
+                                </div>
+                                <div className="flex flex-wrap items-center gap-1 rounded-md border border-slate-200 overflow-hidden dark:border-zinc-800">
+                                    <Button
+                                        variant="ghost" size="sm" className="h-8 px-3 rounded-none text-[11px] hover:bg-slate-50 dark:hover:bg-zinc-800"
+                                        disabled={keywordCurrentPage <= 1}
+                                        onClick={() => setKeywordPage(keywordCurrentPage - 1)}
+                                    >Previous</Button>
+                                    {keywordPageButtons.map((p, i) =>
+                                        p === "gap" ? (
+                                            <span key={`gap-${i}`} className="h-8 px-2 flex items-center">…</span>
+                                        ) : (
+                                            <Button
+                                                key={p}
+                                                variant={p === keywordCurrentPage ? "default" : "ghost"}
+                                                size="sm"
+                                                className={p === keywordCurrentPage ? "h-8 min-w-8 px-2 rounded-none text-[11px] bg-[#00a65a] hover:bg-[#008d4c]" : "h-8 min-w-8 px-2 rounded-none text-[11px] hover:bg-slate-50 dark:hover:bg-zinc-800"}
+                                                onClick={() => setKeywordPage(p)}
+                                            >{p}</Button>
+                                        ),
+                                    )}
+                                    <Button
+                                        variant="ghost" size="sm" className="h-8 px-3 rounded-none text-[11px] hover:bg-slate-50 dark:hover:bg-zinc-800"
+                                        disabled={keywordCurrentPage >= keywordTotalPages}
+                                        onClick={() => setKeywordPage(keywordCurrentPage + 1)}
+                                    >Next</Button>
                                 </div>
                             </div>
                         </CardContent>
@@ -647,108 +755,13 @@ export default function PostingDataPage() {
             )}
 
             {location === "/posting-data/view-products" && (
-                <div className="space-y-6">
-                    <Card className="border-none shadow-sm bg-white overflow-hidden rounded-lg dark:bg-zinc-900">
-                        <div className="bg-white border-b px-6 py-3 flex items-center justify-between dark:bg-zinc-900">
-                            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider dark:text-zinc-400">
-                                SEARCH CATEGORY PRODUCTS <span className="text-rose-500 ml-1">{postingData.length}</span>
-                            </h2>
-                        </div>
-                        <CardContent className="p-6">
-                            <div className="flex flex-wrap items-end gap-4 p-4 rounded border border-slate-100 bg-slate-50/30 dark:border-zinc-800">
-                                <div className="flex-1 min-w-[300px] space-y-1.5">
-                                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider ml-0.5 dark:text-zinc-400">Select Category</label>
-                                    <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                                        <SelectTrigger className="h-10 bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
-                                            <SelectValue placeholder="Choose..." />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="all">All Categories ({postingData.length})</SelectItem>
-                                            <SelectItem value="Leather products">Leather products ({getCount("Leather products")})</SelectItem>
-                                            <SelectItem value="veterinary Instruments">veterinary Instruments ({getCount("veterinary Instruments")})</SelectItem>
-                                            <SelectItem value="Apparel">Apparel ({getCount("Apparel")})</SelectItem>
-                                            <SelectItem value="Costumes">Costumes ({getCount("Costumes")})</SelectItem>
-                                            <SelectItem value="TV & Movie Costumes">TV & Movie Costumes ({getCount("TV & Movie Costumes")})</SelectItem>
-                                            <SelectItem value="Reenactment Attire">Reenactment Attire ({getCount("Reenactment Attire")})</SelectItem>
-                                            <SelectItem value="Mascot">Mascot ({getCount("Mascot")})</SelectItem>
-                                            <SelectItem value="Anime Costumes">Anime Costumes ({getCount("Anime Costumes")})</SelectItem>
-                                            <SelectItem value="Zentai / Catsuit">Zentai / Catsuit ({getCount("Zentai / Catsuit")})</SelectItem>
-                                            <SelectItem value="Hunting Jacket">Hunting Jacket ({getCount("Hunting Jacket")})</SelectItem>
-                                            <SelectItem value="Hunting Hoodies">Hunting Hoodies ({getCount("Hunting Hoodies")})</SelectItem>
-                                            <SelectItem value="Hunting Suit">Hunting Suit ({getCount("Hunting Suit")})</SelectItem>
-                                            <SelectItem value="Electronics">Electronics ({getCount("Electronics")})</SelectItem>
-                                            <SelectItem value="Fashion">Fashion ({getCount("Fashion")})</SelectItem>
-                                            <SelectItem value="Home & Garden">Home & Garden ({getCount("Home & Garden")})</SelectItem>
-                                            <SelectItem value="Industrial">Industrial ({getCount("Industrial")})</SelectItem>
-                                            <SelectItem value="Beauty">Beauty ({getCount("Beauty")})</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <Button 
-                                    onClick={() => refetch()}
-                                    className="h-10 px-10 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold uppercase tracking-wider shadow-sm"
-                                >
-                                    View
-                                </Button>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                        {isLoading ? (
-                            Array.from({ length: 8 }).map((_, i) => (
-                                <Card key={i} className="animate-pulse border-none shadow-sm">
-                                    <div className="aspect-square bg-slate-200" />
-                                    <CardContent className="p-4 space-y-2">
-                                        <div className="h-4 bg-slate-200 rounded w-3/4" />
-                                        <div className="h-3 bg-slate-200 rounded w-1/2" />
-                                    </CardContent>
-                                </Card>
-                            ))
-                        ) : filteredData.length > 0 ? (
-                            filteredData.map((item) => (
-                                <Card key={item.id} className="group border-none shadow-sm hover:shadow-md transition-all overflow-hidden bg-white dark:bg-zinc-900">
-                                    <div className="aspect-square relative bg-slate-100 overflow-hidden dark:bg-zinc-900">
-                                        {item.mainImage ? (
-                                            <img src={item.mainImage} alt={item.title || ""} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                                        ) : (
-                                            <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 gap-2">
-                                                <ImageIcon className="h-10 w-10" />
-                                                <span className="text-[10px] font-bold uppercase">No Image</span>
-                                            </div>
-                                        )}
-                                        <div className="absolute top-2 right-2">
-                                            <Badge className={item.status === 'Verified' ? 'bg-emerald-500' : 'bg-amber-500'}>
-                                                {item.status}
-                                            </Badge>
-                                        </div>
-                                    </div>
-                                    <CardContent className="p-4">
-                                        <div className="flex items-center justify-between mb-1">
-                                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-tighter">{item.category}</p>
-                                            <Badge variant="outline" className="text-[10px] h-4 px-1.5 bg-blue-50 text-blue-600 border-blue-100">
-                                                {item.platform || "Amazon"}
-                                            </Badge>
-                                        </div>
-                                        <h4 className="font-bold text-slate-800 text-sm line-clamp-2 leading-tight h-9 dark:text-zinc-100">{item.title || "Untitled Product"}</h4>
-                                        <div className="mt-3 pt-3 border-t flex items-center justify-between">
-                                            <span className="text-[10px] text-slate-400 font-medium">{item.createdAt ? new Date(item.createdAt).toLocaleDateString() : ""}</span>
-                                            <Button size="icon" variant="ghost" className="h-7 w-7 rounded-full hover:bg-slate-100 dark:hover:bg-zinc-800">
-                                                <PlusCircle className="h-4 w-4 text-slate-400" />
-                                            </Button>
-                                        </div>
-                                    </CardContent>
-                                </Card>
-                            ))
-                        ) : (
-                            <div className="col-span-full py-20 text-center space-y-3">
-                                <Search className="h-12 w-12 text-slate-200 mx-auto" />
-                                <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">No products found for this category</p>
-                            </div>
-                        )}
-                    </div>
-                </div>
+                // Old-DRM product catalogue: real categories (name + count), main image
+                // + small views, server-side paging. See components/legacy-product-catalog.
+                <LegacyProductCatalog />
             )}
+
+            {location === "/posting-data/restricted-products" && <LegacyProductCatalog key="restricted" scope="restricted" />}
+            {location === "/posting-data/trash-products" && <LegacyProductCatalog key="trash" scope="trash" />}
 
             {location === "/posting-data/link-report" && (
                 <div className="space-y-6">
@@ -854,44 +867,56 @@ export default function PostingDataPage() {
             {location === "/posting-data/restricted-keywords" && (
                 <div className="space-y-6">
                     <Card className="border-none shadow-sm bg-white overflow-hidden rounded-lg dark:bg-zinc-900">
-                        <div className="bg-white border-b px-6 py-4 dark:bg-zinc-900">
+                        <div className="bg-white px-6 py-4 flex flex-wrap items-center justify-between gap-3 dark:bg-zinc-900">
                             <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2 dark:text-zinc-400">
-                                RESTRICTED KEYWORDS / <span className="text-emerald-600">ADD KEYWORD</span>
-                            </h2>
-                        </div>
-                        <CardContent className="p-6">
-                            <div className="space-y-4">
-                                <div className="space-y-1.5">
-                                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider ml-0.5 dark:text-zinc-400">Keyword</label>
-                                    <Input 
-                                        placeholder="add restricted keyword" 
-                                        className="h-11 bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800" 
-                                        value={newRestrictedKeyword}
-                                        onChange={(e) => setNewRestrictedKeyword(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && addRestrictedMutation.mutate(newRestrictedKeyword)}
-                                    />
-                                </div>
-                                <Button 
-                                    className="w-full h-11 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold uppercase tracking-widest shadow-md"
-                                    onClick={() => addRestrictedMutation.mutate(newRestrictedKeyword)}
-                                    disabled={addRestrictedMutation.isPending || !newRestrictedKeyword.trim()}
+                                RESTRICTED KEYWORDS /
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddRestricted((v) => !v)}
+                                    className="inline-flex items-center gap-1 text-emerald-600 hover:text-emerald-700 hover:underline uppercase font-bold tracking-wider"
+                                    aria-expanded={showAddRestricted}
                                 >
-                                    {addRestrictedMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : "Submit"}
-                                </Button>
+                                    {showAddRestricted ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                                    {showAddRestricted ? "Close" : "Add Keyword"}
+                                </button>
+                            </h2>
+                            <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-zinc-400">
+                                Search:
+                                <Input
+                                    className="h-9 w-48 bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800"
+                                    value={restrictedSearch}
+                                    onChange={(e) => { setRestrictedSearch(e.target.value); setRestrictedPage(1); }}
+                                />
                             </div>
-                        </CardContent>
-                    </Card>
-
-                    <div className="flex justify-end pr-1">
-                        <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-zinc-400">
-                            Search:
-                            <Input 
-                                className="h-9 w-48 bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800" 
-                                value={restrictedSearch}
-                                onChange={(e) => setRestrictedSearch(e.target.value)}
-                            />
                         </div>
-                    </div>
+                        {showAddRestricted && (
+                            <CardContent className="p-6 border-t border-slate-100 dark:border-zinc-800">
+                                <div className="space-y-4">
+                                    <div className="space-y-1.5">
+                                        <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider ml-0.5 dark:text-zinc-400">Keyword</label>
+                                        <Input
+                                            autoFocus
+                                            placeholder="add restricted keyword"
+                                            className="h-11 bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800"
+                                            value={newRestrictedKeyword}
+                                            onChange={(e) => setNewRestrictedKeyword(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter" && newRestrictedKeyword.trim()) addRestrictedMutation.mutate(newRestrictedKeyword);
+                                                if (e.key === "Escape") setShowAddRestricted(false);
+                                            }}
+                                        />
+                                    </div>
+                                    <Button
+                                        className="w-full h-11 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold uppercase tracking-widest shadow-md"
+                                        onClick={() => addRestrictedMutation.mutate(newRestrictedKeyword)}
+                                        disabled={addRestrictedMutation.isPending || !newRestrictedKeyword.trim()}
+                                    >
+                                        {addRestrictedMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : "Submit"}
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        )}
+                    </Card>
 
                     <Card className="border-none shadow-sm bg-white overflow-hidden rounded-lg dark:bg-zinc-900">
                         <CardContent className="p-0">
@@ -900,7 +925,7 @@ export default function PostingDataPage() {
                                     <TableRow className="border-b border-slate-100 dark:border-zinc-800">
                                         <TableHead className="w-16 font-bold text-slate-600 uppercase text-xs dark:text-zinc-300">No</TableHead>
                                         <TableHead className="font-bold text-slate-600 uppercase text-xs dark:text-zinc-300">Keyword</TableHead>
-                                        <TableHead className="w-24 font-bold text-slate-600 uppercase text-xs text-center dark:text-zinc-300">Action</TableHead>
+                                        <TableHead className="w-32 font-bold text-slate-600 uppercase text-xs text-center dark:text-zinc-300">Action</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -910,22 +935,76 @@ export default function PostingDataPage() {
                                                 <Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-200" />
                                             </TableCell>
                                         </TableRow>
-                                    ) : restrictedKeywords.filter((k: any) => k.keyword?.toLowerCase().includes(restrictedSearch.toLowerCase())).length > 0 ? (
-                                        restrictedKeywords
-                                            .filter((k: any) => k.keyword?.toLowerCase().includes(restrictedSearch.toLowerCase()))
-                                            .map((item, idx) => (
+                                    ) : restrictedPageRows.length > 0 ? (
+                                        restrictedPageRows.map((item: any, idx: number) => (
                                                 <TableRow key={item.id} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                                    <TableCell className="text-sm font-medium text-slate-400">{idx + 1}</TableCell>
-                                                    <TableCell className="text-sm font-semibold text-slate-700 uppercase tracking-tight dark:text-zinc-400">{item.keyword}</TableCell>
+                                                    <TableCell className="text-sm font-medium text-slate-400">{restrictedPageStart + idx + 1}</TableCell>
+                                                    <TableCell className="text-sm font-semibold text-slate-700 uppercase tracking-tight dark:text-zinc-400">
+                                                        {editingKeywordId === item.id ? (
+                                                            <Input
+                                                                autoFocus
+                                                                className="h-8 max-w-md normal-case"
+                                                                value={editingKeywordValue}
+                                                                onChange={(e) => setEditingKeywordValue(e.target.value)}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === "Enter") saveKeywordEdit();
+                                                                    if (e.key === "Escape") setEditingKeywordId(null);
+                                                                }}
+                                                            />
+                                                        ) : (
+                                                            item.keyword
+                                                        )}
+                                                    </TableCell>
                                                     <TableCell className="text-center">
-                                                        <Button 
-                                                            variant="ghost" 
-                                                            size="icon" 
-                                                            className="h-8 w-8 text-rose-400 hover:text-rose-600 hover:bg-rose-50"
-                                                            onClick={() => deleteRestrictedMutation.mutate(item.id)}
-                                                        >
-                                                            <Trash2 className="h-4 w-4" />
-                                                        </Button>
+                                                        {editingKeywordId === item.id ? (
+                                                            <div className="flex justify-center gap-1">
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    title="Save"
+                                                                    className="h-8 w-8 text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50"
+                                                                    disabled={updateRestrictedMutation.isPending || !editingKeywordValue.trim()}
+                                                                    onClick={saveKeywordEdit}
+                                                                >
+                                                                    {updateRestrictedMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                                                                </Button>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    title="Cancel"
+                                                                    className="h-8 w-8 text-slate-400 hover:text-slate-600"
+                                                                    onClick={() => setEditingKeywordId(null)}
+                                                                >
+                                                                    <X className="h-4 w-4" />
+                                                                </Button>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex justify-center gap-1">
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    title="Edit"
+                                                                    className="h-8 w-8 text-sky-500 hover:text-sky-700 hover:bg-sky-50"
+                                                                    onClick={() => { setEditingKeywordId(item.id); setEditingKeywordValue(item.keyword); }}
+                                                                >
+                                                                    <Pencil className="h-4 w-4" />
+                                                                </Button>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    title="Delete"
+                                                                    className="h-8 w-8 text-rose-400 hover:text-rose-600 hover:bg-rose-50"
+                                                                    disabled={deleteRestrictedMutation.isPending}
+                                                                    onClick={() => {
+                                                                        if (window.confirm(`Delete restricted keyword "${item.keyword}"?`)) {
+                                                                            deleteRestrictedMutation.mutate(item.id);
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    <Trash2 className="h-4 w-4" />
+                                                                </Button>
+                                                            </div>
+                                                        )}
                                                     </TableCell>
                                                 </TableRow>
                                             ))
@@ -938,6 +1017,30 @@ export default function PostingDataPage() {
                                     )}
                                 </TableBody>
                             </Table>
+                            {filteredRestricted.length > 0 && (
+                                <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-slate-100 text-xs text-slate-500 dark:border-zinc-800 dark:text-zinc-400">
+                                    <div>
+                                        Showing {restrictedPageStart + 1} to {restrictedPageStart + restrictedPageRows.length} of {filteredRestricted.length} keywords
+                                    </div>
+                                    {restrictedTotalPages > 1 && (
+                                        <div className="flex flex-wrap gap-1">
+                                            <Button variant="outline" size="sm" className="h-8 px-3" disabled={restrictedCurrentPage <= 1} onClick={() => setRestrictedPage(restrictedCurrentPage - 1)}>Previous</Button>
+                                            {Array.from({ length: restrictedTotalPages }, (_, i) => i + 1).map((p) => (
+                                                <Button
+                                                    key={p}
+                                                    size="sm"
+                                                    variant={p === restrictedCurrentPage ? "default" : "outline"}
+                                                    className={p === restrictedCurrentPage ? "h-8 min-w-8 px-2 bg-[#00a65a] hover:bg-[#008d4c]" : "h-8 min-w-8 px-2"}
+                                                    onClick={() => setRestrictedPage(p)}
+                                                >
+                                                    {p}
+                                                </Button>
+                                            ))}
+                                            <Button variant="outline" size="sm" className="h-8 px-3" disabled={restrictedCurrentPage >= restrictedTotalPages} onClick={() => setRestrictedPage(restrictedCurrentPage + 1)}>Next</Button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </div>
@@ -1012,7 +1115,7 @@ export default function PostingDataPage() {
                 </div>
             )}
 
-            {location !== "/posting-data/add-products" && location !== "/posting-data/add-keywords" && location !== "/posting-data/view-keywords" && location !== "/posting-data/view-products" && location !== "/posting-data/link-report" && location !== "/posting-data/restricted-keywords" && location !== "/posting-data/data-verify" && (
+            {location !== "/posting-data/add-products" && location !== "/posting-data/add-keywords" && location !== "/posting-data/view-keywords" && location !== "/posting-data/view-products" && location !== "/posting-data/restricted-products" && location !== "/posting-data/trash-products" && location !== "/posting-data/link-report" && location !== "/posting-data/restricted-keywords" && location !== "/posting-data/data-verify" && (
                 <Tabs defaultValue="all" className="w-full">
                     <Card className="border-none shadow-sm bg-white overflow-hidden dark:bg-zinc-900">
                         <CardHeader className="border-b bg-white p-0 dark:bg-zinc-900">

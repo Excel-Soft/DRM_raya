@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Trash2, HelpCircle, CornerDownRight } from "lucide-react";
 
 interface AttributeRow {
@@ -15,18 +15,18 @@ interface AttributeRow {
     category: string;
     name: string;
     parentId: string | null;
+    legacyReadOnly?: boolean;
 }
 
 const CATEGORY = "Q & A";
 
+function isLegacyRow(id: string) {
+    return id.startsWith("legacy-question-") || id.startsWith("legacy-attribute-");
+}
+
 export function QaAttributeTree() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
-    // A question is "selected" (checkbox ticked) when its id is in this set —
-    // selecting it both reveals its existing answers and opens the inline
-    // "Add Answer" box right beneath it, so there's no separate dialog to
-    // hunt for.
-    const [selected, setSelected] = useState<Set<string>>(new Set());
     const [answerDrafts, setAnswerDrafts] = useState<Record<string, string>>({});
     const [addQuestionOpen, setAddQuestionOpen] = useState(false);
     const [questionText, setQuestionText] = useState("");
@@ -57,8 +57,6 @@ export function QaAttributeTree() {
             setAddQuestionOpen(false);
             setQuestionText("");
             if (variables.parentId) {
-                // Keep the question selected/open so the newly-added answer is
-                // visible right away, just clear its draft text.
                 setAnswerDrafts((d) => ({ ...d, [variables.parentId as string]: "" }));
             }
             toast({ title: "Saved" });
@@ -75,115 +73,144 @@ export function QaAttributeTree() {
         onError: (error: Error) => toast({ title: "Error", description: error.message, variant: "destructive" }),
     });
 
-    const toggleSelected = (id: string) =>
-        setSelected((s) => {
-            const next = new Set(s);
-            next.has(id) ? next.delete(id) : next.add(id);
-            return next;
-        });
-
     const submitAnswer = (questionId: string) => {
         const text = (answerDrafts[questionId] ?? "").trim();
         if (!text) return;
+        if (isLegacyRow(questionId)) {
+            toast({
+                title: "Legacy question",
+                description: "Add a new modern question to attach editable answers.",
+                variant: "destructive",
+            });
+            return;
+        }
         addMutation.mutate({ name: text, parentId: questionId });
     };
 
     return (
-        <div>
-            <div className="mb-6 flex items-center gap-2">
+        <div className="w-full max-w-none space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
                 <Button className="bg-[#008d4c] hover:bg-[#00733e] text-white" onClick={() => setAddQuestionOpen(true)}>
                     <Plus className="w-4 h-4 mr-2" />
                     Add Question
                 </Button>
             </div>
 
-            <div className="rounded-md border border-slate-100 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-4">
-                <div className="flex items-center gap-2 pb-3 text-slate-700 dark:text-zinc-300 font-semibold">
-                    <HelpCircle className="w-4 h-4" />
-                    Question & Answers
-                </div>
-                {isLoading ? (
-                    <div className="py-8 text-center text-muted-foreground">Loading...</div>
-                ) : questions.length === 0 ? (
-                    <div className="py-8 text-center text-muted-foreground">No questions yet. Add one above.</div>
-                ) : (
-                    <div className="pl-2 space-y-1">
-                        {questions.map((q) => {
-                            const answers = answersByQuestion.get(q.id) ?? [];
-                            const isSelected = selected.has(q.id);
-                            return (
-                                <div key={q.id} className="rounded">
-                                    <div className="flex items-center justify-between gap-2 py-1.5 px-2 rounded hover:bg-slate-50 dark:hover:bg-zinc-900 group">
-                                        <label className="flex items-center gap-2.5 flex-1 cursor-pointer">
-                                            <Checkbox
-                                                checked={isSelected}
-                                                onCheckedChange={() => toggleSelected(q.id)}
-                                            />
-                                            <span className="text-slate-700 dark:text-zinc-300 font-medium">{q.name}</span>
-                                        </label>
-                                        <Button
-                                            variant="ghost" size="sm" className="h-7 w-7 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                            onClick={() => { if (confirm("Delete this question and its answers?")) deleteMutation.mutate(q.id); }}
-                                        >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                        </Button>
-                                    </div>
-                                    {isSelected && (
-                                        <div className="pl-9 pr-2 space-y-1 pb-3">
-                                            {answers.map((a) => (
-                                                <div key={a.id} className="flex items-start justify-between gap-2 py-1 px-2 rounded group hover:bg-slate-50 dark:hover:bg-zinc-900">
-                                                    <div className="flex items-start gap-1.5 text-slate-600 dark:text-zinc-400 text-sm">
-                                                        <CornerDownRight className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-400" />
-                                                        {a.name}
-                                                    </div>
-                                                    <Button
-                                                        variant="ghost" size="sm" className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                                        onClick={() => { if (confirm("Delete this answer?")) deleteMutation.mutate(a.id); }}
-                                                    >
-                                                        <Trash2 className="w-3.5 h-3.5" />
-                                                    </Button>
-                                                </div>
-                                            ))}
-                                            <div className="flex items-start gap-2 pt-1">
-                                                <Textarea
-                                                    value={answerDrafts[q.id] ?? ""}
-                                                    onChange={(e) => setAnswerDrafts((d) => ({ ...d, [q.id]: e.target.value }))}
-                                                    placeholder="Add answer..."
-                                                    className="min-h-[38px] text-sm"
-                                                    rows={1}
-                                                />
+            <Card className="w-full border-t-4 border-t-[#008d4c] shadow-sm">
+                <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-lg font-bold text-slate-700 dark:text-zinc-400">
+                        <HelpCircle className="h-5 w-5 text-[#008d4c]" />
+                        Question & Answers
+                    </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                    <div className="max-h-[calc(100vh-14rem)] overflow-y-auto px-2 pb-4">
+                        {isLoading ? (
+                            <p className="py-12 text-center text-sm text-muted-foreground">Loading…</p>
+                        ) : questions.length === 0 ? (
+                            <p className="py-12 text-center text-sm text-muted-foreground">No questions yet. Add one above.</p>
+                        ) : (
+                            <div className="divide-y divide-slate-100 dark:divide-zinc-800">
+                                {questions.map((q, index) => {
+                                    const answers = answersByQuestion.get(q.id) ?? [];
+                                    const legacyQ = isLegacyRow(q.id);
+                                    return (
+                                        <div key={q.id} className="px-3 py-3">
+                                            <div className="flex items-start justify-between gap-3 group">
+                                                <p className="min-w-0 flex-1 text-sm font-semibold text-slate-800 dark:text-zinc-200 whitespace-pre-wrap break-words">
+                                                    {index + 1}. {q.name}
+                                                </p>
                                                 <Button
+                                                    variant="ghost"
                                                     size="sm"
-                                                    className="bg-[#008d4c] hover:bg-[#00733e] shrink-0"
-                                                    disabled={addMutation.isPending || !(answerDrafts[q.id] ?? "").trim()}
-                                                    onClick={() => submitAnswer(q.id)}
+                                                    className="h-8 w-8 shrink-0 text-red-500 hover:bg-red-50 hover:text-red-700"
+                                                    onClick={() => {
+                                                        const msg = legacyQ
+                                                            ? "Delete this legacy question and all its answers?"
+                                                            : "Delete this question and its answers?";
+                                                        if (confirm(msg)) deleteMutation.mutate(q.id);
+                                                    }}
                                                 >
-                                                    Add
+                                                    <Trash2 className="h-4 w-4" />
                                                 </Button>
                                             </div>
+                                            {answers.length > 0 && (
+                                                <ul className="mt-2 space-y-2 pl-4">
+                                                    {answers.map((a) => (
+                                                        <li
+                                                            key={a.id}
+                                                            className="group/a flex items-start justify-between gap-2 text-sm text-slate-600 dark:text-zinc-400"
+                                                        >
+                                                            <div className="flex min-w-0 flex-1 items-start gap-2">
+                                                                <CornerDownRight className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                                                                <span className="whitespace-pre-wrap break-words">{a.name}</span>
+                                                            </div>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="h-7 w-7 shrink-0 text-red-500 hover:bg-red-50 hover:text-red-700"
+                                                                onClick={() => {
+                                                                    const msg =
+                                                                        a.legacyReadOnly || isLegacyRow(a.id)
+                                                                            ? "Delete this legacy answer?"
+                                                                            : "Delete this answer?";
+                                                                    if (confirm(msg)) deleteMutation.mutate(a.id);
+                                                                }}
+                                                            >
+                                                                <Trash2 className="h-3.5 w-3.5" />
+                                                            </Button>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                            {!legacyQ && (
+                                                <div className="mt-3 flex items-start gap-2 pl-4">
+                                                    <Textarea
+                                                        value={answerDrafts[q.id] ?? ""}
+                                                        onChange={(e) => setAnswerDrafts((d) => ({ ...d, [q.id]: e.target.value }))}
+                                                        placeholder="Add answer…"
+                                                        className="min-h-[38px] text-sm"
+                                                        rows={1}
+                                                    />
+                                                    <Button
+                                                        size="sm"
+                                                        className="shrink-0 bg-[#008d4c] hover:bg-[#00733e]"
+                                                        disabled={addMutation.isPending || !(answerDrafts[q.id] ?? "").trim()}
+                                                        onClick={() => submitAnswer(q.id)}
+                                                    >
+                                                        Add
+                                                    </Button>
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
-                                </div>
-                            );
-                        })}
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
-                )}
-            </div>
+                </CardContent>
+            </Card>
 
             <Dialog open={addQuestionOpen} onOpenChange={setAddQuestionOpen}>
                 <DialogContent>
-                    <DialogHeader><DialogTitle>Add Question</DialogTitle></DialogHeader>
+                    <DialogHeader>
+                        <DialogTitle>Add Question</DialogTitle>
+                    </DialogHeader>
                     <div className="space-y-4 py-2">
                         <div className="space-y-2">
                             <Label>Question</Label>
-                            <Input value={questionText} onChange={(e) => setQuestionText(e.target.value)} placeholder="Enter question..." />
+                            <Input
+                                value={questionText}
+                                onChange={(e) => setQuestionText(e.target.value)}
+                                placeholder="Enter question…"
+                            />
                         </div>
                         <Button
                             className="w-full bg-[#008d4c] hover:bg-[#00733e]"
                             disabled={addMutation.isPending || !questionText.trim()}
                             onClick={() => addMutation.mutate({ name: questionText.trim(), parentId: null })}
                         >
-                            {addMutation.isPending ? "Adding..." : "Add Question"}
+                            {addMutation.isPending ? "Adding…" : "Add Question"}
                         </Button>
                     </div>
                 </DialogContent>

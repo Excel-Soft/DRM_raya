@@ -14,6 +14,11 @@
  *   - hr / hr_manager                  -> view all + reports (no create/approve/delete)
  *   - employee / executive / other     -> view ONLY their own penalties; acknowledge own; no create
  * Cross-scope access returns 403.
+ *
+ * Edit / Delete buttons on the Add Penalty list (Nov 2026 rule, overrides the lines above):
+ *   - Edit   -> admin (any status), account_manager (PENDING only)
+ *   - Delete -> admin only
+ * (Review-rejection / re-assign keeps canReviewEmployeeRejection: admin, super HOD, HOD, account manager.)
  */
 import type { Express, Request, Response } from "express";
 import { fetchUsers, fetchUserById, groupUsersByRole } from "../services/increment.service";
@@ -37,6 +42,7 @@ import {
   monthlyReport,
 } from "../services/penalty.service";
 import { recordAuditLog } from "../services/activity-service";
+import { loadRoleTitles, userRoleInfo } from "../utils/user-role-titles";
 // PEN-001: penalty permission decisions live in ONE row-aware source.
 import {
   getUserId,
@@ -47,6 +53,8 @@ import {
   canDecide,
   canVoid,
   canEditOrDeletePenalty,
+  canEditPenalty,
+  canDeletePenalty,
   canReviewEmployeeRejection,
   canViewReports,
   getDepartment,
@@ -83,7 +91,14 @@ export function registerPenaltyRoutes(app: Express) {
         role: req.query.role ? String(req.query.role) : undefined,
         search: req.query.search ? String(req.query.search) : undefined,
       });
-      res.json({ groups: groupUsersByRole(users) });
+      // Role titles (legacy "[L<id>]" roles) + Deactive flag so the Person picker can
+      // group by role title and hide disabled (role 54) profiles, like other pickers.
+      const titles = await loadRoleTitles();
+      const enriched = users.map((u: any) => ({
+        ...u,
+        ...userRoleInfo({ role_id: u.roleId, role: u.role, roles: u.roles }, titles),
+      }));
+      res.json({ groups: groupUsersByRole(enriched as any) });
     } catch (err) {
       console.error("[penalty] /users error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to fetch users" });
@@ -105,7 +120,9 @@ export function registerPenaltyRoutes(app: Express) {
       statuses: PENALTY_STATUSES,
       permissions: {
         canCreate: canCreate(role),
-        canEditOrDelete: canEditOrDeletePenalty(role),
+        canEditOrDelete: canEditPenalty(role) || canDeletePenalty(role),
+        canEdit: canEditPenalty(role),
+        canDelete: canDeletePenalty(role),
         canReviewEmployeeRejection: canReviewEmployeeRejection(role),
         canDecide: canDecide(role),
         canVoid: canVoid(role),
@@ -299,14 +316,12 @@ export function registerPenaltyRoutes(app: Express) {
         return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be edited" });
       }
 
-      // Full access can always edit. HOD / account manager / admin / super HOD may edit pending only (legacy).
-      if (!isFullAccess(role)) {
-        if (!canEditOrDeletePenalty(role)) {
-          return res.status(403).json({ error: "Forbidden", message: "You are not authorized to edit this penalty" });
-        }
-        if (raw.approvalStatus !== "PENDING") {
-          return res.status(409).json({ error: "Conflict", message: "Only pending penalties can be edited" });
-        }
+      // Edit: admin (any status) and account manager (pending only, legacy rule).
+      if (!canEditPenalty(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to edit this penalty" });
+      }
+      if (role !== "admin" && raw.approvalStatus !== "PENDING") {
+        return res.status(409).json({ error: "Conflict", message: "Only pending penalties can be edited" });
       }
 
       const b = req.body ?? {};
@@ -578,13 +593,9 @@ export function registerPenaltyRoutes(app: Express) {
         return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be deleted" });
       }
 
-      if (!isFullAccess(role)) {
-        if (!canEditOrDeletePenalty(role)) {
-          return res.status(403).json({ error: "Forbidden", message: "You are not authorized to delete this penalty" });
-        }
-        if (raw.approvalStatus !== "PENDING") {
-          return res.status(409).json({ error: "Conflict", message: "Only pending penalties can be deleted" });
-        }
+      // Delete: admin only.
+      if (!canDeletePenalty(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "Only admin can delete penalties" });
       }
       await softDeletePenalty(id);
       await recordAuditLog({

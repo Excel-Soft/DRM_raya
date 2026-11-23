@@ -14,8 +14,16 @@ export async function checkOverdueTasks() {
         // Realistically, you would add an 'isOverdue' boolean or a timestamp.
         // As a simple example, we'll log it if not completed.
 
+        // Select only the columns this job uses: a bare select() expands to every
+        // column in the Drizzle schema (sent_to_qa_at, qa_reviewed_at, ...), which
+        // made the whole job fail on databases missing any of those newer columns.
         const overdueTasks = await db
-            .select()
+            .select({
+                id: tasks.id,
+                title: tasks.title,
+                dueDate: tasks.dueDate,
+                assignedToUserId: tasks.assignedToUserId,
+            })
             .from(tasks)
             .where(
                 and(
@@ -31,7 +39,7 @@ export async function checkOverdueTasks() {
             // added an activity log for "OVERDUE_FLAGGED" on this task.
 
             const existingLogs = await ActivityLogService.getLogsForResource("Task", task.id);
-            const alreadyFlagged = existingLogs.some(log => log.action === "OVERDUE_FLAGGED");
+            const alreadyFlagged = (existingLogs ?? []).some(log => log.action === "OVERDUE_FLAGGED");
 
             if (!alreadyFlagged) {
                 // Log it to prevent duplicate notifications
@@ -86,7 +94,7 @@ export async function checkOverdueLoans() {
 
             // Check if we already logged this loan as overdue to avoid spamming
             const existingLogs = await ActivityLogService.getLogsForResource("gm_loan", gmId);
-            const alreadyFlagged = existingLogs.some(log => log.action === "LOAN_OVERDUE_FLAGGED");
+            const alreadyFlagged = (existingLogs ?? []).some(log => log.action === "LOAN_OVERDUE_FLAGGED");
 
             if (!alreadyFlagged) {
                 // Log it to prevent duplicate notifications

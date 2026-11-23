@@ -75,9 +75,12 @@ type DeptResponse = {
 
 function fmtDate(value: string | null): string {
   if (!value) return "-";
+  // Date-only values (old DRM verify/complete dates) are shown as stored.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const d = new Date(value);
   if (isNaN(d.getTime())) return "-";
-  return d.toISOString().slice(0, 19).replace("T", " ");
+  // Pakistan time, like the old DRM (toISOString showed UTC, 5 hours early).
+  return d.toLocaleString("sv-SE", { timeZone: "Asia/Karachi", hour12: false }).slice(0, 19);
 }
 
 export default function DepartmentReport() {

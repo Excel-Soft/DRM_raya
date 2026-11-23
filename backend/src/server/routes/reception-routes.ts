@@ -10,6 +10,12 @@ import {
 } from "../../shared/schema";
 import { eq, desc, and, sql, gte, lte, or, inArray, ilike } from "drizzle-orm";
 import { z } from "zod";
+import {
+  countExpectedClientsToday,
+  fetchExpectedClients,
+  fetchEventAttendance,
+  fetchMonthlyVisits,
+} from "../services/reception-dashboard-legacy.service";
 
 const router = Router();
 
@@ -61,15 +67,7 @@ router.get("/stats", async (req: Request, res: Response) => {
             lte(meetings.createdAt, dateTo)
           )
         ),
-      db.select({ count: sql<number>`count(*)` })
-        .from(meetings)
-        .where(
-          and(
-            eq(meetings.status, "expected"),
-            gte(meetings.meetingDate, dateFrom),
-            lte(meetings.meetingDate, dateTo)
-          )
-        ),
+      countExpectedClientsToday(),
       db.select({ count: sql<number>`count(*)` })
         .from(meetings)
         .where(
@@ -116,7 +114,7 @@ router.get("/stats", async (req: Request, res: Response) => {
     const stats = {
       totalClients: Number(totalClientsRes[0]?.count || 0),
       totalMeetings: Number(totalMeetingsRes[0]?.count || 0),
-      expectedClients: Number(expectedTodayRes[0]?.count || 0),
+      expectedClients: Number(expectedTodayRes || 0),
       interviewClients: Number(interviewRes[0]?.count || 0),
       noticesCount: Number(noticesRes[0]?.count || 0),
       complaintsCount: Number(complaintsRes[0]?.count || 0), 
@@ -127,6 +125,42 @@ router.get("/stats", async (req: Request, res: Response) => {
     res.json(stats);
   } catch (error: any) {
     console.error("Error fetching reception stats:", error);
+    res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
+router.get("/expected-clients", async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
+    const result = await fetchExpectedClients(page, limit);
+    res.json({ data: result.rows, metadata: { total: result.total, page, limit } });
+  } catch (error: any) {
+    console.error("Error fetching expected clients:", error);
+    res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
+router.get("/monthly-visits", async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
+    const result = await fetchMonthlyVisits(page, limit);
+    res.json({ data: result.rows, metadata: { total: result.total, page, limit } });
+  } catch (error: any) {
+    console.error("Error fetching monthly visits:", error);
+    res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
+router.get("/event-attendance", async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
+    const result = await fetchEventAttendance(page, limit);
+    res.json({ data: result.rows, metadata: { total: result.total, page, limit } });
+  } catch (error: any) {
+    console.error("Error fetching event attendance:", error);
     res.status(500).json({ error: error.message || "Internal server error" });
   }
 });

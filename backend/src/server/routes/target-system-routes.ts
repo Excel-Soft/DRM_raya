@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db, pool } from "../db";
 import { targetSystemTargets, targetSystemDailyTargets, targetSystemKwaRecords, targetSystemKwaHistory, targetSystemUserTargets, users } from "../../shared/schema";
-import { eq, desc, and, or, inArray, lte, gte, isNull, ilike } from "drizzle-orm";
+import { eq, desc, and, or, inArray, lte, gte, isNull, ilike, sql, getTableColumns } from "drizzle-orm";
 import { requireRole } from "../middleware/auth.middleware";
 
 const router = Router();
@@ -201,6 +201,43 @@ router.post("/targets", async (req, res) => {
   }
 });
 
+// Update a target definition (Create Target page "Edit"). Partial: only the
+// fields sent are changed. Existing per-user assignments keep their own
+// snapshotted values (same as legacy, which only updated webxl_terget).
+router.patch("/targets/:id", async (req, res) => {
+  try {
+    const data = createTargetSchema.partial().parse(req.body);
+    const values: Record<string, unknown> = {};
+    if (data.targetName !== undefined) values.targetName = data.targetName;
+    if (data.category !== undefined) values.category = data.category || null;
+    if (data.package !== undefined) values.package = data.package;
+    if (data.reward !== undefined) values.reward = data.reward;
+    if (data.bonus !== undefined) values.bonus = data.bonus;
+    if (data.price !== undefined) values.price = String(data.price);
+    if (data.maxPrice !== undefined) values.maxPrice = String(data.maxPrice);
+    if (data.penalty !== undefined) values.penalty = String(data.penalty);
+    if (data.amount !== undefined) values.amount = data.amount;
+    if (data.number !== undefined) values.number = data.number;
+    if (data.kwa !== undefined) values.kwa = data.kwa;
+    if (data.vas !== undefined) values.vas = data.vas;
+    if (data.conversion !== undefined) values.conversion = data.conversion;
+    if (Object.keys(values).length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    const [target] = await db
+      .update(targetSystemTargets)
+      .set(values)
+      .where(eq(targetSystemTargets.id, String(req.params.id)))
+      .returning();
+    if (!target) return res.status(404).json({ error: "Target not found" });
+    res.json(target);
+  } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
+    console.error("Error updating target system target:", error);
+    res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update target" });
+  }
+});
 
 // Get all daily targets
 router.get("/daily-targets", async (req, res) => {
@@ -301,10 +338,9 @@ router.put("/daily-targets/:id", async (req, res) => {
 // Get all KWA records (Com Id = legacy com_id / customer drm_id, not KWA row id).
 router.get("/kwa-records", async (req, res) => {
   try {
-    await pool.query(`ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS com_id text`);
-    await pool.query(
-      `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES drm.customers(id)`,
-    );
+    // (No per-request ALTER TABLE here any more: com_id/customer_id are created
+    // by scripts/migration/ensure-target-system-schema.sql, and ALTER takes an
+    // ACCESS EXCLUSIVE lock on every call even when the column already exists.)
     const { rows } = await pool.query(`
       SELECT
         k.id,
@@ -323,17 +359,53 @@ router.get("/kwa-records", async (req, res) => {
         COALESCE(NULLIF(btrim(k.com_id), ''), c_ref.drm_id, c_name.drm_id, '') AS "comId"
       FROM drm.target_system_kwa_records k
       LEFT JOIN drm.customers c_ref ON c_ref.id = k.customer_id
+      -- Name-match fallback only for rows with no customer link and no com_id.
+      -- The guard must sit INSIDE the subquery: as a join ON-condition Postgres
+      -- still ran the lookup for every row (218 x ~250 ms seq scans = 54 s).
+      -- Uses idx_customers_company_name_lower_trim when it does run.
       LEFT JOIN LATERAL (
         SELECT drm_id FROM drm.customers
-        WHERE lower(trim(company_name)) = lower(trim(k.company))
+        WHERE k.customer_id IS NULL
+          AND NULLIF(btrim(k.com_id), '') IS NULL
+          AND lower(trim(company_name)) = lower(trim(k.company))
         LIMIT 1
-      ) c_name ON k.customer_id IS NULL
+      ) c_name ON true
       ORDER BY k.created_at DESC
     `);
     res.json(rows);
   } catch (error) {
     console.error("Error fetching KWA records:", error);
     res.status(500).json({ error: "Failed to fetch KWA records" });
+  }
+});
+
+// GET /kwa-usage?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD — BV report "KWA" table, as old
+// func.php built it: webxl_kwa_history rows with DATE(pay_date) in the range (newest first),
+// each joined to its KWA. Reward = tier of the KWA amount, halved for "Used" rows.
+router.get("/kwa-usage", async (req, res) => {
+  try {
+    const startDate = String(req.query.startDate ?? "");
+    const endDate = String(req.query.endDate ?? "");
+    const isDate = (v: string) => /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(v);
+    if (!isDate(startDate) || !isDate(endDate)) {
+      return res.status(400).json({ error: "startDate and endDate (YYYY-MM-DD) are required" });
+    }
+    const { rows } = await pool.query(
+      `SELECT h.id, r.company, r.employee AS "sellBy", h.employee AS "usedBy", r.kwa, r.type, r.detail,
+              r.remaining, h.amount AS used, h.action_type AS status, r.created_at AS "createdAt", h.pay_date AS "payDate",
+              (CASE WHEN r.kwa <= 200 THEN 2400 WHEN r.kwa <= 500 THEN 6000 WHEN r.kwa <= 1000 THEN 12000
+                    WHEN r.kwa <= 1500 THEN 18000 WHEN r.kwa <= 2000 THEN 24000 ELSE 0 END)
+                / (CASE WHEN h.action_type = 'Used' THEN 2 ELSE 1 END) AS reward
+         FROM drm.target_system_kwa_history h
+         JOIN drm.target_system_kwa_records r ON r.id = h.kwa_record_id
+        WHERE h.pay_date::date BETWEEN $1::date AND $2::date
+        ORDER BY h.id DESC`,
+      [startDate, endDate],
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching KWA usage:", error);
+    res.status(500).json({ error: "Failed to fetch KWA usage" });
   }
 });
 
@@ -512,21 +584,27 @@ router.get("/user-targets", async (req, res) => {
   try {
     const onlyCurrent = req.query.current === "true";
     const now = new Date();
+    // userName: the assigned user's name (legacy target-set shows it above the
+    // target name). user_id is text, users.id is uuid -> compare as text.
+    const columns = { ...getTableColumns(targetSystemUserTargets), userName: users.name };
+    const userJoin = sql`${users.id}::text = ${targetSystemUserTargets.userId}`;
     const targets = onlyCurrent
       ? await db
-          .select()
+          .select(columns)
           .from(targetSystemUserTargets)
+          .leftJoin(users, userJoin)
           .where(
             and(
               or(isNull(targetSystemUserTargets.startDate), lte(targetSystemUserTargets.startDate, now)),
               or(isNull(targetSystemUserTargets.endDate), gte(targetSystemUserTargets.endDate, now)),
             ),
           )
-          .orderBy(desc(targetSystemUserTargets.createdAt))
+          .orderBy(desc(targetSystemUserTargets.createdAt), desc(targetSystemUserTargets.id))
       : await db
-          .select()
+          .select(columns)
           .from(targetSystemUserTargets)
-          .orderBy(desc(targetSystemUserTargets.createdAt));
+          .leftJoin(users, userJoin)
+          .orderBy(desc(targetSystemUserTargets.createdAt), desc(targetSystemUserTargets.id));
     res.json(targets);
   } catch (error) {
     console.error("Error fetching user targets:", error);
@@ -597,6 +675,190 @@ router.post("/assign-role", async (req, res) => {
 });
 
 // Update multiple user targets dates (Assign Same Target)
+// Old-DRM assignment history (read-only) for View Target's "All History".
+// Legacy target-view listed ALL of a user's webxl_setterget rows (func.php
+// user_id_terget_view: "WHERE user_id = ... ORDER BY id DESC"); only the
+// current ones were copied into target_system_user_targets, so the rest is
+// read straight from legacy_archive. Rows already copied are excluded.
+const LEGACY_TARGET_CATEGORY: Record<string, string> = {
+  "1": "AB New Terget", "2": "Renewal Terget", "3": "VAS", "4": "Other",
+  "5": "Team", "6": "Project Target", "7": "PP Link",
+};
+
+async function legacyTargetHistory(userIds: string[]): Promise<any[]> {
+  if (userIds.length === 0) return [];
+  const { rows } = await pool.query(
+    `SELECT mu.modern_id AS user_id, s.id, s.target_num, s.terget_cat, s.start_date, s.end_date,
+            s."singDate" AS sign_date,
+            t.terget_name, t.bonus, t.price, t.max_amount, t.conversion, t.vas, t.kwa, t.reward
+     FROM migration_meta.migration_legacy_ids mu
+     JOIN legacy_archive.webxl_setterget s ON s.user_id = mu.legacy_id
+     LEFT JOIN legacy_archive.webxl_terget t ON t.terget_id = s.terget_id
+     WHERE mu.entity_type = 'user' AND mu.legacy_table = 'webxl_user' AND mu.modern_id = ANY($1::text[])
+       AND NOT EXISTS (
+         SELECT 1 FROM migration_meta.migration_legacy_ids x
+         JOIN drm.target_system_user_targets ut ON ut.id::text = x.modern_id
+         WHERE x.entity_type = 'target_system_user_target' AND x.legacy_table = 'webxl_setterget'
+           AND x.legacy_id = s.id
+       )
+     ORDER BY s.id::int DESC`,
+    [userIds],
+  );
+  const num = (v: unknown) => {
+    const n = Number(String(v ?? "").trim());
+    return Number.isFinite(n) ? n : 0;
+  };
+  const dateOrNull = (v: unknown) => {
+    const t = String(v ?? "").trim();
+    return /^\d{4}-\d{2}-\d{2}/.test(t) && !t.startsWith("0000") ? t.replace(" ", "T") : null;
+  };
+  return rows.map((r) => {
+    const conversion = num(r.conversion), vas = num(r.vas), kwa = num(r.kwa), reward = num(r.reward);
+    return {
+      id: `legacy-${r.id}`,
+      userId: r.user_id,
+      targetName: r.terget_name || "(deleted target)",
+      category: LEGACY_TARGET_CATEGORY[String(r.terget_cat)] ?? "Other",
+      target: String(r.target_num ?? "0") || "0",
+      price: num(r.price),
+      maxPrice: num(r.max_amount),
+      bonus: String(r.bonus).trim() === "1" ? "Percentage %" : "Amount",
+      conversion, vas, kwa, reward,
+      total: conversion + vas + kwa + reward,
+      startDate: dateOrNull(r.start_date),
+      endDate: dateOrNull(r.end_date),
+      signDate: dateOrNull(r.sign_date),
+      isLegacy: true,
+    };
+  });
+}
+
+router.get("/user-targets/legacy-history", async (req, res) => {
+  try {
+    const userId = String(req.query.userId ?? "").trim();
+    if (!userId) return res.status(400).json({ error: "userId is required" });
+    res.json(await legacyTargetHistory([userId]));
+  } catch (error) {
+    console.error("Error fetching legacy user target history:", error);
+    res.status(500).json({ error: "Failed to fetch legacy target history" });
+  }
+});
+
+// "Team Target" for View Target — legacy func.php user_id_terget_view: after
+// the user's own targets, one "Team Terget" table per direct report
+// (webxl_user.underWork = the viewed user), each with that member's targets.
+// Team = legacy underWork (mapped to new user ids) UNION drm.users.under_works.
+// ?all=true -> every assignment (+ old-DRM history); otherwise current quarter.
+router.get("/user-targets/team", async (req, res) => {
+  try {
+    const userId = String(req.query.userId ?? "").trim();
+    if (!userId) return res.status(400).json({ error: "userId is required" });
+    const all = req.query.all === "true";
+
+    const { rows: members } = await pool.query(
+      `WITH me AS (
+         SELECT legacy_id FROM migration_meta.migration_legacy_ids
+         WHERE entity_type = 'user' AND legacy_table = 'webxl_user' AND modern_id = $1
+       ),
+       team AS (
+         SELECT m.modern_id AS id
+         FROM legacy_archive.webxl_user lu
+         JOIN me ON lu."underWork" = me.legacy_id
+         JOIN migration_meta.migration_legacy_ids m
+           ON m.entity_type = 'user' AND m.legacy_table = 'webxl_user' AND m.legacy_id = lu.user_id
+         UNION
+         SELECT u.id::text FROM drm.users u WHERE u.under_works = $1
+       )
+       SELECT u.id::text AS id, COALESCE(u.name, u.full_name, u.email) AS name
+       FROM team JOIN drm.users u ON u.id::text = team.id
+       WHERE u.id::text <> $1
+       ORDER BY 2`,
+      [userId],
+    );
+    const memberIds = members.map((m) => m.id as string);
+    if (memberIds.length === 0) return res.json([]);
+
+    const now = new Date();
+    const conditions = [inArray(targetSystemUserTargets.userId, memberIds)];
+    if (!all) {
+      conditions.push(
+        or(isNull(targetSystemUserTargets.startDate), lte(targetSystemUserTargets.startDate, now))!,
+        or(isNull(targetSystemUserTargets.endDate), gte(targetSystemUserTargets.endDate, now))!,
+      );
+    }
+    const current = await db
+      .select()
+      .from(targetSystemUserTargets)
+      .where(and(...conditions))
+      .orderBy(desc(targetSystemUserTargets.createdAt), desc(targetSystemUserTargets.id));
+    const history = all ? await legacyTargetHistory(memberIds) : [];
+
+    // Same shape as legacy: only members that actually have targets get a section.
+    const sections = members
+      .map((m) => ({
+        userId: m.id,
+        userName: m.name,
+        targets: [
+          ...current.filter((t) => t.userId === m.id).map((t) => ({ ...t, isLegacy: false })),
+          ...history.filter((t) => t.userId === m.id),
+        ],
+      }))
+      .filter((sec) => sec.targets.length > 0);
+    res.json(sections);
+  } catch (error) {
+    console.error("Error fetching team targets:", error);
+    res.status(500).json({ error: "Failed to fetch team targets" });
+  }
+});
+
+// "Assign Same Target" — legacy func.php (start_date_same_target): take every
+// assignment that ran inside the PREVIOUS calendar quarter and INSERT a copy
+// for the new start/end dates (quarter rollover). Existing rows are never
+// modified, unlike PUT /user-targets/bulk-dates which overwrites dates.
+const copyLastQuarterSchema = z
+  .object({
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "startDate must be YYYY-MM-DD"),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "endDate must be YYYY-MM-DD"),
+  })
+  .strict();
+
+function lastQuarterRange(today: Date): { start: string; end: string } {
+  const q = Math.floor(today.getMonth() / 3); // 0..3, current quarter
+  const year = q === 0 ? today.getFullYear() - 1 : today.getFullYear();
+  const lq = q === 0 ? 3 : q - 1;
+  const startMonth = lq * 3; // 0-based
+  const lastDay = new Date(year, startMonth + 3, 0).getDate();
+  const mm = (m: number) => String(m + 1).padStart(2, "0");
+  return {
+    start: `${year}-${mm(startMonth)}-01`,
+    end: `${year}-${mm(startMonth + 2)}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+router.post("/user-targets/copy-last-quarter", async (req, res) => {
+  try {
+    const { startDate, endDate } = copyLastQuarterSchema.parse(req.body);
+    if (startDate > endDate) return res.status(400).json({ error: "startDate must be before endDate" });
+    const range = lastQuarterRange(new Date());
+    const { rowCount } = await pool.query(
+      `INSERT INTO drm.target_system_user_targets
+         (user_id, target_name, category, target, price, max_price, bonus, vas, kwa, reward,
+          conversion, total, start_date, end_date, sign_date, created_at)
+       SELECT user_id, target_name, category, target, price, max_price, bonus, vas, kwa, reward,
+              conversion, total, $3::timestamp, $4::timestamp, now()::timestamp(0), now()
+       FROM drm.target_system_user_targets
+       WHERE start_date >= $1::timestamp AND end_date <= $2::timestamp
+       ORDER BY id`,
+      [range.start, range.end, startDate, endDate],
+    );
+    res.json({ copied: rowCount ?? 0, from: range });
+  } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
+    console.error("Error copying last quarter user targets:", error);
+    res.status(500).json({ error: "Failed to assign same targets" });
+  }
+});
+
 router.put("/user-targets/bulk-dates", async (req, res) => {
   try {
     const { targetIds, startDate, endDate } = bulkDatesSchema.parse(req.body);

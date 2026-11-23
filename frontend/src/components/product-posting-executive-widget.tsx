@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { WorkflowTimeline } from "@/components/workflow-timeline";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 function StatCard({ label, icon: Icon, value }: { label: string; icon: any; value: number }) {
@@ -103,8 +104,10 @@ export function ProductPostingExecutiveWidget() {
         queryKey: ["/api/product-posting/commission/me"],
         queryFn: async () => {
             const res = await apiRequest("GET", "/api/product-posting/commission/me");
+            if (!res.ok) return { success: true, data: null };
             return res.json();
-        }
+        },
+        retry: 1,
     });
     const commission = commissionRes?.data;
 
@@ -116,16 +119,16 @@ export function ProductPostingExecutiveWidget() {
         }
     });
 
-    const [monthlyProjectPeriod, setMonthlyProjectPeriod] = useState("WK");
+    const [monthlyProjectPeriod, setMonthlyProjectPeriod] = useState("MO");
 
     const { data: monthlyReportData } = useQuery({
-        queryKey: ["/api/hod/daily-report", "monthly-completed", monthlyProjectPeriod],
+        queryKey: ["/api/dd-executive/monthly-complete", monthlyProjectPeriod],
         queryFn: async () => {
-            const periodParam = monthlyProjectPeriod === "WK" ? "weekly" : "monthly";
-            const res = await apiRequest("GET", `/api/hod/daily-report?period=${periodParam}`);
-            return res.json();
-        }
+            const period = monthlyProjectPeriod === "WK" ? "WK" : "MO";
+            return apiRequestJson<any[]>("GET", `/api/dd-executive/monthly-complete?period=${period}`);
+        },
     });
+    const monthlyRows = Array.isArray(monthlyReportData) ? monthlyReportData : [];
 
     const { data: usersData, error: usersError, isLoading: isLoadingUsers } = useQuery({
         queryKey: ["/api/users"],
@@ -403,14 +406,18 @@ export function ProductPostingExecutiveWidget() {
                                             <td className="px-4 py-2.5 text-gray-600 dark:text-zinc-300">{row.company || "—"}</td>
                                             <td className="px-4 py-2.5 text-gray-600 dark:text-zinc-300">{row.project || "—"}</td>
                                             <td className="px-4 py-2.5 text-gray-500 dark:text-zinc-400">{row.free ?? 0}</td>
-                                            <td className="px-4 py-2.5 text-gray-500 dark:text-zinc-400">{row.tasks ?? 0}</td>
+                                            <td className="px-4 py-2.5 text-gray-500 dark:text-zinc-400">{row.task ?? row.tasks ?? "—"}</td>
                                             <td className="px-4 py-2.5">
                                                 <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${row.status === "Completed" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
                                                     {row.status || "—"}
                                                 </span>
                                             </td>
                                             <td className="px-4 py-2.5 text-gray-500 dark:text-zinc-400">{row.run ?? 0}</td>
-                                            <td className="px-4 py-2.5 text-gray-500 dark:text-zinc-400">{row.spent ?? 0} mins</td>
+                                            <td className="px-4 py-2.5 text-gray-500 dark:text-zinc-400">
+                                                {typeof row.spent === "string" && row.spent.includes("mins")
+                                                    ? row.spent
+                                                    : `${row.spent ?? 0} mins`}
+                                            </td>
                                         </tr>
                                     ))
                                 )}
@@ -603,7 +610,7 @@ export function ProductPostingExecutiveWidget() {
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="WK" style={{ fontSize: "12px" }}>WK</SelectItem>
-                                <SelectItem value="MONTH" style={{ fontSize: "12px" }}>Month</SelectItem>
+                                <SelectItem value="MO" style={{ fontSize: "12px" }}>Month</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
@@ -622,27 +629,31 @@ export function ProductPostingExecutiveWidget() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {!monthlyReportData?.data || monthlyReportData.data.length === 0 ? (
+                                {monthlyRows.length === 0 ? (
                                     <tr>
                                         <td colSpan={8} className="px-3 py-8 text-center text-gray-400">
                                             No monthly records found.
                                         </td>
                                     </tr>
                                 ) : (
-                                    monthlyReportData.data.map((row: any, idx: number) => (
+                                    monthlyRows.map((row: any, idx: number) => (
                                         <tr key={idx} className="border-b hover:bg-gray-50 transition-colors dark:hover:bg-zinc-800">
                                             <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0 font-medium text-gray-700 dark:text-zinc-400">{row.name || "—"}</td>
                                             <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0 text-gray-600 dark:text-zinc-300">{row.company || "—"}</td>
                                             <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0 text-gray-600 dark:text-zinc-300">{row.project || "—"}</td>
                                             <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0 text-gray-500 dark:text-zinc-400">{row.free ?? 0}</td>
-                                            <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0 text-gray-500 dark:text-zinc-400">{row.tasks ?? 0}</td>
+                                            <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0 text-gray-500 dark:text-zinc-400">{row.task ?? row.tasks ?? "—"}</td>
                                             <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0">
                                                 <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${row.status === "Completed" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
                                                     {row.status || "—"}
                                                 </span>
                                             </td>
                                             <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0 text-gray-500 dark:text-zinc-400">{row.run ?? 0}</td>
-                                            <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0 text-gray-500 dark:text-zinc-400">{row.spent ?? 0} mins</td>
+                                            <td className="px-3 py-2 border-x first:border-l-0 last:border-r-0 text-gray-500 dark:text-zinc-400">
+                                                {typeof row.spent === "string" && row.spent.includes("mins")
+                                                    ? row.spent
+                                                    : `${row.spent ?? 0} mins`}
+                                            </td>
                                         </tr>
                                     ))
                                 )}
@@ -834,39 +845,21 @@ export function ProductPostingExecutiveWidget() {
                         <div className="grid grid-cols-2 gap-6">
                             <div className="space-y-1.5">
                                 <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Person</label>
-                                <Select 
-                                    value={taskDetails.assigneeId} 
-                                    onValueChange={(v) => setTaskDetails(prev => ({ ...prev, assigneeId: v }))}
-                                >
-                                    <SelectTrigger className="h-10 border-gray-200 text-[13px] text-gray-700 dark:border-zinc-800 dark:text-zinc-400">
-                                        <SelectValue placeholder="Choose Person..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {isLoadingUsers ? (
-                                            <div className="p-2 text-center text-gray-400 text-[12px]">Loading users...</div>
-                                        ) : usersError ? (
-                                            <div className="p-2 text-center text-rose-500 text-[12px]">Error: {(usersError as any).message}</div>
-                                        ) : usersData?.users ? (
-                                            usersData.users
-                                            .filter((u: any) => {
-                                                const uRole = (u.role || "").toLowerCase();
-                                                const rs = (u.roles || []).map((r: any) => String(r).toLowerCase());
-                                                
-                                                return uRole === "posting_executive" || 
-                                                       uRole === "product_posting_executive" ||
-                                                       rs.includes("posting_executive") || 
-                                                       rs.includes("product_posting_executive");
-                                            })
-                                            .map((user: any) => (
-                                                <SelectItem key={user.id} value={user.id}>
-                                                    {user.fullName || user.username}
-                                                </SelectItem>
-                                            ))
-                                        ) : (
-                                            <div className="p-2 text-center text-gray-400 text-[12px]">No data</div>
-                                        )}
-                                    </SelectContent>
-                                </Select>
+                                <RoleGroupedUserSelect
+                                    grouped={false}
+                                    users={(usersData?.users || []).filter((u: any) => {
+                                        const uRole = (u.role || "").toLowerCase();
+                                        const rs = (u.roles || []).map((r: any) => String(r).toLowerCase());
+                                        return uRole === "posting_executive" ||
+                                               uRole === "product_posting_executive" ||
+                                               rs.includes("posting_executive") ||
+                                               rs.includes("product_posting_executive");
+                                    })}
+                                    value={taskDetails.assigneeId}
+                                    onChange={(v) => setTaskDetails(prev => ({ ...prev, assigneeId: v }))}
+                                    placeholder={isLoadingUsers ? "Loading users..." : usersError ? `Error: ${(usersError as any).message}` : "Choose Person..."}
+                                    className="h-10 border-gray-200 text-[13px] text-gray-700 dark:border-zinc-800 dark:text-zinc-400"
+                                />
                             </div>
                             <div className="space-y-1.5">
                                 <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Task</label>

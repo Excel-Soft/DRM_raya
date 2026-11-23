@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2 } from "lucide-react";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 export default function PerformanceEvaluation() {
   const [userId, setUserId] = useState<string>("all");
@@ -56,19 +57,15 @@ export default function PerformanceEvaluation() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-4 items-end">
             <div className="space-y-2">
               <label className="text-sm font-medium">Select User</label>
-              <Select value={userId} onValueChange={setUserId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Team</SelectItem>
-                  {usersData?.map((user: any) => (
-                    <SelectItem key={user.userId || user.id} value={user.userId || user.id}>
-                      {user.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <RoleGroupedUserSelect
+                grouped={false}
+                users={Array.isArray(usersData) ? usersData : usersData?.users}
+                value={userId}
+                onChange={setUserId}
+                getValue={(user: any) => String(user.userId || user.id || "")}
+                extraOptions={[{ value: "all", label: "All Team" }]}
+                placeholder="Choose..."
+              />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Start Date</label>

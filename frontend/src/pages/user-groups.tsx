@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { RoleGroupList } from "@/components/role-group-list";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -90,13 +91,16 @@ export default function UserGroups() {
     const users = usersData?.users || [];
 
     const filteredUsers = useMemo(() => {
-        if (!memberSearch) return users;
+        // Disabled profiles (role 54 "Deactive") can't be added to a group,
+        // but keep any that are already selected visible.
+        const pool = users.filter((u: any) => !u.isDeactive || selectedMembers.includes(u.id));
+        if (!memberSearch) return pool;
         const lower = memberSearch.toLowerCase();
-        return users.filter(u =>
+        return pool.filter(u =>
             (u.fullName || "").toLowerCase().includes(lower) ||
             (u.email || "").toLowerCase().includes(lower)
         );
-    }, [users, memberSearch]);
+    }, [users, memberSearch, selectedMembers]);
 
     // Create mutation
     const createMutation = useMutation({
@@ -216,8 +220,10 @@ export default function UserGroups() {
         );
     };
 
-    const MemberSelectionList = () => (
-        <div className="border rounded-md">
+    // Plain render function (not a component): a component declared inside the page
+    // was re-mounted on every keystroke, so the search box lost focus after each letter.
+    const renderMemberSelectionList = () => (
+        <div className="min-w-0 overflow-hidden rounded-md border">
             <div className="p-2 border-b">
                 <Input
                     placeholder="Search users..."
@@ -226,13 +232,15 @@ export default function UserGroups() {
                     onChange={(e) => setMemberSearch(e.target.value)}
                 />
             </div>
-            <ScrollArea className="h-[200px] p-2">
-                <div className="space-y-2">
+            {/* plain scroller: Radix ScrollArea's table-layout viewport let long rows
+                widen the whole dialog past its edge */}
+            <div className="max-h-[220px] overflow-y-auto p-2">
+                <div className="space-y-1">
                     {filteredUsers.length === 0 ? (
                         <p className="text-sm text-center text-muted-foreground py-4">No users found</p>
                     ) : (
                         filteredUsers.map(user => (
-                            <div key={user.id} className="flex items-center space-x-2 p-1 hover:bg-muted/50 rounded-sm">
+                            <div key={user.id} className="flex min-w-0 items-center gap-2 rounded-sm p-1.5 hover:bg-muted/50">
                                 <Checkbox
                                     id={`member-${user.id}`}
                                     checked={selectedMembers.includes(user.id)}
@@ -240,16 +248,18 @@ export default function UserGroups() {
                                 />
                                 <label
                                     htmlFor={`member-${user.id}`}
-                                    className="text-sm flex-1 cursor-pointer flex justify-between"
+                                    className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-3 text-sm"
                                 >
-                                    <span>{user.fullName}</span>
-                                    <span className="text-xs text-muted-foreground">{user.role}</span>
+                                    <span className="truncate">{user.fullName}</span>
+                                    <span className="shrink-0 max-w-[45%] truncate text-xs text-muted-foreground">
+                                        {((user as any).roleTitles?.map((r: any) => r.title).join(", ")) || user.role}
+                                    </span>
                                 </label>
                             </div>
                         ))
                     )}
                 </div>
-            </ScrollArea>
+            </div>
             <div className="p-2 border-t bg-muted/20 text-xs text-muted-foreground text-center">
                 {selectedMembers.length} members selected
             </div>
@@ -275,6 +285,11 @@ export default function UserGroups() {
                     Create Group
                 </Button>
             </div>
+
+            {/* Old-DRM Group List (role groups) */}
+            <RoleGroupList />
+
+            <h2 className="text-base font-bold uppercase tracking-wide text-slate-700 dark:text-zinc-200">Team Groups</h2>
 
             {/* Groups Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -360,14 +375,14 @@ export default function UserGroups() {
 
             {/* Create Group Dialog */}
             <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-                <DialogContent className="max-w-lg">
+                <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Create New Group</DialogTitle>
                         <DialogDescription>
                             Create a new user group to organize your team members.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-4 py-4">
+                    <div className="min-w-0 space-y-4 py-2">
                         <div>
                             <label className="text-sm font-medium mb-2 block">Group Name *</label>
                             <Input
@@ -389,7 +404,7 @@ export default function UserGroups() {
                         </div>
                         <div>
                             <label className="text-sm font-medium mb-2 block">Members</label>
-                            <MemberSelectionList />
+                            {renderMemberSelectionList()}
                         </div>
                     </div>
                     <DialogFooter>
@@ -408,14 +423,14 @@ export default function UserGroups() {
 
             {/* Edit Group Dialog */}
             <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-                <DialogContent className="max-w-lg">
+                <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Edit Group</DialogTitle>
                         <DialogDescription>
                             Update the group name, description and members.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-4 py-4">
+                    <div className="min-w-0 space-y-4 py-2">
                         <div>
                             <label className="text-sm font-medium mb-2 block">Group Name *</label>
                             <Input
@@ -437,7 +452,7 @@ export default function UserGroups() {
                         </div>
                         <div>
                             <label className="text-sm font-medium mb-2 block">Members</label>
-                            <MemberSelectionList />
+                            {renderMemberSelectionList()}
                         </div>
                     </div>
                     <DialogFooter>

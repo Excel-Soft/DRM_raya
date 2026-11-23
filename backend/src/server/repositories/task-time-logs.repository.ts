@@ -8,6 +8,13 @@ let logsSchemaEnsured = false;
 export const taskTimeLogsRepository = {
   async ensureSchema() {
     if (logsSchemaEnsured) return;
+    // This legacy-shape migration references columns (end_at, tasks.assigned_to)
+    // that don't exist on the migrated DB, so it always fails and was being
+    // retried — and logged — on every single request. Run it at most once, and
+    // not at all when schema ensures are disabled (columns come from
+    // scripts/migration/add-pms-task-qa-columns-and-task-files.sql instead).
+    logsSchemaEnsured = true;
+    if (process.env.SKIP_SCHEMA_ENSURE === "true") return;
     const alterSql = `
       alter table task_time_logs
         add column if not exists time_spent_minutes integer,
@@ -65,7 +72,6 @@ export const taskTimeLogsRepository = {
     `;
     try {
       await pool.query(alterSql);
-      logsSchemaEnsured = true;
     } catch (err) {
       console.error("Failed to ensure task_time_logs schema (continuing):", err);
     }

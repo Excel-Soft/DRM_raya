@@ -2,14 +2,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Pencil, Trash2, X } from "lucide-react";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 const DUTY_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
+
+const PAGE_SIZE = 20;
 
 export default function EventsDutyPlanner() {
   const { toast } = useToast();
@@ -48,17 +51,29 @@ export default function EventsDutyPlanner() {
     },
   });
 
-  const dutiesKey = ["/api/events", eventId, "duties"];
+  // No event selected -> ALL duties across events (new + read-only old-DRM
+  // rows). Selecting an event in the form scopes the table to that event.
+  const dutiesKey = eventId ? ["/api/events", eventId, "duties"] : ["/api/events/duties", { includeLegacy: true }];
   const { data: duties = [], isLoading } = useQuery<any[]>({
     queryKey: dutiesKey,
-    enabled: !!eventId,
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/events/${eventId}/duties`);
+      const res = await apiRequest("GET", eventId ? `/api/events/${eventId}/duties` : "/api/events/duties?includeLegacy=1");
       if (!res.ok) throw new Error("Failed to fetch duties");
       const json = await res.json();
       return json.data || [];
     },
   });
+
+  // Client-side pagination (the duties API returns the full list).
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(duties.length / PAGE_SIZE));
+  const pagedDuties = duties.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const firstRow = duties.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const lastRow = Math.min(page * PAGE_SIZE, duties.length);
+  // Back to page 1 when switching between "all duties" and one event.
+  useEffect(() => { setPage(1); }, [eventId]);
+  // e.g. after deleting the only row on the last page, step back to a valid page.
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
 
   const resetForm = () => {
     setEditingId(null);
@@ -73,6 +88,7 @@ export default function EventsDutyPlanner() {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: dutiesKey });
+    queryClient.invalidateQueries({ queryKey: ["/api/events/duties"] });
   };
 
   const createMutation = useMutation({
@@ -126,8 +142,8 @@ export default function EventsDutyPlanner() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiRequest("DELETE", `/api/events/${eventId}/duties/${id}`);
+    mutationFn: async (d: { id: string; eventId: string }) => {
+      const res = await apiRequest("DELETE", `/api/events/${d.eventId || eventId}/duties/${d.id}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.message || "Failed to delete duty");
@@ -157,7 +173,11 @@ export default function EventsDutyPlanner() {
     }
   };
 
+  const eventName = (id: string | null | undefined) => eventsList.find((ev) => ev.id === id)?.name;
+
   const handleEdit = (d: any) => {
+    // Edit/Delete call /api/events/:eventId/duties/:id, so scope to the row's event.
+    if (d.eventId && d.eventId !== eventId) setEventId(d.eventId);
     setEditingId(d.id);
     setDuty(d.duty || "");
     setAssignedUserId(d.assignedUserId || "");
@@ -180,6 +200,14 @@ export default function EventsDutyPlanner() {
         >
           ADD PLAN
         </button>
+        {eventId && (
+          <button
+            onClick={() => { setEventId(""); resetForm(); }}
+            className="ml-auto text-xs font-semibold normal-case text-[#00a65a] hover:underline"
+          >
+            Show all duties
+          </button>
+        )}
       </div>
 
       <div className="space-y-6">
@@ -211,16 +239,15 @@ export default function EventsDutyPlanner() {
                 </div>
                 <div>
                   <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Employee</label>
-                  <Select value={assignedUserId} onValueChange={setAssignedUserId}>
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="Choose..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {usersList.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>{u.name || u.username || u.fullName || u.id}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <RoleGroupedUserSelect
+                    grouped={false}
+                    users={usersList}
+                    value={assignedUserId}
+                    onChange={setAssignedUserId}
+                    getLabel={(u) => String(u.name || u.username || u.fullName || u.id)}
+                    placeholder="Choose..."
+                    className="h-9 text-sm"
+                  />
                 </div>
                 <div>
                   <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Duty</label>
@@ -275,6 +302,7 @@ export default function EventsDutyPlanner() {
               <thead className="text-xs text-gray-700 bg-white border-b font-bold dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
                   <th className="px-4 py-4 whitespace-nowrap">#</th>
+                  <th className="px-4 py-4 whitespace-nowrap">Event</th>
                   <th className="px-4 py-4 whitespace-nowrap">Person</th>
                   <th className="px-4 py-4 whitespace-nowrap">Duty</th>
                   <th className="px-4 py-4 whitespace-nowrap">Role</th>
@@ -286,42 +314,64 @@ export default function EventsDutyPlanner() {
                 </tr>
               </thead>
               <tbody>
-                {!eventId ? (
+                {isLoading ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">Select an event to view its duties</td>
-                  </tr>
-                ) : isLoading ? (
-                  <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">Loading...</td>
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">Loading...</td>
                   </tr>
                 ) : duties.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">No duties yet</td>
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">No duties yet</td>
                   </tr>
                 ) : (
-                  duties.map((d, idx) => (
+                  pagedDuties.map((d, idx) => (
                     <tr key={d.id} className="border-b last:border-b-0 transition-colors">
-                      <td className="px-4 py-4 text-[#d35400] font-medium">{idx + 1}</td>
+                      <td className="px-4 py-4 text-[#d35400] font-medium">{(page - 1) * PAGE_SIZE + idx + 1}</td>
+                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">
+                        {d.eventName || eventName(d.eventId) || "-"}
+                        {d.eventDate && (
+                          <div className="text-[11px] text-gray-400">{format(new Date(d.eventDate), "dd-MM-yyyy")}</div>
+                        )}
+                      </td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{d.assignedUserName || "-"}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{d.duty}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{d.assignedRole || "-"}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{d.scheduledDate ? format(new Date(d.scheduledDate), "dd-MM-yyyy") : "-"}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{d.scheduledTime || "-"}</td>
-                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{d.status}</td>
+                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{d.status || "-"}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{d.notes || "-"}</td>
                       <td className="px-4 py-4 text-right whitespace-nowrap">
+                        {d.isLegacy ? (
+                          <span className="text-[11px] text-gray-400">Old DRM</span>
+                        ) : (<>
                         <button onClick={() => handleEdit(d)} className="inline-flex items-center justify-center w-8 h-8 rounded text-gray-500 hover:bg-gray-100 hover:text-[#00a65a] dark:hover:bg-zinc-800" title="Edit">
                           <Pencil className="w-4 h-4" />
                         </button>
-                        <button onClick={() => deleteMutation.mutate(d.id)} className="inline-flex items-center justify-center w-8 h-8 rounded text-gray-500 hover:bg-gray-100 hover:text-red-600 dark:hover:bg-zinc-800" title="Delete">
+                        <button onClick={() => deleteMutation.mutate({ id: d.id, eventId: d.eventId })} className="inline-flex items-center justify-center w-8 h-8 rounded text-gray-500 hover:bg-gray-100 hover:text-red-600 dark:hover:bg-zinc-800" title="Delete">
                           <Trash2 className="w-4 h-4" />
                         </button>
+                        </>)}
                       </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
+            {duties.length > 0 && (
+              <div className="px-4 py-3 border-t flex flex-wrap items-center justify-between gap-2 dark:border-zinc-800">
+                <span className="text-sm text-gray-500 dark:text-zinc-400">
+                  Showing {firstRow}–{lastRow} of {duties.length} duties
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
+                    Previous
+                  </Button>
+                  <span className="text-sm text-gray-600 dark:text-zinc-300">Page {page} of {totalPages}</span>
+                  <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

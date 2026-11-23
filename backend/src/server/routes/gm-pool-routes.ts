@@ -293,7 +293,8 @@ async function ensureGmEntriesColumns() {
         ADD COLUMN IF NOT EXISTS super_hod_approved_by uuid,
         ADD COLUMN IF NOT EXISTS super_hod_comment text,
         ADD COLUMN IF NOT EXISTS sales_person_name text,
-        ADD COLUMN IF NOT EXISTS quotation_id uuid null
+        ADD COLUMN IF NOT EXISTS quotation_id uuid null,
+        ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES drm.customers(id)
     `);
   } catch (err) {
     console.error("[gm-pool] failed to ensure gm_entries columns", err);
@@ -648,7 +649,13 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
 
       const { page: pageStr, pageSize: sizeStr, search, customerId, from, to } = req.query;
-      const { page, pageSize } = parsePagination(pageStr as string, sizeStr as string);
+      const paged = parsePagination(pageStr as string, sizeStr as string);
+      // ?all=1 (Account -> Create GM): every visible entry in one response; that page
+      // splits Full / Loan / Partial and Approved / Rejected tabs client-side. Same
+      // role scoping as the paged list. Without it only the first 10 came back.
+      const wantAll = req.query.all === "1" || req.query.all === "true";
+      const page = wantAll ? 1 : paged.page;
+      const pageSize = wantAll ? 20000 : paged.pageSize;
       const offset = (page - 1) * pageSize;
 
       const whereParts: string[] = ["coalesce(is_deleted,false) = false"];
@@ -756,6 +763,24 @@ export function registerGmPoolRoutes(app: Express) {
           dropout,
           extension,
           payment_proof_url as "paymentProofUrl",
+          -- Pay Date: old-DRM entries carry it in webxl_verify_gm.pay_date (no gm_entries column)
+          (select nullif(nullif(btrim(lv.pay_date), ''), '0000-00-00 00:00:00')
+             from migration_meta.migration_legacy_ids lm
+             join legacy_archive.webxl_verify_gm lv
+               on lv._source_table = 'webxl_verify_gm' and lv._legacy_pk = lm.legacy_id -- indexed
+            where lm.modern_table = 'gm_entries' and lm.modern_id = gm_entries.id::text
+              and lm.entity_type = 'gm_entry' and lm.legacy_table = 'webxl_verify_gm'
+            limit 1) as "payDate",
+          -- Status column of the old page = webxl_verify_gm.status (Cash Received /
+          -- Online Paid / Customer Paid / Old). payment_status was filled from
+          -- acc_pay_status (shows "Yes"/"Pending"), so it is not used for display.
+          (select nullif(btrim(lv.status), '')
+             from migration_meta.migration_legacy_ids lm
+             join legacy_archive.webxl_verify_gm lv
+               on lv._source_table = 'webxl_verify_gm' and lv._legacy_pk = lm.legacy_id
+            where lm.modern_table = 'gm_entries' and lm.modern_id = gm_entries.id::text
+              and lm.entity_type = 'gm_entry' and lm.legacy_table = 'webxl_verify_gm'
+            limit 1) as "legacyStatus",
           created_at as "createdAt",
           updated_at as "updateRequest",
           -- A Partial or Loan GM is only "fullyPaid" once its installment
@@ -766,7 +791,7 @@ export function registerGmPoolRoutes(app: Express) {
           -- more than a stale customer_dollar figure, and that larger,
           -- user-authored plan wins.
           (
-            NOT (coalesce(is_partial_payment,false) OR coalesce(is_loan,false))
+            NOT (coalesce(is_partial_payment, 0) <> 0 OR coalesce(is_loan, 0) <> 0)
             OR (
               GREATEST(
                 COALESCE(customer_dollar, amount_usd, 0),
@@ -2597,7 +2622,7 @@ export function registerGmPoolRoutes(app: Express) {
       const gm = await pool.query(
         `SELECT id, company_name, sales_person_name, is_partial_payment, is_loan, installments,
                 COALESCE(customer_dollar, amount_usd, 0)::numeric AS target
-         FROM drm.gm_entries WHERE id = $1 AND is_deleted = false`,
+         FROM drm.gm_entries WHERE id::text = $1 AND is_deleted = false`,
         [id],
       );
       if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
@@ -3089,7 +3114,7 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
       const { page, pageSize } = parsePagination(req.query.page as string, req.query.pageSize as string);
       const offset = (page - 1) * pageSize;
-      const where = `g.is_loan IS TRUE AND coalesce(g.is_deleted, false) = false AND COALESCE(lt.admin_approval_status, 'PENDING') = 'PENDING'`;
+      const where = `coalesce(g.is_loan,0) <> 0 AND coalesce(g.is_deleted, false) = false AND COALESCE(lt.admin_approval_status, 'PENDING') = 'PENDING'`;
       const rows = await pool.query(
         `SELECT g.id, g.company_name AS "companyName", g.drm_id AS "drmId",
                 COALESCE(g.customer_dollar, g.amount_usd, 0)::numeric AS "amountUsd",

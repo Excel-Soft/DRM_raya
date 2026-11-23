@@ -21,7 +21,10 @@ const rolesList = [
 
 const contactMethods = [
   "Mobile", "OnSite Visit", "Whatsapp", "Group Whatsapp (Broadcast)",
-  "VAS Call", "Facebook Post", "E-mail", "Seminar", "Copy Product", "New Product"
+  "VAS Call", "Facebook Post", "E-mail", "Seminar", "Copy Product", "New Product",
+  // Further methods used by old-DRM day targets (kept so those rows stay editable).
+  "W-Call", "WH-Call", "Talk Time", "Appointment", "Webinar", "Diagnose",
+  "In-meeting", "Out-meeting", "OL-Meeting", "ShowCase", "Others"
 ];
 
 export default function DailyTarget() {
@@ -33,6 +36,25 @@ export default function DailyTarget() {
     queryKey: ["/api/target-system/daily-targets"],
   });
   
+  // Table: search + client-side pagination. Sorted by # ascending like legacy
+  // target-day (new targets therefore land on the last page).
+  const [search, setSearch] = useState("");
+  const [pageSize, setPageSize] = useState("10");
+  const [page, setPage] = useState(1);
+  const filteredTargets = [...targets]
+    .sort((a: any, b: any) => Number(a.id) - Number(b.id))
+    .filter((t: any) => {
+      const q = search.trim().toLowerCase();
+      if (!q) return true;
+      return [t.id, t.role, t.method, t.target].some((v) => String(v ?? "").toLowerCase().includes(q));
+    });
+  const limit = Number(pageSize) || 10;
+  const totalPages = Math.max(1, Math.ceil(filteredTargets.length / limit));
+  const currentPage = Math.min(page, totalPages);
+  const pagedTargets = filteredTargets.slice((currentPage - 1) * limit, currentPage * limit);
+  const firstRow = filteredTargets.length === 0 ? 0 : (currentPage - 1) * limit + 1;
+  const lastRow = (currentPage - 1) * limit + pagedTargets.length;
+
   // Modal State
   const [editingId, setEditingId] = useState<number | null>(null);
   const [newRole, setNewRole] = useState("none");
@@ -240,7 +262,7 @@ export default function DailyTarget() {
               <h3 className="font-semibold text-gray-700 mb-4 dark:text-zinc-400">Target Details</h3>
               <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-zinc-300">
                 <span>Show</span>
-                <Select defaultValue="10">
+                <Select value={pageSize} onValueChange={(v) => { setPageSize(v); setPage(1); }}>
                   <SelectTrigger className="w-[70px] h-8">
                     <SelectValue />
                   </SelectTrigger>
@@ -255,7 +277,11 @@ export default function DailyTarget() {
             </div>
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600 dark:text-zinc-300">Search:</span>
-              <Input className="h-8 w-48" />
+              <Input
+                className="h-8 w-48"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              />
             </div>
           </div>
           
@@ -278,7 +304,7 @@ export default function DailyTarget() {
                   </TableRow>
                 ) : (
                   <>
-                    {targets.map((row) => (
+                    {pagedTargets.map((row: any) => (
                       <TableRow key={row.id}>
                         <TableCell className="text-center font-medium">{row.id}</TableCell>
                         <TableCell className="text-center text-sm text-gray-600 dark:text-zinc-300">{row.role}</TableCell>
@@ -299,9 +325,11 @@ export default function DailyTarget() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {targets.length === 0 && (
+                    {pagedTargets.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-6 text-gray-500 dark:text-zinc-400">No daily targets found.</TableCell>
+                        <TableCell colSpan={6} className="text-center py-6 text-gray-500 dark:text-zinc-400">
+                          {search ? "No daily targets match your search." : "No daily targets found."}
+                        </TableCell>
                       </TableRow>
                     )}
                   </>
@@ -310,11 +338,34 @@ export default function DailyTarget() {
             </Table>
           </div>
           <div className="p-4 flex items-center justify-between border-t text-sm text-gray-600 dark:text-zinc-300">
-            <div>Showing 1 to {targets.length} of {targets.length} entries</div>
-            <div className="flex space-x-1">
-              <Button variant="outline" className="h-8 px-3 text-gray-500 bg-gray-50 dark:bg-zinc-900 dark:text-zinc-400">Previous</Button>
-              <Button variant="default" className="h-8 w-8 p-0 bg-[#00a65a] hover:bg-[#008d4c]">1</Button>
-              <Button variant="outline" className="h-8 px-3">Next</Button>
+            <div>Showing {firstRow} to {lastRow} of {filteredTargets.length} entries</div>
+            <div className="flex flex-wrap gap-1">
+              <Button
+                variant="outline"
+                className="h-8 px-3"
+                disabled={currentPage <= 1}
+                onClick={() => setPage(Math.max(1, currentPage - 1))}
+              >
+                Previous
+              </Button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                <Button
+                  key={p}
+                  variant={p === currentPage ? "default" : "outline"}
+                  className={p === currentPage ? "h-8 min-w-8 px-2 bg-[#00a65a] hover:bg-[#008d4c]" : "h-8 min-w-8 px-2"}
+                  onClick={() => setPage(p)}
+                >
+                  {p}
+                </Button>
+              ))}
+              <Button
+                variant="outline"
+                className="h-8 px-3"
+                disabled={currentPage >= totalPages}
+                onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+              >
+                Next
+              </Button>
             </div>
           </div>
         </CardContent>

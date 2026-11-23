@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Check, Loader2, Trash2, X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Calendar, Check, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import {
     Select,
@@ -22,6 +22,7 @@ interface PromotionFormRow {
     banner: File | null;
     message: string;
     targetRole: string;
+    packageName: string;
 }
 
 interface RoleOption {
@@ -50,6 +51,8 @@ interface Promotion {
     createdByName: string | null;
     createdAt: string | null;
     targetRole: string | null;
+    sortRank?: number | null;
+    legacySourceId?: string | null;
 }
 
 interface PromotionListResponse {
@@ -66,6 +69,13 @@ function fileToDataUrl(file: File): Promise<string> {
         reader.onerror = reject;
         reader.readAsDataURL(file);
     });
+}
+
+function formatDiscountLabel(discount: string | null | undefined): string {
+    if (discount == null || discount === "") return "Discount: $0";
+    const n = parseFloat(String(discount).replace(/[^0-9.-]/g, ""));
+    if (!Number.isNaN(n)) return `Discount: $${n}`;
+    return `Discount: ${discount}`;
 }
 
 function statusBadgeClass(status: string): string {
@@ -90,17 +100,30 @@ export default function PromotionPage() {
             endDate: '',
             banner: null,
             message: '',
-            targetRole: ''
+            targetRole: '',
+            packageName: '',
         }
     ]);
 
     // Query for old promotions (real-or-empty — no mock fallback)
     const { data: promotionsData, isLoading: promotionsLoading } = useQuery<PromotionListResponse>({
         queryKey: ["/api/drm/promotions"],
-        queryFn: () => apiRequestJson<PromotionListResponse>("GET", "/api/drm/promotions"),
+        queryFn: () =>
+            apiRequestJson<PromotionListResponse>("GET", "/api/drm/promotions?pageSize=50"),
     });
 
-    const oldPromotions = promotionsData?.data ?? [];
+    const oldPromotions = useMemo(() => {
+        const list = [...(promotionsData?.data ?? [])];
+        list.sort((a, b) => {
+            const ra = a.sortRank ?? Number.MAX_SAFE_INTEGER;
+            const rb = b.sortRank ?? Number.MAX_SAFE_INTEGER;
+            if (ra !== rb) return ra - rb;
+            return String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+        });
+        return list;
+    }, [promotionsData?.data]);
+
+    const [rankDraft, setRankDraft] = useState<Record<string, string>>({});
 
     // Real roles list (same endpoint the super-admin Roles UI uses) — lets a
     // banner be targeted to one specific role instead of showing app-wide.
@@ -125,6 +148,7 @@ export default function PromotionPage() {
                 }
                 await apiRequestJson("POST", "/api/drm/promotions", {
                     title: row.title.trim(),
+                    packageName: row.packageName.trim() || null,
                     subTitle: row.message.trim() || null,
                     discount: row.discount ? String(row.discount) : null,
                     startDate: row.startDate || null,
@@ -145,7 +169,8 @@ export default function PromotionPage() {
                 endDate: '',
                 banner: null,
                 message: '',
-                targetRole: ''
+                targetRole: '',
+                packageName: '',
             }]);
             invalidate();
         },
@@ -203,6 +228,42 @@ export default function PromotionPage() {
             toast({ title: "Error", description: e?.message || "Failed to delete", variant: "destructive" }),
     });
 
+    const rankMutation = useMutation({
+        mutationFn: ({ id, sortRank }: { id: string; sortRank: number }) =>
+            apiRequestJson("PATCH", `/api/drm/promotions/${id}/rank`, { sortRank }),
+        onSuccess: () => {
+            toast({ title: "Order updated", description: "Promotion ranks adjusted." });
+            setRankDraft({});
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to update rank", variant: "destructive" }),
+    });
+
+    const commitRankChange = (promo: Promotion, displayIndex: number) => {
+        const current = promo.sortRank ?? displayIndex + 1;
+        const raw = rankDraft[promo.id];
+        const parsed = raw != null && raw !== "" ? parseInt(raw, 10) : current;
+        if (!Number.isFinite(parsed) || parsed < 1) {
+            setRankDraft((d) => {
+                const next = { ...d };
+                delete next[promo.id];
+                return next;
+            });
+            return;
+        }
+        const clamped = Math.min(parsed, oldPromotions.length);
+        if (clamped === current) {
+            setRankDraft((d) => {
+                const next = { ...d };
+                delete next[promo.id];
+                return next;
+            });
+            return;
+        }
+        rankMutation.mutate({ id: promo.id, sortRank: clamped });
+    };
+
     const addRow = () => {
         setRows([...rows, {
             id: Date.now().toString(),
@@ -212,7 +273,8 @@ export default function PromotionPage() {
             endDate: '',
             banner: null,
             message: '',
-            targetRole: ''
+            targetRole: '',
+            packageName: '',
         }]);
     };
 
@@ -253,12 +315,12 @@ export default function PromotionPage() {
                         <div className="px-6 py-4 border-b border-gray-200 dark:border-zinc-800">
                             <h2 className="text-lg font-semibold text-gray-700 uppercase dark:text-zinc-400">Add Promotion Banner</h2>
                         </div>
-                        <div className="p-6 space-y-4">
-                            <h3 className="text-sm font-semibold text-gray-700 mb-4 dark:text-zinc-400">Upload Banners</h3>
+                        <div className="p-6 space-y-5">
+                            <p className="text-xs text-gray-500 dark:text-zinc-400 -mt-1">Upload one or more banners; use <span className="font-medium text-gray-600 dark:text-zinc-300">Add Row</span> for batch entry.</p>
 
                             {rows.map((row, index) => (
-                                <div key={row.id} className="space-y-4 pb-4 border-b border-gray-100 last:border-0 dark:border-zinc-800">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div key={row.id} className="space-y-4 pb-5 border-b border-gray-100 last:border-0 last:pb-0 dark:border-zinc-800">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                                         {/* Title */}
                                         <div className="space-y-2">
                                             <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">Title</label>
@@ -267,6 +329,18 @@ export default function PromotionPage() {
                                                 value={row.title}
                                                 onChange={(e) => updateRow(row.id, 'title', e.target.value)}
                                                 placeholder="enter banner title"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-[#00a65a] dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100"
+                                            />
+                                        </div>
+
+                                        {/* Package (legacy field) */}
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">Package</label>
+                                            <input
+                                                type="text"
+                                                value={row.packageName}
+                                                onChange={(e) => updateRow(row.id, 'packageName', e.target.value)}
+                                                placeholder="Choose / package label"
                                                 className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-[#00a65a] dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100"
                                             />
                                         </div>
@@ -359,28 +433,31 @@ export default function PromotionPage() {
                                 </div>
                             ))}
 
-                            {/* Add Row Button */}
-                            <Button
-                                onClick={addRow}
-                                className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-6 rounded h-9"
-                            >
-                                Add Row
-                            </Button>
-
-                            {/* Submit Button */}
-                            <Button
-                                onClick={handleSubmit}
-                                disabled={createMutation.isPending}
-                                className="w-full bg-[#00a65a] hover:bg-[#008d4c] text-white py-6 rounded text-base font-medium mt-4"
-                            >
-                                {createMutation.isPending ? (
-                                    <span className="flex items-center justify-center gap-2">
-                                        <Loader2 className="w-4 h-4 animate-spin" /> Submitting...
-                                    </span>
-                                ) : (
-                                    "Submit"
-                                )}
-                            </Button>
+                            <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 pt-4 border-t border-gray-200 dark:border-zinc-800">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={addRow}
+                                    className="h-10 border-[#00a65a] text-[#00a65a] hover:bg-[#e4f6ec] dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                                >
+                                    <Plus className="w-4 h-4 mr-1.5" />
+                                    Add Row
+                                </Button>
+                                <Button
+                                    type="button"
+                                    onClick={handleSubmit}
+                                    disabled={createMutation.isPending}
+                                    className="h-10 min-w-[140px] px-8 bg-[#00a65a] hover:bg-[#008d4c] text-white rounded-md shadow-sm"
+                                >
+                                    {createMutation.isPending ? (
+                                        <span className="flex items-center justify-center gap-2">
+                                            <Loader2 className="w-4 h-4 animate-spin" /> Submitting...
+                                        </span>
+                                    ) : (
+                                        "Submit"
+                                    )}
+                                </Button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -397,116 +474,123 @@ export default function PromotionPage() {
                                     <Loader2 className="w-8 h-8 animate-spin text-[#00a65a] dark:text-zinc-400" />
                                 </div>
                             ) : oldPromotions.length > 0 ? (
-                                oldPromotions.map((promo) => (
-                                    <div key={promo.id} className="border border-gray-200 rounded-lg p-4 space-y-3 dark:border-zinc-800">
-                                        <div className="flex items-start gap-3">
-                                            {/* Banner Thumbnail */}
-                                            <div className="w-16 h-16 bg-gray-200 rounded flex-shrink-0 overflow-hidden">
-                                                {promo.bannerUrl ? (
-                                                    promo.mediaType === 'video' ? (
-                                                        <video
-                                                            src={promo.bannerUrl}
-                                                            className="w-full h-full object-cover"
-                                                            muted
-                                                            loop
-                                                            playsInline
-                                                        />
-                                                    ) : (
-                                                        <img
-                                                            src={promo.bannerUrl}
-                                                            alt={promo.title}
-                                                            className="w-full h-full object-cover"
-                                                            onError={(e) => {
-                                                                const target = e.target as HTMLImageElement;
-                                                                target.style.display = 'none';
-                                                                target.parentElement!.innerHTML = '<div class="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-xs font-semibold">Banner</div>';
-                                                            }}
-                                                        />
-                                                    )
-                                                ) : (
-                                                    <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-xs font-semibold">
-                                                        Banner
-                                                    </div>
-                                                )}
+                                oldPromotions.map((promo, index) => (
+                                    <div key={promo.id} className="border border-gray-200 rounded-lg overflow-hidden shadow-sm dark:border-zinc-800">
+                                        <div className="relative bg-gray-100 dark:bg-zinc-800 min-h-[120px]">
+                                            {promo.bannerUrl ? (
+                                                <img
+                                                    src={promo.bannerUrl}
+                                                    alt={promo.title}
+                                                    className="w-full max-h-40 object-contain object-center bg-white dark:bg-zinc-900"
+                                                    loading="lazy"
+                                                    referrerPolicy="no-referrer"
+                                                />
+                                            ) : (
+                                                <div className="h-32 flex items-center justify-center text-gray-400 text-xs">No banner image</div>
+                                            )}
+                                            <div className="absolute top-2 right-2 flex flex-col items-center gap-0.5">
+                                                <span className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-zinc-400">Rank</span>
+                                                <input
+                                                    type="number"
+                                                    min={1}
+                                                    max={oldPromotions.length}
+                                                    disabled={rankMutation.isPending}
+                                                    value={rankDraft[promo.id] ?? String(promo.sortRank ?? index + 1)}
+                                                    onChange={(e) =>
+                                                        setRankDraft((d) => ({ ...d, [promo.id]: e.target.value }))
+                                                    }
+                                                    onBlur={() => commitRankChange(promo, index)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === "Enter") {
+                                                            e.currentTarget.blur();
+                                                        }
+                                                    }}
+                                                    className="w-11 h-10 text-center text-sm font-bold rounded-md border-2 border-[#00a65a] bg-white text-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#00a65a]/40 dark:bg-zinc-900 dark:text-zinc-100 dark:border-emerald-600 disabled:opacity-60 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                    aria-label={`Rank for ${promo.title}`}
+                                                />
                                             </div>
-
-                                            {/* Details */}
-                                            <div className="flex-1 space-y-1">
-                                                <h3 className="text-sm font-semibold text-gray-800 dark:text-zinc-100">{promo.title}</h3>
-                                                {promo.subTitle && <p className="text-xs text-gray-600 dark:text-zinc-300">{promo.subTitle}</p>}
-                                                {promo.packageName && <p className="text-xs text-gray-500 dark:text-zinc-400">{promo.packageName}</p>}
-                                                {promo.discount && <p className="text-sm font-semibold text-[#00a65a] dark:text-zinc-400">{promo.discount}</p>}
-                                                <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium uppercase ${statusBadgeClass(promo.status)}`}>
-                                                    {promo.status}
-                                                </span>
+                                        </div>
+                                        <div className="p-4 space-y-3">
+                                            <h3 className="text-sm font-bold text-gray-800 dark:text-zinc-100 leading-snug">{promo.title}</h3>
+                                            {promo.subTitle && (
+                                                <p className="text-xs text-gray-500 dark:text-zinc-400">{promo.subTitle}</p>
+                                            )}
+                                            <span className="inline-block text-xs font-semibold text-[#00a65a] bg-[#e4f6ec] dark:bg-zinc-800 px-2 py-1 rounded">
+                                                {formatDiscountLabel(promo.discount)}
+                                            </span>
+                                            <div className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-zinc-400">
+                                                <Calendar className="w-3.5 h-3.5 shrink-0" />
+                                                <span>{formatDate(promo.startDate)}</span>
+                                                <span className="font-bold uppercase text-[10px]">To</span>
+                                                <span>{formatDate(promo.endDate)}</span>
                                             </div>
-
-                                            {/* Toggle */}
-                                            <Switch
-                                                checked={promo.isActive}
-                                                disabled={toggleMutation.isPending}
-                                                onCheckedChange={(checked) => toggleMutation.mutate({ id: promo.id, isActive: checked })}
-                                            />
-                                        </div>
-
-                                        {/* Date Range */}
-                                        <div className="text-xs text-gray-500 dark:text-zinc-400">
-                                            {formatDate(promo.startDate)} <span className="font-semibold">To</span> {formatDate(promo.endDate)}
-                                        </div>
-
-                                        {/* Target Role — manage who this banner shows to */}
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-400">Target Role</label>
-                                            <Select
-                                                value={promo.targetRole || "static"}
-                                                onValueChange={(val) => targetRoleMutation.mutate({ id: promo.id, targetRole: val === "static" ? null : val })}
-                                            >
-                                                <SelectTrigger className="w-full border-gray-300 rounded h-8 text-xs dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="static">Static (All Roles)</SelectItem>
-                                                    {roleOptions.map((r) => (
-                                                        <SelectItem key={r.id} value={r.name}>{formatRoleLabel(r.name)}</SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-
-                                        {/* Actions */}
-                                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                                            <div className="flex items-center justify-between gap-2 pt-1 border-t border-gray-100 dark:border-zinc-800">
+                                                <div className="flex items-center gap-2">
+                                                    <Switch
+                                                        checked={promo.isActive}
+                                                        disabled={toggleMutation.isPending}
+                                                        onCheckedChange={(checked) => toggleMutation.mutate({ id: promo.id, isActive: checked })}
+                                                    />
+                                                    <span className={`text-xs font-medium ${promo.isActive ? 'text-[#00a65a]' : 'text-gray-400'}`}>
+                                                        {promo.isActive ? 'Active' : 'Inactive'}
+                                                    </span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (window.confirm("Delete this promotion?")) {
+                                                            deleteMutation.mutate(promo.id);
+                                                        }
+                                                    }}
+                                                    disabled={deleteMutation.isPending}
+                                                    className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" /> Delete
+                                                </button>
+                                            </div>
                                             {promo.status === 'pending' && (
-                                                <>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className={`text-[10px] uppercase px-2 py-0.5 rounded ${statusBadgeClass(promo.status)}`}>{promo.status}</span>
                                                     <button
+                                                        type="button"
                                                         onClick={() => approveMutation.mutate(promo.id)}
                                                         disabled={approveMutation.isPending}
-                                                        className="flex items-center gap-1 text-xs text-green-700 hover:underline disabled:opacity-50"
+                                                        className="flex items-center gap-1 text-xs text-green-700 hover:underline"
                                                     >
                                                         <Check className="w-3.5 h-3.5" /> Approve
                                                     </button>
                                                     <button
+                                                        type="button"
                                                         onClick={() => {
                                                             const reason = window.prompt("Reason for rejection (optional):") ?? "";
                                                             rejectMutation.mutate({ id: promo.id, reason: reason.trim() || null });
                                                         }}
                                                         disabled={rejectMutation.isPending}
-                                                        className="flex items-center gap-1 text-xs text-red-600 hover:underline disabled:opacity-50"
+                                                        className="flex items-center gap-1 text-xs text-red-600 hover:underline"
                                                     >
                                                         <X className="w-3.5 h-3.5" /> Reject
                                                     </button>
-                                                </>
+                                                </div>
                                             )}
-                                            <button
-                                                onClick={() => {
-                                                    if (window.confirm("Delete this promotion?")) {
-                                                        deleteMutation.mutate(promo.id);
-                                                    }
-                                                }}
-                                                disabled={deleteMutation.isPending}
-                                                className="flex items-center gap-1 text-xs text-red-600 hover:underline disabled:opacity-50 ml-auto"
-                                            >
-                                                <Trash2 className="w-3.5 h-3.5" /> Delete
-                                            </button>
+                                            {!promo.legacySourceId && (
+                                                <div className="space-y-1">
+                                                    <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-400">Target Role</label>
+                                                    <Select
+                                                        value={promo.targetRole || "static"}
+                                                        onValueChange={(val) => targetRoleMutation.mutate({ id: promo.id, targetRole: val === "static" ? null : val })}
+                                                    >
+                                                        <SelectTrigger className="w-full border-gray-300 rounded h-8 text-xs dark:border-zinc-800">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="static">Static (All Roles)</SelectItem>
+                                                            {roleOptions.map((r) => (
+                                                                <SelectItem key={r.id} value={r.name}>{formatRoleLabel(r.name)}</SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 ))

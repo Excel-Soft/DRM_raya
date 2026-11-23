@@ -29,6 +29,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type ReceptionRow = {
   id: string;
@@ -133,18 +135,18 @@ export default function ReceptionReport() {
     user: string;
     company: string;
     branch: string;
-  } | null>(null);
+  } | null>(
+    // Load the latest visits straight away (no filters); "View" narrows them down.
+    { startDate: "", endDate: "", month: "", status: "all", user: "all", company: "", branch: "" },
+  );
 
   const { data: users = [] } = useQuery<any[]>({
     queryKey: ["/api/account/users-list"],
     queryFn: async () => apiRequestJson("GET", "/api/account/users-list"),
   });
 
-  const usersByRole = users.reduce((acc: Record<string, any[]>, u: any) => {
-    const roleKey = u.role || "Other";
-    (acc[roleKey] ||= []).push(u);
-    return acc;
-  }, {});
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const usersByRole = groupUsersByRoleTitle(users as any[]);
 
   const handleSelectOption = (value: string) => {
     setSelectedOption(value);
@@ -263,25 +265,14 @@ export default function ReceptionReport() {
                     Month Wise
                   </label>
                 </div>
-                <Select value={selectedOption} onValueChange={handleSelectOption}>
-                  <SelectTrigger className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus:ring-0">
-                    <SelectValue placeholder="Choose..." />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-[320px]">
-                    <SelectItem value="Reception Report">Reception Report</SelectItem>
-                    <SelectItem value="All Team">All Team</SelectItem>
-                    {Object.entries(usersByRole).map(([role, roleUsers]) => (
-                      <SelectGroup key={role}>
-                        <SelectLabel>{role}</SelectLabel>
-                        {(roleUsers as any[]).map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.full_name}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  users={users}
+                  value={selectedOption}
+                  onChange={handleSelectOption}
+                  extraOptions={[{ value: "Reception Report", label: "Reception Report" }, { value: "All Team", label: "All Team" }]}
+                  placeholder="Choose..."
+                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus:ring-0"
+                />
               </div>
 
               {/* Status */}
@@ -320,17 +311,6 @@ export default function ReceptionReport() {
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
-                />
-              </div>
-
-              {/* Month */}
-              <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Month</Label>
-                <Input
-                  type="month"
-                  value={month}
-                  onChange={(e) => setMonth(e.target.value)}
                   className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                 />
               </div>

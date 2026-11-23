@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { CalendarIcon, Search, Loader2, LogIn, LogOut, CheckCircle2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
-import { format, differenceInCalendarDays } from "date-fns";
+import { format } from "date-fns";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/select";
 
 import { isManagerialRole } from "@/lib/role-utils";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 const SELF_ATTENDANCE_VALUE = "__self__";
 
@@ -30,6 +32,8 @@ export default function AttendanceManagement() {
   const [endDate, setEndDate] = useState<Date | undefined>();
   const [selectedUserId, setSelectedUserId] = useState<string>(user?.userId || "");
   const [paymentStatuses, setPaymentStatuses] = useState<Record<number, boolean>>({});
+  const [dailyPage, setDailyPage] = useState(1);
+  const [dailyPageSize, setDailyPageSize] = useState(25);
 
   const handlePaymentToggle = (idx: number) => {
     setPaymentStatuses(prev => ({ ...prev, [idx]: !prev[idx] }));
@@ -42,6 +46,15 @@ export default function AttendanceManagement() {
   // Today's check-in/check-out status — always for the logged-in user
   // themselves, independent of whichever employee a manager has selected
   // in the dropdown above (you can only check yourself in/out).
+  const { data: attendanceSettings } = useQuery<{ selfCheckInEnabled: boolean; message?: string }>({
+    queryKey: ["/api/attendance/settings"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/attendance/settings");
+      return res.json();
+    },
+  });
+  const selfCheckInEnabled = attendanceSettings?.selfCheckInEnabled === true;
+
   const { data: todayData, isLoading: isLoadingToday } = useQuery<{ record: any | null }>({
     queryKey: ["/api/attendance/today"],
     queryFn: async () => {
@@ -88,12 +101,14 @@ export default function AttendanceManagement() {
 
   // Fetch Attendance Records (Daily)
   const { data: attendanceData, isLoading: isLoadingAttendance, isError: isErrorAttendance, error: errorAttendance, refetch: refetchAttendance } = useQuery<any>({
-    queryKey: ["/api/attendance", { startDate, endDate, userId: selectedUserId }],
+    queryKey: ["/api/attendance", { startDate, endDate, userId: selectedUserId, dailyPage, dailyPageSize }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (startDate) params.append("startDate", startDate.toISOString());
       if (endDate) params.append("endDate", endDate.toISOString());
       if (isManager && selectedUserId) params.append("userId", selectedUserId);
+      params.append("page", String(dailyPage));
+      params.append("pageSize", String(dailyPageSize));
 
       const res = await apiRequest("GET", `/api/attendance?${params.toString()}`);
       const body = await res.json();
@@ -134,30 +149,43 @@ export default function AttendanceManagement() {
     }
   });
 
-  // Fetch Leave Requests (Annual Leaves) — always the logged-in user's own,
-  // there is no manager "view employee X's leaves" endpoint today.
-  const { data: leaveRequestsData, isLoading: isLoadingLeaves } = useQuery<any[]>({
-    queryKey: ["/api/leave"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/leave");
-      return res.json();
-    },
-    enabled: activeTab === "annual",
-  });
-
   const records = attendanceData?.records || [];
+  const dailyTotal = attendanceData?.total ?? records.length;
+  const dailyTotalPages = attendanceData?.totalPages ?? 1;
+
+  const formatLegacyClock = (text: string | null | undefined) => {
+    if (!text) return "-";
+    const parts = String(text).trim().split(":");
+    if (parts.length < 2) return text;
+    const h = Number(parts[0]);
+    const m = Number(parts[1]);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return text;
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return format(d, "hh:mm a");
+  };
+
+  function parseLegacyDateParts(dateText: string): Date | null {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText.trim());
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+
+  const formatRecordDate = (r: any) => {
+    if (r.dateText) {
+      const d = parseLegacyDateParts(r.dateText);
+      return d ? format(d, "dd-MM-yyyy") : r.dateText;
+    }
+    return r.date ? format(new Date(r.date), "dd-MM-yyyy") : "-";
+  };
+
+  const displayUserName =
+    summaryData?.userName ||
+    salaryData?.userName ||
+    user?.fullName ||
+    "User";
   const summary = summaryData?.summary ? (Array.isArray(summaryData.summary) ? summaryData.summary : [summaryData.summary]) : [];
   const salaryDetails = salaryData?.salaryDetails ? (Array.isArray(salaryData.salaryDetails) ? salaryData.salaryDetails : [salaryData.salaryDetails]) : [];
-
-  const currentYear = new Date().getFullYear();
-  const leaveRequestsThisYear = (leaveRequestsData || []).filter(
-    (lr: any) => new Date(lr.fromDate).getFullYear() === currentYear
-  );
-  const leaveDaySpan = (lr: any) => differenceInCalendarDays(new Date(lr.toDate), new Date(lr.fromDate)) + 1;
-  const availedLeaveDays = leaveRequestsThisYear
-    .filter((lr: any) => lr.status === "Approved")
-    .reduce((sum: number, lr: any) => sum + leaveDaySpan(lr), 0);
-  const pendingLeaveRequests = leaveRequestsThisYear.filter((lr: any) => lr.status === "Pending").length;
 
   return (
     <div className="p-4 bg-[#f8fafc] min-h-screen font-sans dark:bg-zinc-950">
@@ -166,20 +194,15 @@ export default function AttendanceManagement() {
         
         {isManager && (
           <div className="w-64">
-            <Select
+            <RoleGroupedUserSelect
+              grouped={false}
+              users={usersData.filter(u => u.id !== user?.userId)}
               value={selectedUserId || SELF_ATTENDANCE_VALUE}
-              onValueChange={(v) => setSelectedUserId(v === SELF_ATTENDANCE_VALUE ? "" : v)}
-            >
-              <SelectTrigger className="h-[38px] bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
-                <SelectValue placeholder="Select Employee" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={SELF_ATTENDANCE_VALUE}>My Attendance</SelectItem>
-                {usersData.filter(u => u.id !== user?.userId).map((u: any) => (
-                  <SelectItem key={u.id} value={u.id}>{u.fullName || u.username}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChange={(v) => setSelectedUserId(v === SELF_ATTENDANCE_VALUE ? "" : v)}
+              extraOptions={[{ value: SELF_ATTENDANCE_VALUE, label: "My Attendance" }]}
+              placeholder="Select Employee"
+              className="h-[38px] bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800"
+            />
           </div>
         )}
       </div>
@@ -188,7 +211,12 @@ export default function AttendanceManagement() {
       <div className="bg-white p-5 rounded-[4px] shadow-sm border border-slate-100 mb-4 flex items-center justify-between gap-4 dark:bg-zinc-900 dark:border-zinc-800">
         <div>
           <p className="text-[13px] font-semibold text-slate-600 dark:text-zinc-300">Today, {format(new Date(), 'dd MMM yyyy')}</p>
-          {isLoadingToday ? (
+          {!selfCheckInEnabled ? (
+            <p className="text-[12px] text-slate-500 mt-1 dark:text-zinc-400 max-w-xl">
+              {attendanceSettings?.message ||
+                "Attendance is recorded from the office system. Self check-in is currently disabled."}
+            </p>
+          ) : isLoadingToday ? (
             <p className="text-[12px] text-slate-400 mt-1">Loading status...</p>
           ) : todayRecord?.timeIn && todayRecord?.timeOut ? (
             <p className="text-[12px] text-slate-500 mt-1 dark:text-zinc-400">
@@ -203,7 +231,11 @@ export default function AttendanceManagement() {
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {todayRecord?.timeIn && todayRecord?.timeOut ? (
+          {!selfCheckInEnabled ? (
+            <span className="text-[12px] font-semibold text-slate-500 bg-slate-100 dark:bg-zinc-800 px-4 py-2 rounded-[4px] border border-slate-200 dark:border-zinc-700">
+              Office attendance (read-only)
+            </span>
+          ) : todayRecord?.timeIn && todayRecord?.timeOut ? (
             <span className="flex items-center gap-1.5 text-[13px] font-bold text-[#059669]">
               <CheckCircle2 className="h-4 w-4" /> Day complete
             </span>
@@ -271,6 +303,7 @@ export default function AttendanceManagement() {
           <button
             className="bg-[#059669] hover:bg-[#047857] text-white text-[14px] font-bold px-8 py-2 rounded-[4px] shadow-sm transition-colors h-[38px] flex items-center gap-2"
             onClick={() => {
+              setDailyPage(1);
               refetchAttendance();
               refetchSummary();
               refetchSalary();
@@ -284,7 +317,7 @@ export default function AttendanceManagement() {
       {/* Main Tabs Card */}
       <div className="bg-white rounded-[4px] shadow-sm border border-slate-100 p-5 dark:bg-zinc-900 dark:border-zinc-800">
         {/* Custom Tab Bar */}
-        <div className="grid grid-cols-4 gap-2 mb-6 text-center border-b border-slate-50 pb-4 dark:border-zinc-800">
+        <div className="grid grid-cols-3 gap-2 mb-6 text-center border-b border-slate-50 pb-4 dark:border-zinc-800">
           <div
             onClick={() => setActiveTab('daily')}
             className={`py-2 px-2 rounded-[4px] cursor-pointer text-[13px] font-bold transition-colors ${activeTab === 'daily' ? 'bg-[#059669] text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:bg-zinc-900'}`}
@@ -303,13 +336,6 @@ export default function AttendanceManagement() {
           >
             Salary Detail
           </div>
-          <div
-            onClick={() => setActiveTab('annual')}
-            className={`py-2 px-2 rounded-[4px] cursor-pointer text-[13px] font-bold transition-colors flex items-center justify-center gap-2 ${activeTab === 'annual' ? 'bg-[#059669] text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:bg-zinc-900'}`}
-          >
-            Annual Leaves
-            <span className="bg-[#ef4444] text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold dark:bg-zinc-900">New Feature!</span>
-          </div>
         </div>
 
         {/* Tab Content: Daily Details */}
@@ -319,9 +345,15 @@ export default function AttendanceManagement() {
               <div>
                 <label className="text-xs text-slate-500 block mb-1 dark:text-zinc-400">Show</label>
                 <div className="flex items-center gap-2">
-                  <Select defaultValue="10">
+                  <Select
+                    value={String(dailyPageSize)}
+                    onValueChange={(v) => {
+                      setDailyPageSize(Number(v));
+                      setDailyPage(1);
+                    }}
+                  >
                     <SelectTrigger className="w-[70px] h-8 text-xs border-slate-200 dark:border-zinc-800">
-                      <SelectValue placeholder="10" />
+                      <SelectValue placeholder="25" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="10">10</SelectItem>
@@ -358,15 +390,60 @@ export default function AttendanceManagement() {
                   ) : (
                     records.map((r: any, idx: number) => (
                       <tr key={r.id || idx} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.timeIn ? format(new Date(r.timeIn), 'hh:mm a') : '-'}</td>
-                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.timeOut ? format(new Date(r.timeOut), 'hh:mm a') : '-'}</td>
-                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.status || 'Absent'}{r.isLate ? ` (${r.lateMinutes}m late)` : ''}</td>
-                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.date ? format(new Date(r.date), 'dd-MM-yyyy') : '-'}</td>
+                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">
+                          {r.timeInText ? formatLegacyClock(r.timeInText) : (r.timeIn ? format(new Date(r.timeIn), "hh:mm a") : "-")}
+                        </td>
+                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">
+                          {r.timeOutText ? formatLegacyClock(r.timeOutText) : (r.timeOut ? format(new Date(r.timeOut), "hh:mm a") : "-")}
+                        </td>
+                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">
+                          {r.lateAbsentLabel && r.lateAbsentLabel !== "True"
+                            ? r.lateAbsentLabel
+                            : (r.status || "Absent")}
+                          {r.isLate && r.lateMinutes ? ` (${r.lateMinutes}m)` : ""}
+                        </td>
+                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{formatRecordDate(r)}</td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-1 pt-2 border-t border-slate-100 dark:border-zinc-800">
+              <p className="text-xs text-slate-500 dark:text-zinc-400">
+                Showing{" "}
+                {dailyTotal === 0
+                  ? "0"
+                  : `${(dailyPage - 1) * dailyPageSize + 1}–${Math.min(dailyPage * dailyPageSize, dailyTotal)}`}{" "}
+                of {dailyTotal} legacy records
+                {attendanceData?.source === "legacy" ? "" : " (current system)"}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  disabled={dailyPage <= 1 || isLoadingAttendance}
+                  onClick={() => setDailyPage((p) => Math.max(1, p - 1))}
+                >
+                  Previous
+                </Button>
+                <span className="text-xs text-slate-600 dark:text-zinc-300 min-w-[80px] text-center">
+                  Page {dailyPage} / {Math.max(1, dailyTotalPages)}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  disabled={dailyPage >= dailyTotalPages || isLoadingAttendance}
+                  onClick={() => setDailyPage((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -398,7 +475,7 @@ export default function AttendanceManagement() {
                   summary.map((s: any, idx: number) => (
                     <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors bg-slate-50/30 dark:bg-zinc-900 dark:border-zinc-800">
                       <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">
-                        {user?.fullName || "User"}
+                        {s.userName || displayUserName}
                       </td>
                       <td className="py-4 px-3 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{s.totalDays ?? 0}</td>
                       <td className="py-4 px-3 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{s.workingDays ?? 0}</td>
@@ -445,11 +522,15 @@ export default function AttendanceManagement() {
                 ) : (
                   salaryDetails.map((sd: any, idx: number) => (
                     <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.userName || user?.fullName || "User"}</td>
+                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.userName || displayUserName}</td>
                       <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">
-                        {startDate ? format(startDate, 'dd MMM') : format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'dd MMM')}
-                        {' – '}
-                        {endDate ? format(endDate, 'dd MMM yyyy') : format(new Date(), 'dd MMM yyyy')}
+                        {sd.periodLabel || (
+                          <>
+                            {startDate ? format(startDate, 'dd MMM') : format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'dd MMM')}
+                            {' – '}
+                            {endDate ? format(endDate, 'dd MMM yyyy') : format(new Date(), 'dd MMM yyyy')}
+                          </>
+                        )}
                       </td>
                       <td className="py-4 px-4 text-[13px] text-[#1e3a5f] font-bold dark:text-zinc-100">{Number(sd.grossSalary || 0).toLocaleString()}</td>
                       <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.totalWorkingDays ?? 0}</td>
@@ -467,7 +548,7 @@ export default function AttendanceManagement() {
                             paymentStatuses[idx] ? "bg-[#059669] hover:bg-[#047857]" : "bg-amber-500 hover:bg-amber-600"
                           }`}
                         >
-                          {paymentStatuses[idx] ? "Pay Received" : "Mark Received"}
+                          {sd.paymentStatus === "paid" || paymentStatuses[idx] ? "Pay Received" : "Mark Received"}
                         </button>
                       </td>
                     </tr>
@@ -478,75 +559,6 @@ export default function AttendanceManagement() {
           </div>
         )}
 
-        {/* Tab Content: Annual Leaves */}
-        {activeTab === 'annual' && (
-          <div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-              <div className="border border-slate-100 rounded-[4px] p-3 dark:border-zinc-800">
-                <p className="text-[11px] text-slate-500 dark:text-zinc-400">Approved Days Used ({currentYear})</p>
-                <p className="text-[20px] font-bold text-[#1e3a5f] dark:text-zinc-100">{availedLeaveDays}</p>
-              </div>
-              <div className="border border-slate-100 rounded-[4px] p-3 dark:border-zinc-800">
-                <p className="text-[11px] text-slate-500 dark:text-zinc-400">Pending Requests</p>
-                <p className="text-[20px] font-bold text-amber-500">{pendingLeaveRequests}</p>
-              </div>
-              <div className="border border-slate-100 rounded-[4px] p-3 dark:border-zinc-800">
-                <p className="text-[11px] text-slate-500 dark:text-zinc-400">Total Requests ({currentYear})</p>
-                <p className="text-[20px] font-bold text-[#1e3a5f] dark:text-zinc-100">{leaveRequestsThisYear.length}</p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[800px]">
-                <thead>
-                  <tr className="border-b border-slate-100 bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">From</th>
-                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">To</th>
-                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Days</th>
-                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Type</th>
-                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Duration</th>
-                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Reason</th>
-                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] text-left dark:text-zinc-100">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {isLoadingLeaves ? (
-                    <tr><td colSpan={7} className="py-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-300" /></td></tr>
-                  ) : leaveRequestsThisYear.length === 0 ? (
-                    <tr><td colSpan={7} className="py-10 text-center text-slate-400">No leave requests this year.</td></tr>
-                  ) : (
-                    leaveRequestsThisYear.map((lr: any) => {
-                      const statusColors: Record<string, string> = {
-                        Approved: "bg-emerald-100 text-emerald-700",
-                        Pending: "bg-amber-100 text-amber-700",
-                        Rejected: "bg-rose-100 text-rose-700",
-                        Cancelled: "bg-slate-100 text-slate-600",
-                      };
-                      return (
-                        <tr key={lr.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{format(new Date(lr.fromDate), 'dd MMM yyyy')}</td>
-                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{format(new Date(lr.toDate), 'dd MMM yyyy')}</td>
-                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{leaveDaySpan(lr)}</td>
-                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{lr.type || "-"}</td>
-                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{lr.duration || "Full Day"}</td>
-                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400 truncate max-w-[240px]">{lr.reason || "-"}</td>
-                          <td className="py-4 px-4 text-left">
-                            <span className={`px-2 py-1 rounded-[4px] text-[10px] font-bold dark:bg-zinc-900 ${statusColors[lr.status] || "bg-slate-100 text-slate-600"}`}>
-                              {lr.status}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <div className="p-4 mt-2">
-              <p className="text-[12px] font-bold text-slate-600 dark:text-zinc-300">Note: <span className="font-medium">You are eligible for quarterly leaves if you have not availed any leaves in the last 4 months. If you joined this year, you must have completed at least 4 months to be eligible. If you wish to combine leaves, approval from your Manager, HOD, and CEO is required.</span></p>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

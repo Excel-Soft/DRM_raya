@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getAuthHeader, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
     Card,
@@ -32,8 +32,127 @@ import {
     Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+} from "@/components/ui/command";
+import { ChevronsUpDown } from "lucide-react";
 
 const RESERVATION_LOCK_HOURS = 48;
+
+type PortfolioCategoryTaxonomy = {
+    mainCategories: { id: string; name: string }[];
+    subCategoriesByMainId: Record<string, { id: string; name: string }[]>;
+};
+
+function normalizeDesignStatus(raw?: string | null): string {
+    const s = (raw || "un-used").trim().toLowerCase();
+    if (s === "used") return "Used";
+    if (s === "un-used" || s === "unused") return "Un-Used";
+    if (s === "rejected") return "Rejected";
+    if (s === "changing") return "Changing";
+    if (s === "reserved") return "Reserved";
+    return raw?.trim() || "Un-Used";
+}
+
+function portfolioOverviewStatus(
+    item: { status?: string },
+    reservation: { status: string; expiresAt: string } | undefined,
+): string {
+    const live = reservation ? computeLiveStatus(reservation) : null;
+    if (live === "active" || live === "confirmed") return "Reserved";
+    return normalizeDesignStatus(item.status);
+}
+
+function portfolioThumbSrc(item: { fullImage?: string; bodyImage?: string; topHeaderImage?: string }) {
+    return item.fullImage || item.bodyImage || item.topHeaderImage || "";
+}
+
+function ReserveCompanySearch({
+    value,
+    customerId,
+    onChange,
+    disabled,
+}: {
+    value: string;
+    customerId: string;
+    onChange: (next: { customerId: string; companyName: string }) => void;
+    disabled?: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const [search, setSearch] = useState("");
+    const [debounced, setDebounced] = useState("");
+
+    useEffect(() => {
+        const t = setTimeout(() => setDebounced(search.trim()), 280);
+        return () => clearTimeout(t);
+    }, [search]);
+
+    const { data: companies = [], isFetching } = useQuery<{ id: string; companyName: string; drmId?: string }[]>({
+        queryKey: ["/api/customers/search", debounced],
+        queryFn: async () => {
+            const q = debounced || "a";
+            const res = await fetch(`/api/customers/search?q=${encodeURIComponent(q)}&limit=25`, {
+                headers: { ...getAuthHeader() },
+                credentials: "include",
+            });
+            const json = await res.json();
+            return (json.customers as { id: string; companyName: string; drmId?: string }[]) || [];
+        },
+        enabled: open,
+        staleTime: 30_000,
+    });
+
+    return (
+        <Popover open={open && !disabled} onOpenChange={(next) => !disabled && setOpen(next)}>
+            <PopoverTrigger asChild>
+                <Button
+                    variant="outline"
+                    role="combobox"
+                    disabled={disabled}
+                    className={cn("w-full justify-between font-normal", !value && "text-muted-foreground")}
+                >
+                    <span className="truncate">{value || "Search company name or DRM ID"}</span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)]" align="start">
+                <Command shouldFilter={false}>
+                    <CommandInput placeholder="Type company name…" value={search} onValueChange={setSearch} />
+                    <CommandList>
+                        <CommandEmpty>{isFetching ? "Searching…" : "No company found."}</CommandEmpty>
+                        <CommandGroup>
+                            {companies.map((c) => {
+                                const label = c.drmId ? `${c.companyName} (${c.drmId})` : c.companyName;
+                                return (
+                                    <CommandItem
+                                        key={c.id}
+                                        value={label}
+                                        onSelect={() => {
+                                            onChange({ customerId: c.id, companyName: c.companyName });
+                                            setOpen(false);
+                                        }}
+                                    >
+                                        {label}
+                                    </CommandItem>
+                                );
+                            })}
+                        </CommandGroup>
+                    </CommandList>
+                </Command>
+            </PopoverContent>
+        </Popover>
+    );
+}
 
 // MD-21: Portfolio Reserve — a 48h lock on a portfolio while it's being
 // presented to a customer/company for booking. The DB row only ever stores a
@@ -51,8 +170,12 @@ export default function PortfolioList() {
     const [search, setSearch] = useState("");
     const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
     const [selectedCategory, setSelectedCategory] = useState("");
+    const [selectedSubCategory, setSelectedSubCategory] = useState("");
+    const [statusFilters, setStatusFilters] = useState<Record<string, boolean>>({});
     const [reserveTarget, setReserveTarget] = useState<{ id: string; keyword: string } | null>(null);
     const [reserveCompanyName, setReserveCompanyName] = useState("");
+    const [reserveCustomerId, setReserveCustomerId] = useState("");
+    const [detailTarget, setDetailTarget] = useState<string | null>(null);
     const [rejectTarget, setRejectTarget] = useState<string | null>(null);
     const [rejectReason, setRejectReason] = useState("");
     const [extendTarget, setExtendTarget] = useState<string | null>(null);
@@ -75,6 +198,23 @@ export default function PortfolioList() {
     });
     const isVerificationManager = currentUser?.role === "verification_manager" || currentUser?.role === "admin";
 
+    const { data: categoryTaxonomy } = useQuery<PortfolioCategoryTaxonomy>({
+        queryKey: ["/api/portfolio/categories"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/portfolio/categories");
+            return res.json();
+        },
+    });
+
+    const { data: detailPortfolio, isLoading: detailLoading } = useQuery<any>({
+        queryKey: ["/api/portfolio", detailTarget],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/portfolio/${detailTarget}`);
+            return res.json();
+        },
+        enabled: !!detailTarget,
+    });
+
     const { data: reservations = [] } = useQuery<any[]>({
         queryKey: ["/api/portfolio/reservations"],
         queryFn: async () => {
@@ -94,9 +234,18 @@ export default function PortfolioList() {
     }, [reservations]);
 
     const reserveMutation = useMutation({
-        mutationFn: async ({ portfolioId, companyName }: { portfolioId: string; companyName: string }) => {
+        mutationFn: async ({
+            portfolioId,
+            companyName,
+            customerId,
+        }: {
+            portfolioId: string;
+            companyName: string;
+            customerId?: string;
+        }) => {
             const res = await apiRequest("POST", `/api/portfolio/${portfolioId}/reserve`, {
                 companyName: companyName.trim() || undefined,
+                customerId: customerId || undefined,
             });
             const body = await res.json();
             if (!res.ok || !body.success) throw new Error(body.message || "Failed to reserve portfolio");
@@ -107,6 +256,7 @@ export default function PortfolioList() {
             queryClient.invalidateQueries({ queryKey: ["/api/portfolio/reservations"] });
             setReserveTarget(null);
             setReserveCompanyName("");
+            setReserveCustomerId("");
         },
         onError: (error: Error) => {
             toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -184,6 +334,23 @@ export default function PortfolioList() {
             const sub = (p.subCategory || "").trim();
             if (sub) entry.subMap.set(sub, (entry.subMap.get(sub) || 0) + 1);
         }
+
+        const mains = categoryTaxonomy?.mainCategories;
+        if (mains?.length) {
+            return mains.map((m) => {
+                const fromData = mainMap.get(m.name);
+                const subsFromApi = categoryTaxonomy.subCategoriesByMainId?.[m.id] ?? [];
+                return {
+                    name: m.name,
+                    count: fromData?.count ?? 0,
+                    subCategories: subsFromApi.map((s) => ({
+                        name: s.name,
+                        count: fromData?.subMap.get(s.name) ?? 0,
+                    })),
+                };
+            });
+        }
+
         return Array.from(mainMap.entries())
             .map(([name, { count, subMap }]) => ({
                 name,
@@ -191,34 +358,31 @@ export default function PortfolioList() {
                 subCategories: Array.from(subMap.entries()).map(([subName, subCount]) => ({ name: subName, count: subCount })),
             }))
             .sort((a, b) => b.count - a.count);
-    }, [portfolioList]);
+    }, [portfolioList, categoryTaxonomy]);
 
     // Design/status overview counts, computed from the real portfolio rows.
     // Portfolios don't yet have a "status" column, so every row is "Un-Used" until some
     // other flow (e.g. a real reservation/usage feature) sets one.
     const statusOverview = useMemo(() => {
-        const counts: Record<string, number> = { Used: 0, "Un-Used": 0, Rejected: 0, Changing: 0 };
+        const counts: Record<string, number> = { Used: 0, "Un-Used": 0, Rejected: 0, Changing: 0, Reserved: 0 };
         for (const p of portfolioList) {
-            const status = p.status || "Un-Used";
-            if (status in counts) counts[status]++;
+            const bucket = portfolioOverviewStatus(p, reservationByPortfolio.get(p.id));
+            if (bucket in counts) counts[bucket]++;
             else counts["Un-Used"]++;
         }
-        // MD-21: a portfolio is "Reserved" while it has a live 'active' or
-        // 'confirmed' reservation lock (auto-released 'active' rows past their
-        // 48h expiry don't count — see computeLiveStatus).
-        let reservedCount = 0;
-        reservationByPortfolio.forEach((r) => {
-            const live = computeLiveStatus(r);
-            if (live === "active" || live === "confirmed") reservedCount++;
-        });
         return [
             { name: "Used", count: counts.Used, color: "bg-green-500" },
             { name: "Un-Used", count: counts["Un-Used"], color: "bg-gray-400" },
             { name: "Rejected", count: counts.Rejected, color: "bg-red-500" },
             { name: "Changing", count: counts.Changing, color: "bg-blue-500" },
-            { name: "Reserved", count: reservedCount, color: "bg-orange-500" },
+            { name: "Reserved", count: counts.Reserved, color: "bg-orange-500" },
         ];
     }, [portfolioList, reservationByPortfolio]);
+
+    const activeStatusFilters = useMemo(
+        () => Object.entries(statusFilters).filter(([, on]) => on).map(([name]) => name),
+        [statusFilters],
+    );
 
     // Reservations awaiting a Verification Manager action (confirm/reject/extend)
     // before their 48h lock auto-releases.
@@ -230,12 +394,17 @@ export default function PortfolioList() {
         return count;
     }, [reservationByPortfolio]);
 
-    const filtered = portfolioList.filter(p => {
+    const filtered = portfolioList.filter((p) => {
         const matchesSearch =
             (p.keyword || "").toLowerCase().includes(search.toLowerCase()) ||
-            (p.mainCategory || "").toLowerCase().includes(search.toLowerCase());
+            (p.mainCategory || "").toLowerCase().includes(search.toLowerCase()) ||
+            (p.designBy || "").toLowerCase().includes(search.toLowerCase());
         const matchesCategory = !selectedCategory || (p.mainCategory || "Uncategorized") === selectedCategory;
-        return matchesSearch && matchesCategory;
+        const matchesSubCategory = !selectedSubCategory || (p.subCategory || "") === selectedSubCategory;
+        const overview = portfolioOverviewStatus(p, reservationByPortfolio.get(p.id));
+        const matchesStatus =
+            activeStatusFilters.length === 0 || activeStatusFilters.includes(overview);
+        return matchesSearch && matchesCategory && matchesSubCategory && matchesStatus;
     });
 
     return (
@@ -263,7 +432,11 @@ export default function PortfolioList() {
                                                 "flex items-center justify-between px-2 py-1.5 rounded cursor-pointer transition-colors text-[12px]",
                                                 selectedCategory === cat.name ? "text-gray-900 font-bold" : "text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-zinc-800"
                                             )}
-                                            onClick={() => setSelectedCategory(selectedCategory === cat.name ? "" : cat.name)}
+                                            onClick={() => {
+                                                const next = selectedCategory === cat.name ? "" : cat.name;
+                                                setSelectedCategory(next);
+                                                setSelectedSubCategory("");
+                                            }}
                                         >
                                             <div className="flex items-center gap-2">
                                                 <ChevronRight className={cn("w-3 h-3 transition-transform", selectedCategory === cat.name && "rotate-90")} />
@@ -275,10 +448,20 @@ export default function PortfolioList() {
                                         {selectedCategory === cat.name && cat.subCategories.length > 0 && (
                                             <div className="ml-6 mt-1 space-y-2 mb-2">
                                                 {cat.subCategories.map((sub) => (
-                                                    <div key={sub.name} className="flex items-center justify-between text-[11px] text-gray-500 hover:text-gray-800 cursor-pointer dark:text-zinc-400">
+                                                    <div
+                                                        key={sub.name}
+                                                        className="flex items-center justify-between text-[11px] text-gray-500 hover:text-gray-800 cursor-pointer dark:text-zinc-400"
+                                                        onClick={() => setSelectedSubCategory(selectedSubCategory === sub.name ? "" : sub.name)}
+                                                    >
                                                         <div className="flex items-center gap-2">
-                                                            <Checkbox className="w-3.5 h-3.5 rounded-sm border-gray-300 dark:border-zinc-800" />
-                                                            <span>{sub.name}</span>
+                                                            <Checkbox
+                                                                className="w-3.5 h-3.5 rounded-sm border-gray-300 dark:border-zinc-800"
+                                                                checked={selectedSubCategory === sub.name}
+                                                                onCheckedChange={(checked) =>
+                                                                    setSelectedSubCategory(checked ? sub.name : "")
+                                                                }
+                                                            />
+                                                            <span className={cn(selectedSubCategory === sub.name && "font-semibold text-gray-800")}>{sub.name}</span>
                                                         </div>
                                                         <span>({sub.count})</span>
                                                     </div>
@@ -293,9 +476,21 @@ export default function PortfolioList() {
                         <div className="mt-8 space-y-3">
                             <h3 className="text-[12px] font-bold text-gray-500 mb-2 dark:text-zinc-400">Design Overview</h3>
                             {statusOverview.map((item) => (
-                                <div key={item.name} className="flex items-center justify-between text-[12px]">
+                                <div
+                                    key={item.name}
+                                    className="flex items-center justify-between text-[12px] cursor-pointer"
+                                    onClick={() =>
+                                        setStatusFilters((prev) => ({ ...prev, [item.name]: !prev[item.name] }))
+                                    }
+                                >
                                     <div className="flex items-center gap-2">
-                                        <Checkbox className="w-3.5 h-3.5" />
+                                        <Checkbox
+                                            className="w-3.5 h-3.5"
+                                            checked={!!statusFilters[item.name]}
+                                            onCheckedChange={(checked) =>
+                                                setStatusFilters((prev) => ({ ...prev, [item.name]: !!checked }))
+                                            }
+                                        />
                                         <span className="text-gray-600 font-medium dark:text-zinc-300">{item.name}</span>
                                     </div>
                                     <span className="text-gray-400">({item.count})</span>
@@ -375,13 +570,18 @@ export default function PortfolioList() {
                                     const hoursLeft = reservation && liveStatus === "active"
                                         ? Math.max(0, Math.ceil((new Date(reservation.expiresAt).getTime() - Date.now()) / (60 * 60 * 1000)))
                                         : null;
+                                    const thumb = portfolioThumbSrc(item);
+                                    const displayStatus = portfolioOverviewStatus(item, reservation);
                                     return (
                                     <Card key={item.id} className="overflow-hidden shadow-none hover:shadow-md transition-shadow border-gray-200 group dark:border-zinc-800">
-                                        <div className="relative aspect-[4/3] bg-gray-100 overflow-hidden dark:bg-zinc-900">
+                                        <div
+                                            className="relative aspect-[4/3] bg-gray-100 overflow-hidden dark:bg-zinc-900 cursor-pointer"
+                                            onClick={() => setDetailTarget(item.id)}
+                                        >
                                             {/* Portfolio Image */}
-                                            {item.fullImage ? (
+                                            {thumb ? (
                                                 <img
-                                                    src={item.fullImage}
+                                                    src={thumb}
                                                     alt={item.keyword}
                                                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                                                 />
@@ -414,7 +614,7 @@ export default function PortfolioList() {
                                         <CardContent className="p-4 space-y-2">
                                             <div className="flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-zinc-400">
                                                 <User className="w-3 h-3" />
-                                                <span>Design By: <span className="text-red-500 font-medium">{item.designBy || "Muhammad Tuqeer Razaq"}</span></span>
+                                                <span>Design By: <span className="text-red-500 font-medium">{item.designBy || "—"}</span></span>
                                             </div>
                                             <h3 className="text-[13px] font-bold text-gray-800 line-clamp-1 dark:text-zinc-100">{item.keyword || "Sports Wear"}</h3>
 
@@ -422,9 +622,13 @@ export default function PortfolioList() {
                                                 <div className="flex items-center gap-3">
                                                     <span className={cn(
                                                         "text-[9px] font-bold px-2 py-0.5 rounded uppercase",
-                                                        item.status === "Used" ? "bg-green-500 text-white" : "bg-gray-400 text-white"
+                                                        displayStatus === "Used" && "bg-green-500 text-white",
+                                                        displayStatus === "Un-Used" && "bg-gray-400 text-white",
+                                                        displayStatus === "Rejected" && "bg-red-500 text-white",
+                                                        displayStatus === "Changing" && "bg-blue-500 text-white",
+                                                        displayStatus === "Reserved" && "bg-orange-500 text-white",
                                                     )}>
-                                                        {item.status || "un-used"}
+                                                        {displayStatus}
                                                     </span>
                                                     <div className="flex items-center gap-1 text-[10px] text-gray-500 dark:text-zinc-400">
                                                         <Calendar className="w-3 h-3" />
@@ -450,7 +654,10 @@ export default function PortfolioList() {
                                                     size="sm"
                                                     variant="outline"
                                                     className="w-full h-8 text-[11px] border-orange-300 text-orange-600 hover:bg-orange-50"
-                                                    onClick={() => setReserveTarget({ id: item.id, keyword: item.keyword || "this design" })}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setReserveTarget({ id: item.id, keyword: item.keyword || "this design" });
+                                                    }}
                                                 >
                                                     <Lock className="w-3 h-3 mr-1" />
                                                     Reserve for {RESERVATION_LOCK_HOURS}h
@@ -496,7 +703,7 @@ export default function PortfolioList() {
             </div>
 
             {/* MD-21: Reserve dialog */}
-            <Dialog open={!!reserveTarget} onOpenChange={(open) => { if (!open) { setReserveTarget(null); setReserveCompanyName(""); } }}>
+            <Dialog open={!!reserveTarget} onOpenChange={(open) => { if (!open) { setReserveTarget(null); setReserveCompanyName(""); setReserveCustomerId(""); } }}>
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Reserve Portfolio</DialogTitle>
@@ -507,22 +714,82 @@ export default function PortfolioList() {
                     </DialogHeader>
                     <div className="space-y-2">
                         <Label className="text-[13px] font-semibold text-gray-600 dark:text-zinc-300">Reserved For (Company / Customer)</Label>
-                        <Input
-                            placeholder="e.g. Acme Corp"
+                        <ReserveCompanySearch
                             value={reserveCompanyName}
-                            onChange={(e) => setReserveCompanyName(e.target.value)}
+                            customerId={reserveCustomerId}
+                            disabled={reserveMutation.isPending}
+                            onChange={({ customerId, companyName }) => {
+                                setReserveCustomerId(customerId);
+                                setReserveCompanyName(companyName);
+                            }}
                         />
                     </div>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => { setReserveTarget(null); setReserveCompanyName(""); }}>Cancel</Button>
+                        <Button variant="outline" onClick={() => { setReserveTarget(null); setReserveCompanyName(""); setReserveCustomerId(""); }}>Cancel</Button>
                         <Button
                             className="bg-[#00a65a] hover:bg-[#008d4c]"
                             disabled={reserveMutation.isPending}
-                            onClick={() => reserveTarget && reserveMutation.mutate({ portfolioId: reserveTarget.id, companyName: reserveCompanyName })}
+                            onClick={() =>
+                                reserveTarget &&
+                                reserveMutation.mutate({
+                                    portfolioId: reserveTarget.id,
+                                    companyName: reserveCompanyName,
+                                    customerId: reserveCustomerId,
+                                })
+                            }
                         >
                             {reserveMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                             Reserve
                         </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Portfolio design detail (legacy full template preview) */}
+            <Dialog open={!!detailTarget} onOpenChange={(open) => { if (!open) setDetailTarget(null); }}>
+                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>{detailPortfolio?.keyword || "Portfolio design"}</DialogTitle>
+                        <DialogDescription>
+                            {detailPortfolio?.mainCategory}
+                            {detailPortfolio?.subCategory ? ` · ${detailPortfolio.subCategory}` : ""}
+                            {detailPortfolio?.designBy ? ` · Design by ${detailPortfolio.designBy}` : ""}
+                        </DialogDescription>
+                    </DialogHeader>
+                    {detailLoading ? (
+                        <div className="flex justify-center py-12">
+                            <Loader2 className="h-8 w-8 animate-spin text-[#00a65a]" />
+                        </div>
+                    ) : detailPortfolio ? (
+                        <div className="space-y-4 border rounded-lg overflow-hidden bg-white dark:bg-zinc-950">
+                            {detailPortfolio.topHeaderImage ? (
+                                <img src={detailPortfolio.topHeaderImage} alt="Header" className="w-full" />
+                            ) : null}
+                            {Array.isArray(detailPortfolio.sliders) && detailPortfolio.sliders.length > 0 ? (
+                                <div className="flex gap-2 overflow-x-auto px-2 py-2 bg-gray-50 dark:bg-zinc-900">
+                                    {detailPortfolio.sliders.map((src: string, i: number) => (
+                                        <img key={i} src={src} alt={`Slide ${i + 1}`} className="h-40 shrink-0 rounded border object-cover" />
+                                    ))}
+                                </div>
+                            ) : null}
+                            {detailPortfolio.bodyImage ? (
+                                <img src={detailPortfolio.bodyImage} alt="Body" className="w-full" />
+                            ) : null}
+                            {detailPortfolio.fullImage ? (
+                                <img src={detailPortfolio.fullImage} alt="Main" className="w-full" />
+                            ) : null}
+                            {!detailPortfolio.topHeaderImage && !detailPortfolio.bodyImage && !detailPortfolio.fullImage && (
+                                <p className="text-sm text-muted-foreground p-4">No preview images available for this design.</p>
+                            )}
+                            {detailPortfolio.serverLink ? (
+                                <p className="text-[11px] text-gray-500 px-4 pb-4 break-all">
+                                    Server path: {detailPortfolio.serverLink}
+                                </p>
+                            ) : null}
+                        </div>
+                    ) : null}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setDetailTarget(null)}>Close</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

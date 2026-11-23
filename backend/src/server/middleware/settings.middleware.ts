@@ -1,8 +1,23 @@
 import { type Request, type Response, type NextFunction } from "express";
-import type { PoolClient } from "pg";
 import { allowedIpsRepository } from "../repositories/allowed-ips.repository";
 import { pool, isDbAvailable, ensureDbAvailable } from "../db";
-import { normalizeRole, ROLES } from "../utils/role-utils";
+import { looksLikeLegacyRoleCsv, normalizeRole, ROLES } from "../utils/role-utils";
+
+function isPlatformAdmin(user: NonNullable<Request["user"]>): boolean {
+  const active = normalizeRole(
+    String((user as any).activeRoleId || user.roleId || ""),
+  );
+  if (active === ROLES.ADMIN) return true;
+  const roles = Array.isArray((user as any).roles) ? (user as any).roles : [];
+  if (roles.some((r: string) => normalizeRole(String(r)) === ROLES.ADMIN)) {
+    return true;
+  }
+  const rawRole = String(user.roleId || "");
+  if (looksLikeLegacyRoleCsv(rawRole) && roles.length > 0) {
+    return roles.some((r: string) => normalizeRole(String(r)) === ROLES.ADMIN);
+  }
+  return false;
+}
 
 // Configuration flag for IP restriction enforcement
 export const IP_RESTRICTION_ENABLED = process.env.IP_RESTRICTION_ENABLED === "true";
@@ -27,7 +42,6 @@ export async function checkUrlPermission(
     });
   }
 
-  let client: PoolClient | null = null;
   try {
     // Get the full path including /api prefix
     // req.originalUrl includes /api, req.path does not
@@ -62,26 +76,22 @@ export async function checkUrlPermission(
     // Normalized active role for this request (collapses aliases like
     // "Super HOD" / "super-hod" -> "super_hod" and "admin" / "super_admin"
     // -> ROLES.ADMIN) so comparisons are consistent.
-    const userRoleId = normalizeRole(String(user.roleId));
+    const userRoleId = normalizeRole(
+      String((user as any).activeRoleId || user.roleId || ""),
+    );
 
-    // ADMIN BYPASS: ONLY true platform admins (admin / super_admin, both of
-    // which normalize to ROLES.ADMIN) skip the URL-permission DB checks. The
-    // former broad bypass list (managers, executives, posting roles, etc.) has
-    // been removed so that ordinary roles are subject to the same permission
-    // rules as everyone else, instead of silently bypassing them.
-    if (userRoleId === ROLES.ADMIN) {
+    // ADMIN BYPASS: platform admins skip URL-permission DB checks (avoids an
+    // extra pool connection on every request — critical with max pool size 4).
+    if (isPlatformAdmin(user)) {
       return next();
     }
 
 
     const method = (req.method || "GET").toUpperCase();
 
-    client = await pool.connect();
-    await client.query("SET statement_timeout = 5000");
-
-    const permissionsResult = await client.query(
-      "select id, path, allowed_role_ids from drm.url_permissions",
-    );
+  const permissionsResult = await pool.query(
+    "select id, path, allowed_role_ids from drm.url_permissions",
+  );
 
     type UrlPermissionRow = {
       id: string;
@@ -147,14 +157,7 @@ export async function checkUrlPermission(
       message: "Unable to verify permissions (database unavailable).",
     });
   } finally {
-    try {
-      if (client) {
-        await client.query("SET statement_timeout = DEFAULT");
-        client.release();
-      }
-    } catch (err) {
-      console.error("Error cleaning up permission DB client:", err);
-    }
+    // no dedicated client — pool.query only
   }
 }
 

@@ -33,6 +33,18 @@ function fmtDate(value: string) {
   return d.toLocaleDateString();
 }
 
+/** Strip HTML and cap length — long quotation line items often contain <br/>. */
+function formatServiceDetails(raw: string): string {
+  const text = String(raw || "")
+    .replace(/<br\s*\/?>/gi, ", ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "—";
+  const max = 120;
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 // Backed by GET /api/sales/quotations/my-summary — HOD-approved quotations
 // can create a GM (package) or customer invoice (service) per downstreamKind.
 export function MyQuotationsWidget() {
@@ -104,9 +116,9 @@ export function MyQuotationsWidget() {
   });
 
   const tabs = [
-    { key: "approved" as const, label: "Approved Quotations", count: data?.approved.count ?? 0, dot: "bg-emerald-500" },
-    { key: "pendingRejected" as const, label: "Pending & Rejected Quotations", count: data?.pendingRejected.count ?? 0, dot: "bg-amber-500" },
-    { key: "convertedInvoices" as const, label: "Converted Invoices", count: data?.convertedInvoices.count ?? 0, dot: "bg-blue-500" },
+    { key: "approved" as const, label: "Approved Quotations", count: data?.approved?.count ?? 0, dot: "bg-emerald-500" },
+    { key: "pendingRejected" as const, label: "Pending & Rejected Quotations", count: data?.pendingRejected?.count ?? 0, dot: "bg-amber-500" },
+    { key: "convertedInvoices" as const, label: "Converted Invoices", count: data?.convertedInvoices?.count ?? 0, dot: "bg-blue-500" },
   ];
 
   const activeItems = data?.[activeTab]?.items ?? [];
@@ -155,7 +167,7 @@ export function MyQuotationsWidget() {
             <tr className="bg-slate-50 dark:bg-zinc-800/50 text-left text-slate-500 dark:text-zinc-400">
               <th className="px-6 py-3 font-semibold">#</th>
               <th className="px-6 py-3 font-semibold">Company</th>
-              <th className="px-6 py-3 font-semibold">Service Details</th>
+              <th className="px-6 py-3 font-semibold max-w-[280px]">Service Details</th>
               <th className="px-6 py-3 font-semibold">Date</th>
               <th className="px-6 py-3 font-semibold">Status / Comment</th>
             </tr>
@@ -178,7 +190,12 @@ export function MyQuotationsWidget() {
                 <tr key={item.id} className="border-t border-slate-100 dark:border-zinc-800/50">
                   <td className="px-6 py-3 text-slate-500 dark:text-zinc-400">{item.rowNumber}</td>
                   <td className="px-6 py-3 font-medium text-slate-700 dark:text-zinc-200">{item.company}</td>
-                  <td className="px-6 py-3 text-slate-600 dark:text-zinc-300">{item.serviceDetails}</td>
+                  <td
+                    className="px-6 py-3 text-slate-600 dark:text-zinc-300 max-w-[320px] truncate"
+                    title={formatServiceDetails(item.serviceDetails)}
+                  >
+                    {formatServiceDetails(item.serviceDetails)}
+                  </td>
                   <td className="px-6 py-3 text-slate-500 dark:text-zinc-400">{fmtDate(item.date)}</td>
                   <td className="px-6 py-3">
                     {activeTab === "pendingRejected" && !item.isConfirmed ? (

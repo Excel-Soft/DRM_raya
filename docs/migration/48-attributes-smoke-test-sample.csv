@@ -1,0 +1,11 @@
+legacy_id,refId,rationale,category_expected,name_expected,archive_time,expected_date_label,expected_branch,notes
+9,1,ordinary — Company Business Type,Company Business Type,Exporter,,,,
+12,4,ordinary — Company Detail,Company Detail,Webxl,,,,
+33,2,ordinary — Service Type (refId 2),Service Type,Agriculture & Food,,,,
+107,7,user rule — Agriculture → Service Type,Service Type,Agriculture,,,,Distinct legacy id; same category as refId 2
+137,8,Contact Attribute + duration in archive,Contact Attribute,Mobile,1,,,time stays archive-only; date_label must be NULL
+160,9,user rule — Whatsapp Message,Whatsapp Message,Seminar,,,,Name unchanged
+171,11,Govt Leave + date_label,Govt Leave,Labour Day,2026-5-1,2026-5-1,,
+181,12,Account Monthly Task + branch,Account Monthly Task,Electricity Bill SKT,2023-11-15,2023-11-15,Sialkot,
+316,0,Alibaba Packages,Alibaba Packages,Alibaba Membership,,,,
+278,14,Country,Country,PK,,,,

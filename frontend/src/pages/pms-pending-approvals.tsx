@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { DEPARTMENT_OPTIONS } from "@/components/service-form-dialog";
+import { projectDepartmentDisplayLabel } from "@/lib/project-department-variants";
 
 interface PendingProject {
     id: string;
@@ -51,30 +51,6 @@ interface PendingProject {
     detailNotes?: string | null;
 }
 
-// Every real department the document could be routed to (same source as the
-// Service for Quotation catalog's Project Department field) — previously
-// only PRODUCT_POSTING/DND had a real label and everything else (IT,
-// SEO/SMM, Sales, ...) silently fell back to a generic "Manager". Two older
-// code paths write slightly different spellings for the same department
-// (DESIGN_DEVELOPMENT / "SEO/SMM" with a slash) alongside the newer
-// DEPARTMENT_OPTIONS codes, so both are normalized before matching.
-function departmentLabel(departmentType?: string | null): string {
-    let normalized = (departmentType || "").toUpperCase().replace(/[\s/]+/g, "_");
-    normalized = normalized.replace(/^DEP:/i, '');
-    
-    if (normalized === "PRODUCT_POSTING" || normalized === "9") return "P&P";
-    if (normalized === "DND" || normalized === "DESIGN_DEVELOPMENT" || normalized === "10") return "D&D";
-    if (normalized === "13") return "IT";
-    if (normalized === "8") return "SEO/SMM";
-    if (normalized === "11") return "Software";
-    if (normalized === "12") return "Service";
-    if (normalized === "1") return "Sales";
-    if (normalized === "2") return "Accounts";
-
-    const match = DEPARTMENT_OPTIONS.find((opt) => opt.value === normalized);
-    return match?.label || normalized || "Manager";
-}
-
 export default function PmsPendingApprovals() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
@@ -97,6 +73,8 @@ export default function PmsPendingApprovals() {
     // so nothing was ever really uploaded and no downstream "view document"
     // link could ever work; this now sends the real file.
     const [documentFile, setDocumentFile] = useState<File | null>(null);
+    const [pageSize, setPageSize] = useState(10);
+    const [currentPage, setCurrentPage] = useState(1);
 
     const { data: projects = [], isLoading } = useQuery<PendingProject[]>({
         queryKey: ["/api/pms/pending-documents"],
@@ -171,6 +149,21 @@ export default function PmsPendingApprovals() {
         );
     }, [searchQuery, projects]);
 
+    const totalFiltered = filteredData.length;
+    const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+    const safePage = Math.min(currentPage, totalPages);
+    const pageStart = totalFiltered === 0 ? 0 : (safePage - 1) * pageSize + 1;
+    const pageEnd = Math.min(safePage * pageSize, totalFiltered);
+    const paginatedData = filteredData.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, pageSize]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) setCurrentPage(totalPages);
+    }, [currentPage, totalPages]);
+
     const handleExport = (formatType: "copy" | "csv" | "excel" | "pdf") => {
         if (filteredData.length === 0) {
             toast({ title: "No data to export", variant: "destructive" });
@@ -184,7 +177,7 @@ export default function PmsPendingApprovals() {
             row.status,
             row.hodApprovedAt ? "Verified" : "Waiting",
             row.accountsApprovedAt ? "Verified" : "Waiting",
-            departmentLabel(row.departmentType),
+            projectDepartmentDisplayLabel(row.departmentType),
             row.date ? format(new Date(row.date), "dd-MM-yyyy") : "N/A"
         ]);
 
@@ -219,10 +212,10 @@ export default function PmsPendingApprovals() {
                 Upload documents for projects awaiting approval.
             </div>
 
-            <div className="bg-white border border-gray-100 rounded shadow-sm overflow-hidden p-5 dark:bg-zinc-900 dark:border-zinc-800">
+            <div className="bg-white border border-gray-100 rounded shadow-sm overflow-hidden p-5 dark:bg-zinc-900 dark:border-zinc-800 flex flex-col min-h-0">
                 {/* Controls: Buttons & Search */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 gap-4">
-                    {/* Action Buttons */}
+                    <div className="flex flex-wrap items-center gap-4">
                     <div className="flex bg-[#6c757d] rounded-[3px] overflow-hidden shadow-sm h-8">
                         <button 
                             onClick={() => handleExport('copy')}
@@ -249,6 +242,22 @@ export default function PmsPendingApprovals() {
                             Column visibility
                         </button>
                     </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[12px] text-[#495057] dark:text-zinc-400">Show</span>
+                            <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+                                <SelectTrigger className="h-8 w-[70px] text-[12px]">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="10">10</SelectItem>
+                                    <SelectItem value="25">25</SelectItem>
+                                    <SelectItem value="50">50</SelectItem>
+                                    <SelectItem value="100">100</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <span className="text-[12px] text-[#495057] dark:text-zinc-400">entries</span>
+                        </div>
+                    </div>
 
                     {/* Search Input */}
                     <div className="flex items-center gap-2">
@@ -262,10 +271,9 @@ export default function PmsPendingApprovals() {
                     </div>
                 </div>
 
-                {/* Table */}
-                <div className="w-full overflow-x-auto">
+                <div className="w-full overflow-x-auto flex-1 max-h-[calc(100vh-280px)] overflow-y-auto custom-scrollbar">
                     <table className="w-full text-left border-collapse min-w-[700px]">
-                        <thead>
+                        <thead className="sticky top-0 z-10">
                             <tr className="bg-[#d1e7dd] text-[#0a3622] border-b border-[#badbcc] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                                 <th className="px-4 py-3 text-[13px] font-bold border-r border-[#badbcc] dark:border-zinc-800">#P-ID</th>
                                 <th className="px-4 py-3 text-[13px] font-bold border-r border-[#badbcc] dark:border-zinc-800">Projects</th>
@@ -294,7 +302,7 @@ export default function PmsPendingApprovals() {
                                     </td>
                                 </tr>
                             ) : (
-                                filteredData.map((row) => {
+                                paginatedData.map((row) => {
                                     const rejectedAtTime = row.rejectedAt ? new Date(row.rejectedAt).getTime() : 0;
                                     const verifiedAtTime = row.verifiedAt ? new Date(row.verifiedAt).getTime() : 0;
                                     const isVerifiedNow = verifiedAtTime > rejectedAtTime;
@@ -328,7 +336,7 @@ export default function PmsPendingApprovals() {
                                                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                                                             <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
                                                         </span>
-                                                        Sent to {departmentLabel(row.departmentType)}
+                                                        Sent to {projectDepartmentDisplayLabel(row.departmentType)}
                                                     </span>
                                                 ) : showRejection ? (
                                                     <span className="inline-flex text-[11px] px-3 py-1 rounded-full font-medium shadow-sm border bg-red-100 text-red-700 border-red-200">
@@ -367,12 +375,15 @@ export default function PmsPendingApprovals() {
                                                 )}
                                             </td>
                                             <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
+                                                <div className="font-bold text-[#333] dark:text-zinc-200 mb-1.5">
+                                                    {projectDepartmentDisplayLabel(row.departmentType)}
+                                                </div>
                                                 {showRejection ? (
                                                     <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-500 font-medium text-[11px] border border-slate-200 dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
                                                         Waiting
                                                     </span>
                                                 ) : isVerifiedNow ? (
-                                                    <span className="text-emerald-600 font-bold">Verified</span>
+                                                    <span className="text-emerald-600 font-bold text-[11px]">Verified</span>
                                                 ) : (
                                                     <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-500 font-medium text-[11px] border border-slate-200 dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
                                                         Waiting
@@ -399,7 +410,7 @@ export default function PmsPendingApprovals() {
                                                 ) : row.sentToManager ? (
                                                     <div className="flex flex-col gap-1">
                                                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-[3px] text-[12px] font-semibold">
-                                                            ✓ Documents Sent {row.rejectionReason ? 'Again ' : ''}to {departmentLabel(row.departmentType)}
+                                                            ✓ Documents Sent {row.rejectionReason ? 'Again ' : ''}to {projectDepartmentDisplayLabel(row.departmentType)}
                                                         </span>
                                                         <button
                                                             onClick={() => handleUploadClick(row.id)}
@@ -430,6 +441,35 @@ export default function PmsPendingApprovals() {
                             )}
                         </tbody>
                     </table>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-4 mt-2 border-t border-gray-100 text-[12px] text-[#495057] dark:border-zinc-800 dark:text-zinc-400">
+                    <div>
+                        Showing {pageStart} to {pageEnd} of {totalFiltered} entries
+                        {searchQuery ? ` (filtered from ${projects.length})` : ""}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span>
+                            Page {safePage} of {totalPages}
+                        </span>
+                        <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-zinc-800">
+                            <button
+                                type="button"
+                                disabled={safePage <= 1}
+                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                className="px-3 py-1.5 border-r border-gray-200 dark:border-zinc-800 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-zinc-900"
+                            >
+                                Previous
+                            </button>
+                            <button
+                                type="button"
+                                disabled={safePage >= totalPages}
+                                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                className="px-3 py-1.5 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-zinc-900"
+                            >
+                                Next
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 

@@ -71,7 +71,7 @@ export default function SeoSmmExecutiveDashboard() {
     const [topSellingFilter, setTopSellingFilter] = useState("LD");
     const [activitiesFilter, setActivitiesFilter] = useState("TD");
     const [dailyReportFilter, setDailyReportFilter] = useState("daily");
-    const [monthlyCompleteFilter, setMonthlyCompleteFilter] = useState("WK");
+    const [monthlyCompleteFilter, setMonthlyCompleteFilter] = useState("MO");
     const [bannerIndex, setBannerIndex] = useState(0);
 
     const { data: summaryStats } = useQuery({

@@ -3,6 +3,9 @@ import { pool } from "../db";
 import { requireRole } from "../middleware/auth.middleware";
 import { AuditLogService } from "./services/audit-log.service";
 import { changeTaskStatus } from "./services/pms-transition.service";
+import { sqlDepartmentFamilyIn } from "@shared/project-department-variants";
+
+const SEO_DEPT_SQL = sqlDepartmentFamilyIn("p.department_type", "seo_smm");
 
 // SEO/SMM manager's "Department Status Tracker" Pending/Approved tabs —
 // sales-uploaded project documents routed to the SEO/SMM department.
@@ -80,7 +83,7 @@ router.get("/projects", requireRole(...SEO_SMM_ROLES), async (req: Request, res:
          order by t2.created_at desc
          limit 1
        ) lt on true
-       where p.department_type in ('SEO_SMM', 'SEO/SMM')
+       where ${SEO_DEPT_SQL}
          and pd.status = $1
          ${taskFilter}
        order by pd.created_at desc`,
@@ -138,6 +141,166 @@ router.patch("/documents/:id/verify", requireRole(...SEO_SMM_ROLES), async (req:
   } catch (error) {
     console.error("Error verifying SEO/SMM document:", error);
     res.status(500).json({ error: "Failed to verify document" });
+  }
+});
+
+// GET /api/seo-smm/dashboard/summary — KPI cards scoped to SEO/SMM projects only
+// (not company-wide /api/hod/dashboard/important-stats or /api/pms/projects).
+router.get("/dashboard/summary", requireRole(...SEO_SMM_ROLES), async (_req: Request, res: Response) => {
+  try {
+    const taskRes = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE t.status = 'InProgress' AND COALESCE(t.is_deleted, false) = false)::int AS "ongoingTasks",
+        COUNT(*) FILTER (WHERE t.status = 'Completed' AND COALESCE(t.is_deleted, false) = false)::int AS "completedTasks",
+        COUNT(*) FILTER (
+          WHERE COALESCE(t.is_deleted, false) = false
+            AND t.due_date IS NOT NULL
+            AND t.due_date < NOW()
+            AND t.status NOT IN ('Completed', 'Cancelled')
+        )::int AS "criticalDelays"
+      FROM drm.tasks t
+      INNER JOIN drm.projects p ON p.id = t.project_id
+      WHERE COALESCE(p.is_deleted, false) = false
+        AND ${SEO_DEPT_SQL}
+    `);
+    const projectRes = await pool.query(`
+      SELECT
+        COUNT(*)::int AS "totalManaged",
+        COUNT(*) FILTER (WHERE LOWER(COALESCE(p.status, '')) = 'onhold')::int AS "onHoldProjects"
+      FROM drm.projects p
+      WHERE COALESCE(p.is_deleted, false) = false
+        AND ${SEO_DEPT_SQL}
+    `);
+    const t = taskRes.rows[0] || {};
+    const p = projectRes.rows[0] || {};
+    res.json({
+      success: true,
+      data: {
+        ongoingTasks: Number(t.ongoingTasks || 0),
+        totalManaged: Number(p.totalManaged || 0),
+        completedTasks: Number(t.completedTasks || 0),
+        criticalDelays: Number(t.criticalDelays || 0),
+        onHoldProjects: Number(p.onHoldProjects || 0),
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching SEO/SMM dashboard summary:", error);
+    res.status(500).json({ error: "Failed to fetch dashboard summary" });
+  }
+});
+
+// GET /api/seo-smm/projects/overview — projects in SEO/SMM dept with taskStats
+router.get("/projects/overview", requireRole(...SEO_SMM_ROLES), async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        p.id,
+        p.name,
+        p.description,
+        p.status,
+        p.work_space AS "workSpace",
+        p.start_date AS "startDate",
+        p.end_date AS "endDate",
+        COALESCE(c.company_name, 'Unknown') AS "companyName",
+        COALESCE(stats.total, 0)::int AS "taskTotal",
+        COALESCE(stats.to_do, 0)::int AS "taskToDo",
+        COALESCE(stats.in_progress, 0)::int AS "taskInProgress",
+        COALESCE(stats.blocked, 0)::int AS "taskBlocked",
+        COALESCE(stats.completed, 0)::int AS "taskCompleted"
+      FROM drm.projects p
+      LEFT JOIN drm.customers c ON c.id = p.customer_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE t.status = 'ToDo')::int AS to_do,
+          COUNT(*) FILTER (WHERE t.status = 'InProgress')::int AS in_progress,
+          COUNT(*) FILTER (WHERE t.status = 'Blocked')::int AS blocked,
+          COUNT(*) FILTER (WHERE t.status = 'Completed')::int AS completed
+        FROM drm.tasks t
+        WHERE t.project_id = p.id AND COALESCE(t.is_deleted, false) = false
+      ) stats ON true
+      WHERE COALESCE(p.is_deleted, false) = false
+        AND ${SEO_DEPT_SQL}
+      ORDER BY p.updated_at DESC
+      LIMIT 500
+    `);
+    res.json(
+      rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        status: r.status,
+        workSpace: r.workSpace,
+        companyName: r.companyName,
+        startDate: r.startDate,
+        endDate: r.endDate,
+        taskStats: {
+          total: r.taskTotal,
+          toDo: r.taskToDo,
+          inProgress: r.taskInProgress,
+          blocked: r.taskBlocked,
+          completed: r.taskCompleted,
+        },
+      })),
+    );
+  } catch (error) {
+    console.error("Error fetching SEO/SMM projects overview:", error);
+    res.status(500).json({ error: "Failed to fetch projects overview" });
+  }
+});
+
+// GET /api/seo-smm/daily-report?period=today|yesterday|weekly|monthly
+router.get("/daily-report", requireRole(...SEO_SMM_ROLES), async (req: Request, res: Response) => {
+  try {
+    const period = String(req.query.period || "today").toLowerCase();
+    let dateFilter = "AND t.updated_at >= CURRENT_DATE";
+    if (period === "yesterday") {
+      dateFilter = "AND t.updated_at >= CURRENT_DATE - INTERVAL '1 day' AND t.updated_at < CURRENT_DATE";
+    } else if (period === "weekly") {
+      dateFilter = "AND t.updated_at >= date_trunc('week', CURRENT_DATE)";
+    } else if (period === "monthly") {
+      dateFilter = "AND t.updated_at >= date_trunc('month', CURRENT_DATE)";
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT
+        t.id,
+        COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(u.name), ''), u.username) AS name,
+        COALESCE(c.company_name, 'Unknown') AS company,
+        COALESCE(NULLIF(TRIM(p.name), ''), '—') AS project,
+        t.title AS task,
+        t.status,
+        COALESCE(SUM(ttl.duration_minutes), 0)::int AS spent
+      FROM drm.tasks t
+      INNER JOIN drm.projects p ON p.id = t.project_id
+      LEFT JOIN drm.users u ON u.id = t.assigned_to_user_id
+      LEFT JOIN drm.customers c ON c.id = p.customer_id
+      LEFT JOIN drm.task_time_logs ttl ON ttl.task_id = t.id
+      WHERE COALESCE(t.is_deleted, false) = false
+        AND COALESCE(p.is_deleted, false) = false
+        AND ${SEO_DEPT_SQL}
+        ${dateFilter}
+      GROUP BY t.id, u.full_name, u.name, u.username, c.company_name, p.name, t.title, t.status, t.updated_at
+      ORDER BY t.updated_at DESC
+      LIMIT 50
+    `,
+    );
+    res.json({
+      success: true,
+      data: rows.map((row) => ({
+        id: row.id,
+        name: row.name || "Unassigned",
+        company: row.company,
+        project: row.project,
+        task: row.task,
+        status: row.status,
+        spent: `${row.spent || 0} mins`,
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching SEO/SMM daily report:", error);
+    res.status(500).json({ success: false, message: "Failed to load daily report" });
   }
 });
 

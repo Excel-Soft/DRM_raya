@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, type RefObject, type MutableRefObject } from "react";
+import { useState, useEffect, useRef, useMemo, type RefObject, type MutableRefObject } from "react";
 import { useModuleData } from "@/hooks/use-module-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CalendarIcon, Play, ArrowUpCircle, Clock, PlayCircle, Eye, Plus, Briefcase, Download, FileText, TimerReset, Upload, Paperclip } from "lucide-react";
+import { roleCanExecutePmsTasks, roleCanAssignPmsTasks } from "@/lib/pms-task-permissions";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -20,6 +21,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequestJson } from "@/lib/queryClient";
+import { assertAllTaskLinksUnique, validateUniqueTaskLinks } from "@/lib/task-link-utils";
 
 // Same "links inside task.notes" parsing already used inline in the Working
 // Links table column — pulled out here so the Files modal's "Provided
@@ -107,6 +109,7 @@ interface ProjectStatus {
     totalTime?: string;
     docUploaded?: boolean;
     depApproved?: boolean;
+    workflowStage?: string;
 }
 
 export default function PmsTasks() {
@@ -130,6 +133,9 @@ export default function PmsTasks() {
 
     const [elapsedTimes, setElapsedTimes] = useState<Record<string, number>>({});
     const [tickerBaselines, setTickerBaselines] = useState<Record<string, { serverElapsed: number; capturedAtLocal: number }>>({});
+    const [projectSearch, setProjectSearch] = useState("");
+    const [pageSize, setPageSize] = useState(10);
+    const [currentPage, setCurrentPage] = useState(1);
     const queryClient = useQueryClient();
     const { toast } = useToast();
 
@@ -157,8 +163,12 @@ export default function PmsTasks() {
         queryFn: async () => {
             const all = await Promise.all(
                 projectTasks.map(async (t: any) => {
-                    const logs = await apiRequestJson<any[]>("GET", `/api/pms/tasks/${t.id}/time-logs`);
-                    return (Array.isArray(logs) ? logs : []).map((l: any) => ({ ...l, taskTitle: t.title || t.name }));
+                    try {
+                        const logs = await apiRequestJson<any[]>("GET", `/api/pms/tasks/${t.id}/time-logs`);
+                        return (Array.isArray(logs) ? logs : []).map((l: any) => ({ ...l, taskTitle: t.title || t.name }));
+                    } catch {
+                        return [];
+                    }
                 })
             );
             return all.flat().sort((a: any, b: any) => new Date(b.logDate).getTime() - new Date(a.logDate).getTime());
@@ -359,8 +369,11 @@ export default function PmsTasks() {
     // themselves or others.
     const { data: userData } = useQuery({ queryKey: ["/api/auth/me"] });
     const userRoleName = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
-    const currentRole = ((userData as any)?.role || userRoleName).toLowerCase();
-    const isExecutive = currentRole.includes("executive");
+    const currentRole = String(
+      (userData as any)?.activeRoleId || (userData as any)?.role || userRoleName || "",
+    ).toLowerCase();
+    const canExecuteTasks = roleCanExecutePmsTasks(currentRole);
+    const canAssignTasks = roleCanAssignPmsTasks(currentRole);
     // Product Posting Executive gets a lightweight links-only submission
     // form here instead of the Files modal (dropzone + rich-text detail) —
     // that modal is for IT/SEO-SMM/D&D executives only, per explicit
@@ -381,27 +394,138 @@ export default function PmsTasks() {
     const submittedLinksCountForFinishingTask = (finishingTaskFilesRes?.data || []).filter((f) => !f.fileUrl && f.description).length;
     const linksRequirementMet = !isProductPostingExecutive || requiredLinksCount === 0 || submittedLinksCountForFinishingTask >= requiredLinksCount;
 
+    const filteredProjects = useMemo(() => {
+        const q = projectSearch.trim().toLowerCase();
+        const list = projects.filter((row) => {
+            // Completed projects don't belong on the Task System: either marked
+            // Completed, or every task (old webxl_task_assign + new tasks) is closed.
+            // Projects with no tasks yet stay — they still need assignment.
+            const completed =
+                row.status === "Completed"
+                || (Number(row.totalTasks) > 0 && row.workflowStage === "Closed");
+            if (completed) return false;
+            // Old Task System listed only manager-approved projects (mag_verify = 1).
+            // Not approved and no task yet -> still on the Pending Project page.
+            if (!row.depApproved && !(Number(row.totalTasks) > 0)) return false;
+            if (!q) return true;
+            return (
+                row.company?.toLowerCase().includes(q) ||
+                row.assign?.toLowerCase().includes(q) ||
+                row.project?.toLowerCase().includes(q) ||
+                row.status?.toLowerCase().includes(q)
+            );
+        });
+        return [...list].sort((a, b) => {
+            const tb = a.date ? new Date(a.date).getTime() : 0;
+            const ta = b.date ? new Date(b.date).getTime() : 0;
+            if (ta !== tb) return ta - tb;
+            return String(a.company).localeCompare(String(b.company));
+        });
+    }, [projects, projectSearch]);
+
+    const totalFiltered = filteredProjects.length;
+    const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+    const safePage = Math.min(currentPage, totalPages);
+    const pageStart = totalFiltered === 0 ? 0 : (safePage - 1) * pageSize + 1;
+    const pageEnd = Math.min(safePage * pageSize, totalFiltered);
+    const paginatedProjects = filteredProjects.slice(
+        (safePage - 1) * pageSize,
+        safePage * pageSize,
+    );
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [projectSearch, pageSize]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
+    const projectListControls = (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 py-3 border-b border-gray-100 dark:border-zinc-800">
+            <div className="flex items-center gap-2">
+                <span className="text-[12px] text-[#495057] dark:text-zinc-400">Show</span>
+                <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+                    <SelectTrigger className="h-8 w-[70px] text-[12px]">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                </Select>
+                <span className="text-[12px] text-[#495057] dark:text-zinc-400">entries</span>
+            </div>
+            <div className="flex items-center gap-2">
+                <span className="text-[12px] text-[#495057] dark:text-zinc-400">Search:</span>
+                <Input
+                    type="search"
+                    value={projectSearch}
+                    onChange={(e) => setProjectSearch(e.target.value)}
+                    className="h-8 w-[200px] text-[12px]"
+                    placeholder="Company, person, project…"
+                />
+            </div>
+        </div>
+    );
+
+    const projectListFooter = (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-4 py-3 border-t border-gray-100 text-[12px] text-[#495057] dark:border-zinc-800 dark:text-zinc-400">
+            <div>
+                Showing {pageStart} to {pageEnd} of {totalFiltered} entries
+                {projectSearch ? ` (from ${projects.length})` : ""}
+            </div>
+            <div className="flex items-center gap-2">
+                <span>Page {safePage} of {totalPages}</span>
+                <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-zinc-800">
+                    <button
+                        type="button"
+                        disabled={safePage <= 1}
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        className="px-3 py-1.5 border-r border-gray-200 dark:border-zinc-800 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-zinc-900"
+                    >
+                        Previous
+                    </button>
+                    <button
+                        type="button"
+                        disabled={safePage >= totalPages}
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        className="px-3 py-1.5 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-zinc-900"
+                    >
+                        Next
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+
     return (
         <>
-        <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans flex flex-col dark:bg-zinc-950">
+        <div className="p-4 md:p-6 bg-[#f8f9fc] h-[calc(100vh-64px)] font-sans flex flex-col overflow-hidden dark:bg-zinc-950">
             <h1 className="text-[17px] font-bold text-[#495057] tracking-wide uppercase mb-6 flex-shrink-0 dark:text-zinc-400">
                 TASK SYSTEM
             </h1>
 
-            <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
+            <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0 overflow-hidden">
                 {/* Left: Project List / Sidebar widget */}
-                <div className={`flex flex-col bg-white rounded border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800 transition-all duration-300 min-h-0 ${selectedProjectId ? 'lg:w-[350px] flex-shrink-0' : 'w-full'}`}>
+                <div className={`flex flex-col bg-white rounded border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800 transition-all duration-300 min-h-0 overflow-hidden ${selectedProjectId ? 'lg:w-[min(380px,38vw)] flex-shrink-0' : 'w-full'}`}>
                     <div className="p-4 border-b border-gray-100 font-bold text-[15px] text-[#495057] dark:text-zinc-400 dark:border-zinc-800 flex items-center justify-between">
                         <span>Projects</span>
                         {selectedProjectId && (
                              <button onClick={() => { setSelectedProjectId(null); setIsDetailsModalOpen(false); }} className="text-[12px] text-gray-400 hover:text-gray-600 underline">View Full</button>
                         )}
                     </div>
-                    <div className="flex-1 p-2 lg:p-4 overflow-auto custom-scrollbar">
+                    {projectListControls}
+                    <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
                         {!selectedProjectId ? (
-                            <Table className="w-full border-collapse">
-                                <TableHeader>
-                                    <TableRow className="bg-[#daf1e2] hover:bg-[#daf1e2] border-0 dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                            <div className="p-2 lg:p-4">
+                            <Table className="w-full border-collapse min-w-[900px]">
+                                <TableHeader className="sticky top-0 z-20 shadow-sm">
+                                    <TableRow className="bg-[#daf1e2] hover:bg-[#daf1e2] border-0 dark:bg-zinc-900 dark:hover:bg-zinc-800 [&_th]:bg-[#daf1e2] dark:[&_th]:bg-zinc-900">
                                         <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 first:rounded-l w-[60px] dark:text-zinc-100">No#</TableHead>
                                         <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Company</TableHead>
                                         <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Person</TableHead>
@@ -431,16 +555,16 @@ export default function PmsTasks() {
                                         </button>
                                     </TableCell>
                                 </TableRow>
-                            ) : projects.length === 0 ? (
+                            ) : totalFiltered === 0 ? (
                                 <TableRow>
                                     <TableCell colSpan={8} className="text-center py-10 text-gray-500 dark:text-zinc-400">
                                         No projects found.
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                projects.map((row, idx) => (
+                                paginatedProjects.map((row, idx) => (
                                     <TableRow key={row.id} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors border-b border-gray-50 text-[13px] dark:border-zinc-800">
-                                        <TableCell className="px-4 py-4 font-bold text-gray-500 dark:text-zinc-400">{idx + 1}</TableCell>
+                                        <TableCell className="px-4 py-4 font-bold text-gray-500 dark:text-zinc-400">{(safePage - 1) * pageSize + idx + 1}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-[#495057] text-center dark:text-zinc-400">{row.company}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-emerald-600 text-center">{row.assign || "Not Assigned"}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-gray-600 text-center dark:text-zinc-300">{row.project}</TableCell>
@@ -480,9 +604,10 @@ export default function PmsTasks() {
                             )}
                         </TableBody>
                             </Table>
+                            </div>
                         ) : (
-                            <div className="flex flex-col gap-2">
-                                {projects.map((row, idx) => (
+                            <div className="flex flex-col gap-2 p-2 lg:p-4">
+                                {paginatedProjects.map((row) => (
                                     <div 
                                         key={row.id} 
                                         onClick={() => { setSelectedProjectId(row.id); setIsDetailsModalOpen(true); }}
@@ -504,16 +629,17 @@ export default function PmsTasks() {
                             </div>
                         )}
                     </div>
+                    {projectListFooter}
                 </div>
 
                 {/* Project Details Panel (Right Side) */}
                 {selectedProjectId && (
-                    <div className="flex-1 flex flex-col bg-white rounded border border-gray-100 shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800 h-[calc(100vh-140px)]">
+                    <div className="flex-1 flex flex-col bg-white rounded border border-gray-100 shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800 min-h-0">
                         <div className="p-4 bg-[#f8f9fc] border-b border-gray-100 dark:bg-zinc-900 dark:border-zinc-800 flex justify-between items-center shrink-0">
                             <h2 className="text-[15px] font-bold text-[#495057] uppercase tracking-wider flex items-center gap-3 dark:text-zinc-400">
                                 {selectedProjectInfo?.company || "PROJECT"} - TASKS
                             </h2>
-                            {!isExecutive && (
+                            {canAssignTasks && (
                                 <button
                                     onClick={() => setIsAddTaskFormOpen((v) => !v)}
                                     className="flex items-center gap-1.5 bg-[#00a65a] hover:bg-[#008d4c] text-white px-3 py-1.5 rounded text-[12px] font-bold"
@@ -525,7 +651,7 @@ export default function PmsTasks() {
                         </div>
 
                         <div className="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar">
-                        {!isExecutive && isAddTaskFormOpen && (
+                        {canAssignTasks && isAddTaskFormOpen && (
                             <div className="mb-6 bg-white rounded border border-gray-100 shadow-sm p-5 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-1.5 md:col-span-2">
@@ -615,10 +741,10 @@ export default function PmsTasks() {
                             </div>
                         )}
 
-                        <div className="bg-white rounded border border-gray-100 shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow className="bg-[#e9ebf7] hover:bg-[#e9ebf7] border-0 dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                        <div className="bg-white rounded border border-gray-100 shadow-sm overflow-auto max-h-[min(55vh,640px)] dark:bg-zinc-900 dark:border-zinc-800">
+                            <Table className="min-w-[900px]">
+                                <TableHeader className="sticky top-0 z-20 shadow-sm">
+                                    <TableRow className="bg-[#e9ebf7] hover:bg-[#e9ebf7] border-0 dark:bg-zinc-900 dark:hover:bg-zinc-800 [&_th]:bg-[#e9ebf7] dark:[&_th]:bg-zinc-900">
                                         <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Task No</TableHead>
                                         <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Task</TableHead>
                                         <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Time</TableHead>
@@ -659,11 +785,12 @@ export default function PmsTasks() {
                                                         <span className="text-amber-400 text-2xl">⚠</span>
                                                     </div>
                                                     <p className="text-[14px] font-bold text-gray-500">No Tasks Assigned</p>
-                                                    <p className="text-[12px] text-gray-400">Is project mein koi task assign nahi hai. Add Task se ek task banayein.</p>
+                                                    <p className="text-[12px] text-gray-400">No tasks are assigned to this project yet. Use Add Task to create one.</p>
                                                 </div>
                                             </TableCell>
                                         </TableRow>
                                     ) : displayTasks.map((task: any, idx: number) => {
+                                            const isLegacyTask = !!task.legacyReadOnly;
                                             let assignedMins = 0;
                                             try {
                                                 if (task.notes) {
@@ -725,7 +852,9 @@ export default function PmsTasks() {
                                                         {new Date(task.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
-                                                        {isExecutive ? (
+                                                        {isLegacyTask ? (
+                                                            <span className="text-[10px] font-bold uppercase text-slate-400">Legacy</span>
+                                                        ) : canExecuteTasks ? (
                                                             <button
                                                                 onClick={() => setFilesModalTask(task)}
                                                                 disabled={task.status === 'READY_FOR_QA' || task.status === 'Completed'}
@@ -762,8 +891,11 @@ export default function PmsTasks() {
                                                             </span>
                                                         )}
                                                     </TableCell>
-                                                    {isExecutive && (
+                                                    {canExecuteTasks && (
                                                         <TableCell className="px-6 py-5 text-center">
+                                                            {isLegacyTask ? (
+                                                                <span className="text-[10px] text-slate-400">Read-only</span>
+                                                            ) : (
                                                             <div className="flex items-center justify-center gap-2 relative">
                                                                 {task.status !== 'READY_FOR_QA' && task.status !== 'Completed' && (
                                                                     <>
@@ -825,9 +957,10 @@ export default function PmsTasks() {
                                                                     </button>
                                                                 )}
                                                             </div>
+                                                            )}
                                                         </TableCell>
                                                     )}
-                                                    {!isExecutive && (
+                                                    {!canExecuteTasks && (
                                                         <TableCell className="px-6 py-5 text-center text-[11px] text-gray-400 font-medium">
                                                             View Only
                                                         </TableCell>
@@ -993,7 +1126,7 @@ export default function PmsTasks() {
             {isProductPostingExecutive ? (
                 <AddLinksModal task={filesModalTask} onClose={() => setFilesModalTask(null)} />
             ) : (
-                <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} canUpload={isExecutive} />
+                <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} canUpload={canExecuteTasks} />
             )}
         </div>
         </>
@@ -1100,6 +1233,11 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
     const submitMutation = useMutation({
         mutationFn: async () => {
             const validLinks = links.map((l) => l.trim()).filter(Boolean);
+            const existingForCheck = submittedLinks.map((f) =>
+                (editDrafts[f.id] ?? f.description ?? "").trim(),
+            ).filter(Boolean);
+            const dupMsg = validateUniqueTaskLinks(validLinks, existingForCheck);
+            if (dupMsg) throw new Error(dupMsg);
             for (const link of validLinks) {
                 const form = new FormData();
                 form.append("description", link);
@@ -1108,6 +1246,7 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [`/api/tasks/${taskId}/files`] });
+            queryClient.invalidateQueries({ queryKey: ["project-tasks-direct"] });
             setLinks([""]);
             toast({ title: "Sent", description: "Your links were submitted." });
         },
@@ -1123,6 +1262,9 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
                 return draft && draft !== (f.description || "").trim();
             });
             if (changes.length === 0) throw new Error("No link changes to save.");
+            const allAfterEdit = submittedLinks.map((f) => (editDrafts[f.id] || f.description || "").trim()).filter(Boolean);
+            const dupMsg = assertAllTaskLinksUnique(allAfterEdit);
+            if (dupMsg) throw new Error(dupMsg);
             for (const f of changes) {
                 await apiRequestJson("PATCH", `/api/tasks/${taskId}/files/${f.id}`, {
                     description: (editDrafts[f.id] || "").trim(),
@@ -1132,6 +1274,7 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
         },
         onSuccess: (count) => {
             queryClient.invalidateQueries({ queryKey: [`/api/tasks/${taskId}/files`] });
+            queryClient.invalidateQueries({ queryKey: ["project-tasks-direct"] });
             toast({
                 title: "Links updated",
                 description: `${count} link(s) saved. Re-submit the task when ready — updated links need QA approval again.`,

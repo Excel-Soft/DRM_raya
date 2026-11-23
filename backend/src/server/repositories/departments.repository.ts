@@ -35,9 +35,9 @@ export interface DepartmentInput {
 
 class DepartmentsRepository {
   async list(includeInactive: boolean): Promise<Department[]> {
-    const where = includeInactive ? "deleted_at IS NULL" : "deleted_at IS NULL AND is_active = true";
+    const where = includeInactive ? "true" : "is_active = true";
     const { rows } = await pool.query(
-      `SELECT id, code, name, is_active, sort_order, created_by, updated_by, created_at, updated_at
+      `SELECT id, code, name, is_active, sort_order, created_at, updated_at
        FROM drm.departments
        WHERE ${where}
        ORDER BY sort_order ASC, name ASC`,
@@ -47,9 +47,9 @@ class DepartmentsRepository {
 
   async findByName(name: string): Promise<Department | null> {
     const { rows } = await pool.query(
-      `SELECT id, code, name, is_active, sort_order, created_by, updated_by, created_at, updated_at
+      `SELECT id, code, name, is_active, sort_order, created_at, updated_at
        FROM drm.departments
-       WHERE deleted_at IS NULL AND lower(name) = lower($1)
+       WHERE lower(name) = lower($1)
        LIMIT 1`,
       [name],
     );
@@ -58,43 +58,54 @@ class DepartmentsRepository {
 
   async findByCode(code: string): Promise<Department | null> {
     const { rows } = await pool.query(
-      `SELECT id, code, name, is_active, sort_order, created_by, updated_by, created_at, updated_at
+      `SELECT id, code, name, is_active, sort_order, created_at, updated_at
        FROM drm.departments
-       WHERE deleted_at IS NULL AND lower(code) = lower($1)
+       WHERE lower(code) = lower($1)
        LIMIT 1`,
       [code],
     );
     return rows[0] ? mapRow(rows[0]) : null;
   }
 
-  async create(data: DepartmentInput, userId: string | null): Promise<Department> {
+  async create(data: DepartmentInput, _userId: string | null): Promise<Department> {
     const { rows } = await pool.query(
-      `INSERT INTO drm.departments (code, name, is_active, sort_order, created_by, updated_by)
-       VALUES ($1, $2, COALESCE($3, true), COALESCE($4, 0), $5, $5)
-       RETURNING id, code, name, is_active, sort_order, created_by, updated_by, created_at, updated_at`,
-      [data.code.trim(), data.name.trim(), data.isActive, data.sortOrder, userId],
+      `INSERT INTO drm.departments (code, name, is_active, sort_order)
+       VALUES ($1, $2, COALESCE($3, true), COALESCE($4, 0))
+       RETURNING id, code, name, is_active, sort_order, created_at, updated_at`,
+      [data.code.trim(), data.name.trim(), data.isActive, data.sortOrder],
     );
     return mapRow(rows[0]);
   }
 
-  async update(id: string, data: Partial<DepartmentInput>, userId: string | null): Promise<Department | null> {
+  async update(id: string, data: Partial<DepartmentInput>, _userId: string | null): Promise<Department | null> {
     const fields: string[] = [];
     const params: any[] = [];
     let i = 1;
-    if (data.code !== undefined) { fields.push(`code = $${i++}`); params.push(data.code.trim()); }
-    if (data.name !== undefined) { fields.push(`name = $${i++}`); params.push(data.name.trim()); }
-    if (data.isActive !== undefined) { fields.push(`is_active = $${i++}`); params.push(data.isActive); }
-    if (data.sortOrder !== undefined) { fields.push(`sort_order = $${i++}`); params.push(data.sortOrder); }
-    fields.push(`updated_by = $${i++}`); params.push(userId);
+    if (data.code !== undefined) {
+      fields.push(`code = $${i++}`);
+      params.push(data.code.trim());
+    }
+    if (data.name !== undefined) {
+      fields.push(`name = $${i++}`);
+      params.push(data.name.trim());
+    }
+    if (data.isActive !== undefined) {
+      fields.push(`is_active = $${i++}`);
+      params.push(data.isActive);
+    }
+    if (data.sortOrder !== undefined) {
+      fields.push(`sort_order = $${i++}`);
+      params.push(data.sortOrder);
+    }
     fields.push(`updated_at = now()`);
 
-    if (fields.length === 0) return this.findById(id);
+    if (fields.length === 1) return this.findById(id);
 
     params.push(id);
     const { rows } = await pool.query(
       `UPDATE drm.departments SET ${fields.join(", ")}
-       WHERE id = $${i} AND deleted_at IS NULL
-       RETURNING id, code, name, is_active, sort_order, created_by, updated_by, created_at, updated_at`,
+       WHERE id = $${i}
+       RETURNING id, code, name, is_active, sort_order, created_at, updated_at`,
       params,
     );
     return rows[0] ? mapRow(rows[0]) : null;
@@ -102,19 +113,15 @@ class DepartmentsRepository {
 
   async findById(id: string): Promise<Department | null> {
     const { rows } = await pool.query(
-      `SELECT id, code, name, is_active, sort_order, created_by, updated_by, created_at, updated_at
-       FROM drm.departments WHERE id = $1 AND deleted_at IS NULL`,
+      `SELECT id, code, name, is_active, sort_order, created_at, updated_at
+       FROM drm.departments WHERE id = $1`,
       [id],
     );
     return rows[0] ? mapRow(rows[0]) : null;
   }
 
-  async softDelete(id: string, userId: string | null): Promise<boolean> {
-    const { rowCount } = await pool.query(
-      `UPDATE drm.departments SET deleted_at = now(), updated_by = $2, updated_at = now()
-       WHERE id = $1 AND deleted_at IS NULL`,
-      [id, userId],
-    );
+  async softDelete(id: string, _userId: string | null): Promise<boolean> {
+    const { rowCount } = await pool.query(`DELETE FROM drm.departments WHERE id = $1`, [id]);
     return (rowCount ?? 0) > 0;
   }
 

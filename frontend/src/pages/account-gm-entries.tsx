@@ -19,7 +19,7 @@ import {
 import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { apiRequest, queryClient, mutationRequest } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, queryClient, mutationRequest } from "@/lib/queryClient";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -105,9 +105,40 @@ const packageTypes = ["Basic", "Basic Plus", "Kwa", "Kwa-Pro", "GG6 Pro", "Verif
 const entryTypes = ["New", "Rc", "Rc-Up", "Renewal", "Upgrade", "Downgrade"];
 
 // ─── type badge colors ─────────────────────────────────────────────────────
+// Old DRM stored the GM type (renwal) as a number: 1 New, 0 Rc, 2 Ec, 3 Rc-Up, 4 Kwa, else None.
+const GM_TYPE_BY_CODE: Record<string, string> = { "1": "New", "0": "Rc", "2": "Ec", "3": "Rc-Up", "4": "Kwa" };
+function gmTypeLabel(raw: unknown): string {
+  const v = String(raw ?? "").trim();
+  if (v === "") return "None";
+  if (/^\d+$/.test(v)) return GM_TYPE_BY_CODE[v] ?? "None";
+  return v; // new entries already store the label (New, Rc, Rc-Up, ...)
+}
+
+// Old DRM colours: payment status (Cash Received green, Online Paid amber, else grey),
+// Alibaba (Yes green, No grey, anything else = Pending amber).
+const PAYMENT_STATUS_BG = (s: string) =>
+  s === "Cash Received" ? "bg-emerald-500 text-white" : s === "Online Paid" ? "bg-amber-500 text-white" : "bg-slate-400 text-white";
+function alibabaBadge(raw: unknown): { label: string; cls: string } {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (v === "yes") return { label: "Yes", cls: "bg-emerald-500 text-white" };
+  if (v === "no") return { label: "No", cls: "bg-slate-400 text-white" };
+  return { label: "Pending", cls: "bg-amber-500 text-white" };
+}
+
+// Old DRM: discount shown with its share of the package price, e.g. "$ 140.00 (7%)".
+function discountPct(amount: unknown, packagePrice: unknown) {
+  const a = Number(amount) || 0;
+  const p = Number(packagePrice) || 0;
+  if (!p) return null;
+  return <span className="ml-1 text-[10px] text-slate-400">({Math.round((a / p) * 100)}%)</span>;
+}
+
 const typeBg: Record<string, string> = {
   New: "bg-green-500 text-white",
   Rc: "bg-blue-500 text-white",
+  Ec: "bg-teal-500 text-white",
+  Kwa: "bg-pink-500 text-white",
+  None: "bg-slate-400 text-white",
   "Rc-Up": "bg-indigo-500 text-white",
   Renewal: "bg-purple-500 text-white",
   Upgrade: "bg-orange-500 text-white",
@@ -221,7 +252,11 @@ export default function AccountGmEntries() {
   }, [orderIdInput, acctGmDupCheck?.orderIdExists]);
 
   // ── Queries ───────────────────────────────────────────────────────────────
-  const { data: rawData, isLoading } = useQuery<{ data: any[] }>({ queryKey: ["/api/gm-pool"] });
+  // all=1: every GM entry (old DRM + new) - tabs/paging below are client-side.
+  const { data: rawData, isLoading } = useQuery<{ data: any[] }>({
+    queryKey: ["/api/gm-pool", "all"],
+    queryFn: () => apiRequestJson("GET", "/api/gm-pool?all=1"),
+  });
   const { data: allUsers } = useQuery<{ users: User[] }>({ queryKey: ["/api/users"] });
 
   const { data: teamMembersData, refetch: refetchTeam } = useQuery({
@@ -292,7 +327,7 @@ export default function AccountGmEntries() {
     ...e,
     companyName: e.company || e.companyName,
     packageType: e.package || e.packageType,
-    entryType: e.type || e.entryType,
+    entryType: gmTypeLabel(e.type ?? e.entryType),
     amountUsd: e.orderDollar || e.amountUsd,
     amountPkr: e.pkr || e.amountPkr,
     accountManagerStatus: e.accountManagerStatus,
@@ -308,9 +343,17 @@ export default function AccountGmEntries() {
     paymentProofUrl: e.paymentProofUrl || e.payment_proof_url,
     payDate: e.paymentDate || e.payDate || e.pay_date,
     createdAt: e.createdAt || e.created_at,
+    // is_loan / is_partial_payment are 0/1 integers in the DB. As raw numbers,
+    // `{entry.isLoan && <Badge/>}` rendered a literal "0" (the "000" glued to every
+    // DRM ID and the stray "0" in Action) - always booleans from here on.
+    isLoan: e.isLoan === true || Number(e.isLoan) === 1,
+    isPartialPayment: e.isPartialPayment === true || Number(e.isPartialPayment) === 1,
   }));
 
   const isVisibleStatus = (e: GmEntry) => {
+    // Only entries still waiting on Alibaba (Alibaba Status = Pending) are listed in the
+    // Full / Loan / Partial tabs; once Alibaba is Yes/No the entry leaves this page.
+    if (alibabaBadge(e.alibabaStatus).label !== "Pending") return false;
     const isApproved = e.status === "Approved" || e.accountManagerStatus === "approved" || (e.approvalStatus === "pending_managers" && e.accountManagerStatus === "pending");
     const isHodRejected = e.hodStatus === "rejected";
     const isAcctRejected = e.accountManagerStatus === "rejected";
@@ -367,6 +410,8 @@ export default function AccountGmEntries() {
 
   const availableUsers = (allUsers?.users || [])
     .filter(u => u.id !== teamManager?.id && !teamMembers.find(m => m.id === u.id))
+    // Disabled profiles (role 54 "Deactive") can't be added to a team.
+    .filter(u => !(u as any).isDeactive)
     .filter(u => {
       if (!memberSearch) return true;
       const s = memberSearch.toLowerCase();
@@ -399,16 +444,7 @@ export default function AccountGmEntries() {
         <h1 className="text-lg font-bold text-gray-800 tracking-wide dark:text-zinc-100">
           CREATE GM <span className="text-gray-400 font-light">/ </span>
         </h1>
-        <div className="flex items-center gap-2">
-
-          <button
-            onClick={() => setDialogOpen(true)}
-            className="flex items-center gap-1.5 text-sm bg-green-600 text-white rounded px-3 py-1 hover:bg-green-700 transition-colors"
-          >
-            <Plus className="h-4 w-4" />
-            Add GM Entry
-          </button>
-        </div>
+        {/* "Add GM Entry" button removed on request (GM entries are added from the sales flow). */}
       </div>
 
       {/* ── Top Tabs: Full GM | LOAN GM | Partial GM ── */}
@@ -575,12 +611,19 @@ export default function AccountGmEntries() {
                       <span className="text-slate-400">—</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap text-slate-600">{fmtUsd(entry.abDiscount) || entry.discount || "—"}</td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap text-slate-600">{fmtUsd(entry.extraDiscount) || "—"}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap text-slate-600">{fmtUsd(entry.abDiscount) || entry.discount || "—"}{discountPct(entry.abDiscount, entry.packagePrice)}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap text-slate-600">{fmtUsd(entry.extraDiscount) || "—"}{discountPct(entry.extraDiscount, entry.packagePrice)}</td>
                   <td className="px-3 py-2 text-right whitespace-nowrap text-slate-600">{fmtPkr(entry.extraDiscountPkr) || "—"}</td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap font-medium text-slate-700">{fmtUsd(entry.totalDiscount) || "—"}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap font-medium text-slate-700">{fmtUsd(entry.totalDiscount) || "—"}{discountPct(entry.totalDiscount, entry.packagePrice)}</td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     {(() => {
+                      // Old-DRM entries (status Completed/Pending) show their payment status
+                      // (Cash Received / Online Paid / Customer Paid) like the old page.
+                      // (old webxl_verify_gm.status - never the Alibaba "Yes"/account pay status)
+                      const legacy = String((entry as any).legacyStatus ?? "").trim();
+                      if (legacy) {
+                        return <span className={`text-[10px] font-bold px-2 py-1 rounded-full shadow-sm ${PAYMENT_STATUS_BG(legacy)}`}>{legacy}</span>;
+                      }
                       const s = entry.status;
                       const isAcctRejected = s === "Account Rejected" || s === "Rejected";
                       const label = isAcctRejected ? "Account Rejected" : (s || "—");
@@ -605,10 +648,19 @@ export default function AccountGmEntries() {
                     {fmtStatusLabel(entry.hodStatus)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-slate-600 capitalize">
-                    {fmtStatusLabel(entry.alibabaStatus)}
+                    {(() => {
+                      const b = alibabaBadge(entry.alibabaStatus);
+                      return <span className={`text-[10px] font-bold px-2 py-1 rounded-full shadow-sm ${b.cls}`}>{b.label}</span>;
+                    })()}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-slate-600">
-                    {entry.payDate ? new Date(entry.payDate).toLocaleDateString() : "—"}
+                    {/* old DRM: d-m-Y, or a grey "Waiting" badge when not paid yet */}
+                    {(() => {
+                      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(entry.payDate ?? ""));
+                      return m ? `${m[3]}-${m[2]}-${m[1]}` : (
+                        <span className="text-[10px] font-bold px-2 py-1 rounded-full shadow-sm bg-slate-400 text-white">Waiting</span>
+                      );
+                    })()}
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1.5">
@@ -639,15 +691,7 @@ export default function AccountGmEntries() {
                           <Wallet className="h-4 w-4" />
                         </button>
                       )}
-                      {entry.isLoan && (
-                        <button
-                          onClick={() => { setStage3Entry(entry); setLoanDialogOpen(true); }}
-                          className="text-amber-600 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 p-1.5 rounded-md transition-colors"
-                          title="Loan terms & admin approval"
-                        >
-                          <Landmark className="h-4 w-4" />
-                        </button>
-                      )}
+                      {/* Loan terms (bank) button removed from the LOAN GM tab on request. */}
                       {/* ── Normal actions ── */}
                       <button onClick={() => handleViewEntry(entry)} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 p-1.5 rounded-md transition-colors" title="View">
                         <Eye className="h-4 w-4" />

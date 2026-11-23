@@ -39,7 +39,9 @@ import {
   BarChart3,
   Target,
   XCircle,
-  Loader2
+  Loader2,
+  Eye,
+  Receipt
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -59,7 +61,7 @@ import {
   Pie,
   Cell
 } from "recharts";
-import { apiRequest, getAuthHeader, extractApiError } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, getAuthHeader, extractApiError } from "@/lib/queryClient";
 import { downloadAuthedFile } from "@/lib/download";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
 import {
@@ -69,6 +71,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type ReportType = "loan" | "vas" | "gm" | "bv";
 
@@ -92,6 +96,7 @@ interface ChartDataPoint {
 
 interface LoanDetail {
   id: string;
+  userId?: string | null;
   employeeName: string;
   amount: number | string;
   detail: string;
@@ -112,6 +117,7 @@ interface ReportData {
   totals?: {
     totalAdvance: number;
     totalRemaining: number;
+    totalRepaid?: number;
   };
 }
 
@@ -413,7 +419,7 @@ function GmReportTable({
                       <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.bvSubmitDate}</TableCell>
                       <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.bvDate}</TableCell>
                       <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.person}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.rcNew}</TableCell>
+                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{gmTypeLabel(item.rcNew)}</TableCell>
                       <TableCell className="text-slate-600 py-3 dark:text-zinc-300">
                         {item.date ? new Date(item.date).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '') : "-"}
                       </TableCell>
@@ -478,21 +484,184 @@ const BV_TYPE_OPTIONS = [
 // inherently per-individual). A standalone component because each person
 // needs its own useQuery/useMutation instances, which can't live in a loop
 // inside the parent.
+// BV Report "Comm" cell: admin / HOD / Account can override the commission for a GM
+// (old DRM finalComm). Saved on the GM; ↺ clears it back to the computed value.
+function EditableCommCell({ item, canEdit }: { item: any; canEdit: boolean }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const gmId = item?.gmEntryId as string | undefined;
+  const save = useMutation({
+    mutationFn: async (comm: number | null) => {
+      const res = await apiRequest("PATCH", `/api/reports/bv/comm/${gmId}`, { comm });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
+    },
+    onSuccess: () => {
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/reports"] });
+      toast({ title: "Commission updated" });
+    },
+    onError: (err: any) => toast({ title: "Could not update commission", description: err?.message, variant: "destructive" }),
+  });
+  const shown = item?.comm ?? "-";
+  if (!canEdit || !gmId) return <>{typeof shown === "number" ? shown.toLocaleString() : shown}</>;
+  if (editing) {
+    const submit = () => {
+      const n = Number(value);
+      if (value.trim() === "" || !Number.isFinite(n) || n < 0) {
+        toast({ title: "Enter a commission of 0 or more", variant: "destructive" });
+        return;
+      }
+      save.mutate(n);
+    };
+    return (
+      <div className="flex items-center justify-center gap-1">
+        <input
+          autoFocus
+          type="number"
+          min={0}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          className="w-20 h-7 rounded border border-slate-300 px-1 text-center text-sm dark:border-zinc-700 dark:bg-zinc-900"
+          disabled={save.isPending}
+        />
+        <button type="button" title="Save" className="text-emerald-600 font-bold" disabled={save.isPending} onClick={submit}>✓</button>
+        <button type="button" title="Cancel" className="text-slate-400" onClick={() => setEditing(false)}>✕</button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-center gap-1">
+      <button
+        type="button"
+        title="Edit commission"
+        className={`rounded px-1 hover:bg-emerald-50 hover:underline dark:hover:bg-zinc-800 ${item?.commEdited ? "font-semibold text-amber-600" : ""}`}
+        onClick={() => { setValue(String(item?.comm ?? "")); setEditing(true); }}
+      >
+        {typeof shown === "number" ? shown.toLocaleString() : shown}
+      </button>
+      {item?.commEdited && (
+        <button type="button" title="Reset to computed commission" className="text-xs text-slate-400 hover:text-slate-700"
+          disabled={save.isPending} onClick={() => save.mutate(null)}>↺</button>
+      )}
+    </div>
+  );
+}
+
+// Old DRM BV report footer (func.php user_id_gm_bv_view <tfoot>) for one
+// selected user — computed by the backend (getBvCompanyLegacyReport).
+type BvLegacyFooter = {
+  personId: string;
+  targetName: string | null;
+  achieved: number;
+  targetQuota: number;
+  teamTotal: number;
+  achievePct: number;
+  rewardOverride: number | null;
+  rewardInFinal: boolean;
+  rcRate: number;
+};
+
+type BvPersonTotals = {
+  comm: number;
+  reward: number;
+  price: number;
+  extraDisc: number;
+  vas: number;
+  kwa: number;
+  rcCount: number;
+};
+
+// Status flow: Verified by HOD -> Pending acknowledgement -> Acknowledged -> Paid.
+/** Old func.php status text for a webxl_vas_comm_final row. */
+function legacyCommStatusText(r: any): string {
+  if (r?.hodStatus === "Approved" && r?.userStatus === "Verified") return "Already Created";
+  if (r?.hodStatus === "Approved") return "Sale Person Side Pending";
+  return "Not Create By Hod";
+}
+
+function BvCommissionStatus({ record }: { record: any }) {
+  if (record?.legacy) {
+    const text = legacyCommStatusText(record);
+    return (
+      <span className="flex flex-wrap items-center gap-1">
+        <Badge className={text === "Already Created" ? "bg-emerald-600 text-white hover:bg-emerald-600" : "bg-amber-500 text-white hover:bg-amber-500"}>
+          Status: {text}
+        </Badge>
+        {record.accountPayStatus === "Paid" && (
+          <Badge className="bg-green-700 text-white hover:bg-green-700">Paid</Badge>
+        )}
+      </span>
+    );
+  }
+  const acknowledged = record.userStatus === "Confirmed" || record.userStatus === "Verified";
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Verified by HOD</Badge>
+      {acknowledged ? (
+        <Badge className="bg-sky-600 text-white hover:bg-sky-600">Acknowledged</Badge>
+      ) : (
+        <Badge className="bg-amber-500 text-white hover:bg-amber-500">Pending acknowledgement</Badge>
+      )}
+      {record.accountPayStatus === "Paid" ? (
+        <Badge className="bg-green-700 text-white hover:bg-green-700">
+          Paid {Number(record.finalPayAmount ?? 0).toLocaleString()}
+        </Badge>
+      ) : acknowledged ? (
+        <Badge variant="outline">Payment pending</Badge>
+      ) : null}
+    </span>
+  );
+}
+
+/** Old KWA footer: the month's 'Service' commission row from webxl_vas_comm_final. */
+function KwaServiceCommStatus({ personId, dateFrom }: { personId: string; dateFrom: string }) {
+  const d = new Date(dateFrom);
+  const month = d.getMonth() + 1;
+  const year = d.getFullYear();
+  const { data } = useQuery<any>({
+    queryKey: ["/api/bv-commission-verifications", "service", personId, month, year],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/bv-commission-verifications?userId=${personId}&month=${month}&year=${year}`);
+      if (!res.ok) return null;
+      return (await res.json()).legacyService ?? null;
+    },
+  });
+  if (!data) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-3 px-4 pt-3 text-sm">
+      <span className="font-bold">Service Com: {Number(data.finalPayAmount ?? 0).toLocaleString()}</span>
+      <BvCommissionStatus record={data} />
+    </div>
+  );
+}
+
 function BvCommissionPanelRow({
   personId,
   personName,
   totals,
   achievement,
+  footer,
   commPeriod,
   canManage,
+  canPay,
   currentUserId,
 }: {
   personId: string;
   personName: string;
-  totals: { comm: number; reward: number };
+  totals: BvPersonTotals;
   achievement?: { targetName: string; targetQuota: number | null; achievedCount: number };
+  footer?: BvLegacyFooter | null;
   commPeriod: { month: number; year: number };
   canManage: boolean;
+  canPay: boolean;
   currentUserId?: string;
 }) {
   const queryClient = useQueryClient();
@@ -503,6 +672,7 @@ function BvCommissionPanelRow({
   // the computed totals, not something derivable from the sale rows.
   const [abRewardInput, setAbRewardInput] = useState("");
   const [rewardCommentInput, setRewardCommentInput] = useState("");
+  const [payInput, setPayInput] = useState("");
 
   const { data: commRecord, isLoading: commLoading } = useQuery<any>({
     queryKey,
@@ -516,6 +686,14 @@ function BvCommissionPanelRow({
     },
   });
 
+  // Old footer: Reward = column sum unless the target-reached override applies;
+  // Final Com = Comm (current, incl. edited cells) + Reward only when the
+  // target was reached (P >= T), + the HOD-typed Reward AB.
+  const reward = footer ? (footer.rewardOverride ?? totals.reward) : totals.reward;
+  const rewardForFinal = footer ? (footer.rewardInFinal ? reward : 0) : totals.reward;
+  const abReward = Number(abRewardInput) || 0;
+  const finalCom = totals.comm + rewardForFinal + abReward;
+
   const createCommMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/bv-commission-verifications", {
@@ -523,7 +701,8 @@ function BvCommissionPanelRow({
         month: commPeriod.month,
         year: commPeriod.year,
         totalComm: totals.comm,
-        totalReward: totals.reward,
+        // Server stores final = totalComm + totalReward + abReward.
+        totalReward: rewardForFinal,
         abReward: abRewardInput.trim() ? Number(abRewardInput) : undefined,
         rewardComment: rewardCommentInput.trim() || undefined,
       });
@@ -533,7 +712,7 @@ function BvCommissionPanelRow({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
-      toast({ title: "Commission verified", description: `Commission record created for ${personName}.` });
+      toast({ title: "Commission verified", description: `Sent to ${personName} for acknowledgement.` });
     },
     onError: (err: any) => {
       toast({ title: "Failed to verify", description: err?.message || "Could not create the commission record", variant: "destructive" });
@@ -549,82 +728,149 @@ function BvCommissionPanelRow({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
-      toast({ title: "Confirmed", description: "Commission confirmed." });
+      queryClient.invalidateQueries({ queryKey: ["/api/bv-commission-verifications/pending-mine"] });
+      toast({ title: "Acknowledged", description: "Commission acknowledged." });
     },
     onError: (err: any) => {
-      toast({ title: "Failed to confirm", description: err?.message || "Could not confirm", variant: "destructive" });
+      toast({ title: "Failed to acknowledge", description: err?.message || "Could not acknowledge", variant: "destructive" });
+    },
+  });
+
+  const payMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/bv-commission-verifications/${commRecord?.id}/pay`, {
+        finalPayAmount: payInput.trim() ? Number(payInput) : undefined,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: "Marked as paid" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to mark as paid", description: err?.message || "Could not update", variant: "destructive" });
     },
   });
 
   const isSelf = currentUserId === personId;
+  const isLegacyRec = !!commRecord?.legacy;
+  const acknowledged = commRecord && !isLegacyRec && (commRecord.userStatus === "Confirmed" || commRecord.userStatus === "Verified");
 
+  const actions = commLoading ? (
+    <span className="text-xs text-muted-foreground">Loading commission status...</span>
+  ) : commRecord ? (
+    <>
+      <span className="font-bold">Final Com: {Number(commRecord.finalPayAmount ?? commRecord.totalComm).toLocaleString()}</span>
+      {commRecord.abReward != null && (
+        <span className="font-bold">AB Reward: {Number(commRecord.abReward).toLocaleString()}</span>
+      )}
+      {commRecord.rewardComment && (
+        <span className="text-muted-foreground">Reward Comment: {commRecord.rewardComment}</span>
+      )}
+      <BvCommissionStatus record={commRecord} />
+      {!acknowledged && !isLegacyRec && isSelf && (
+        <Button size="sm" onClick={() => confirmCommMutation.mutate()} disabled={confirmCommMutation.isPending}>
+          Acknowledge
+        </Button>
+      )}
+      {acknowledged && commRecord.accountPayStatus !== "Paid" && canPay && (
+        <>
+          <Input
+            type="number"
+            min={0}
+            placeholder={String(Number(commRecord.finalPayAmount ?? 0))}
+            value={payInput}
+            onChange={(e) => setPayInput(e.target.value)}
+            className="h-8 w-28 text-xs"
+          />
+          <Button
+            size="sm"
+            className="bg-green-700 hover:bg-green-800 text-white"
+            onClick={() => payMutation.mutate()}
+            disabled={payMutation.isPending}
+          >
+            Pay
+          </Button>
+        </>
+      )}
+    </>
+  ) : canManage ? (
+    achievement || footer ? (
+      <>
+        <span className="font-bold">Reward AB</span>
+        <Input
+          type="number"
+          placeholder="0"
+          value={abRewardInput}
+          onChange={(e) => setAbRewardInput(e.target.value)}
+          className="h-8 w-28 text-xs"
+        />
+        <Input
+          placeholder="Enter Reward Description"
+          value={rewardCommentInput}
+          onChange={(e) => setRewardCommentInput(e.target.value)}
+          className="h-8 w-48 text-xs"
+        />
+        <span className="font-bold">Final Com: {finalCom.toLocaleString()}</span>
+        <Button size="sm" onClick={() => createCommMutation.mutate()} disabled={createCommMutation.isPending}>
+          Verify
+        </Button>
+      </>
+    ) : (
+      <span className="text-xs text-muted-foreground">
+        Commission can't be verified until a target is assigned to this salesperson (Set Target).
+      </span>
+    )
+  ) : (
+    <>
+      <span className="font-bold">Final Com: {finalCom.toLocaleString()}</span>
+      <span className="text-xs text-muted-foreground">Not yet verified by HOD/Account.</span>
+    </>
+  );
+
+  const cell = "text-center font-bold text-black dark:text-zinc-300";
   return (
-    <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
-      <TableCell colSpan={18}>
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <span className="font-bold">{personName}:</span>
-          {achievement ? (
-            <span className="text-muted-foreground">
-              Target ({achievement.targetName}): {achievement.achievedCount}/{achievement.targetQuota ?? "-"}
-              {achievement.targetQuota ? ` (${Math.round((achievement.achievedCount / achievement.targetQuota) * 100)}%)` : ""}
-            </span>
-          ) : (
-            <span className="text-xs text-muted-foreground">No target assigned</span>
-          )}
-          {commLoading ? (
-            <span className="text-xs text-muted-foreground">Loading commission status...</span>
-          ) : commRecord ? (
-            <>
-              <span className="font-bold">
-                Final Com: {Number(commRecord.finalPayAmount ?? commRecord.totalComm).toLocaleString()}
-              </span>
-              {commRecord.abReward != null && (
-                <span className="font-bold">AB Reward: {Number(commRecord.abReward).toLocaleString()}</span>
-              )}
-              {commRecord.rewardComment && (
-                <span className="text-muted-foreground">Reward Comment: {commRecord.rewardComment}</span>
-              )}
-              {commRecord.userStatus === "Verified" ? (
-                <Badge className="bg-green-600 text-white hover:bg-green-600">Verified</Badge>
-              ) : isSelf ? (
-                <Button size="sm" onClick={() => confirmCommMutation.mutate()} disabled={confirmCommMutation.isPending}>
-                  Confirm
-                </Button>
+    <>
+      {footer && (
+        // Same cells as the old footer, under the matching columns.
+        <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
+          <TableCell className="font-bold text-black dark:text-zinc-300 whitespace-nowrap" title="Achieved / target / team new sales">
+            T.No# {footer.achieved}/{Math.round(footer.targetQuota * 10) / 10}/{footer.teamTotal}
+          </TableCell>
+          <TableCell className="font-bold text-black dark:text-zinc-300">Achive ({footer.achievePct}%)</TableCell>
+          <TableCell className="font-bold text-black dark:text-zinc-300">Team# {footer.teamTotal}</TableCell>
+          <TableCell className={cell}>{totals.price.toLocaleString()}</TableCell>
+          <TableCell className={cell}>{(Math.round(totals.extraDisc * 100) / 100).toLocaleString()}</TableCell>
+          <TableCell className={cell}>{totals.comm.toLocaleString()}</TableCell>
+          <TableCell className={cell}>{reward.toLocaleString()}</TableCell>
+          <TableCell className={cell}>{totals.vas.toLocaleString()}</TableCell>
+          <TableCell className={cell}>{totals.kwa.toLocaleString()}</TableCell>
+          <TableCell className={cell}>Total Rc</TableCell>
+          <TableCell className={cell}>{totals.rcCount}x {footer.rcRate.toLocaleString()}</TableCell>
+          <TableCell className={cell}>{(totals.rcCount * footer.rcRate).toLocaleString()}</TableCell>
+          <TableCell colSpan={6}></TableCell>
+        </TableRow>
+      )}
+      <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
+        <TableCell colSpan={18}>
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="font-bold">{personName}:</span>
+            {!footer &&
+              (achievement ? (
+                <span className="text-muted-foreground">
+                  Target ({achievement.targetName}): {achievement.achievedCount}/{achievement.targetQuota ?? "-"}
+                  {achievement.targetQuota ? ` (${Math.round((achievement.achievedCount / achievement.targetQuota) * 100)}%)` : ""}
+                </span>
               ) : (
-                <Badge className="bg-red-500 text-white hover:bg-red-500">Sale Person Side Pending</Badge>
-              )}
-            </>
-          ) : canManage ? (
-            achievement ? (
-              <>
-                <Input
-                  type="number"
-                  placeholder="AB Reward"
-                  value={abRewardInput}
-                  onChange={(e) => setAbRewardInput(e.target.value)}
-                  className="h-8 w-28 text-xs"
-                />
-                <Input
-                  placeholder="Enter Reward Description"
-                  value={rewardCommentInput}
-                  onChange={(e) => setRewardCommentInput(e.target.value)}
-                  className="h-8 w-48 text-xs"
-                />
-                <Button size="sm" onClick={() => createCommMutation.mutate()} disabled={createCommMutation.isPending}>
-                  Verify (Final Com: {(totals.comm + totals.reward + (Number(abRewardInput) || 0)).toLocaleString()})
-                </Button>
-              </>
-            ) : (
-              <span className="text-xs text-muted-foreground">
-                Commission can't be verified until a target is assigned to this salesperson (Set Target).
-              </span>
-            )
-          ) : (
-            <span className="text-xs text-muted-foreground">Not yet created by HOD/Account.</span>
-          )}
-        </div>
-      </TableCell>
-    </TableRow>
+                <span className="text-xs text-muted-foreground">No target assigned</span>
+              ))}
+            {actions}
+          </div>
+        </TableCell>
+      </TableRow>
+    </>
   );
 }
 
@@ -632,6 +878,7 @@ function BvReportTable({
   details,
   totals,
   personAchievement,
+  footer,
   dateRange,
   onDateChange,
   selectedUser,
@@ -641,6 +888,7 @@ function BvReportTable({
   details: any[];
   totals?: any;
   personAchievement?: { personId: string; targetName: string; targetQuota: number | null; achievedCount: number }[];
+  footer?: BvLegacyFooter | null;
   dateRange: { from: string; to: string };
   onDateChange: (field: "from" | "to", value: string) => void;
   selectedUser: string;
@@ -692,19 +940,17 @@ function BvReportTable({
   // before — same single shared component, no duplicate page.
   const activeRole = sessionStorage.getItem("userRole") ?? (currentUser as any)?.roleId;
   const canSelectUser = scope === "company" && (isManagerialRole(activeRole) || isCompanyWideRole(activeRole));
+  // BV commission workflow: only HOD / Admin / Account verify (Reward AB +
+  // Verify); only Account / Admin mark an acknowledged commission as paid.
+  const canVerifyComm = scope === "company" && isCompanyWideRole(activeRole);
+  const canPayComm = scope === "company" && ["admin", "super_admin", "account_manager"].includes(normalizeRole(activeRole));
+  // BV commission edit (old finalComm): admin / Super HOD / HOD / Account — the API checks the same.
+  const canEditComm = scope === "company" &&
+    ["admin", "super_admin", "super_hod", "hod", "account_manager"].includes(String(activeRole || "").toLowerCase().replace(/[\s-]+/g, "_"));
 
   // Same role-grouping convention as the VAS/GM Select User pickers.
-  const groupedUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    (allUsers || []).forEach((u: any) => {
-      const role = u.role || "Unassigned Role";
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(u);
-    });
-    return Object.entries(grouped)
-      .map(([role, users]) => ({ role, users }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [allUsers]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedUsers = useMemo(() => groupUsersByRoleTitle(allUsers), [allUsers]);
 
   useEffect(() => {
     setFilteredDetails(details);
@@ -757,7 +1003,7 @@ function BvReportTable({
   // because commission is inherently per-individual (same as func.php: the
   // Verify button always targeted one $user_gm, never an aggregate).
   const personTotals = useMemo(() => {
-    const map = new Map<string, { personId: string; personName: string; comm: number; reward: number }>();
+    const map = new Map<string, { personId: string; personName: string } & BvPersonTotals>();
     filtered.forEach((item) => {
       if (!item.personId) return;
       const existing = map.get(item.personId) ?? {
@@ -765,9 +1011,20 @@ function BvReportTable({
         personName: item.personName || "Unknown",
         comm: 0,
         reward: 0,
+        price: 0,
+        extraDisc: 0,
+        vas: 0,
+        kwa: 0,
+        rcCount: 0,
       };
       existing.comm += typeof item.comm === "number" ? item.comm : Number(item.comm) || 0;
       existing.reward += typeof item.reward === "number" ? item.reward : Number(item.reward) || 0;
+      existing.price += Number(item.price) || 0;
+      existing.extraDisc += Number(item.extraDisc) || 0;
+      existing.vas += Number(item.vas) || 0;
+      existing.kwa += Number(item.kwa) || 0;
+      // Old footer "Total Rc" counted renwal 0 rows.
+      if (gmTypeLabel(item.rcNew) === "Rc") existing.rcCount += 1;
       map.set(item.personId, existing);
     });
     return Array.from(map.values());
@@ -782,10 +1039,15 @@ function BvReportTable({
   // It has no salesPersonId — "employee" is a free-text name, same as this
   // table's other person fields, so matched by name against whoever is
   // currently showing in personTotals below.
+  // Old func.php: webxl_kwa_history rows whose pay_date falls in the selected range,
+  // filtered to the person by the history row's user ("Used By").
   const { data: kwaRecords = [] } = useQuery<any[]>({
-    queryKey: ["/api/target-system/kwa-records"],
+    queryKey: ["/api/target-system/kwa-usage", dateRange.from, dateRange.to],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/target-system/kwa-records");
+      const res = await apiRequest(
+        "GET",
+        `/api/target-system/kwa-usage?startDate=${dateRange.from.slice(0, 10)}&endDate=${dateRange.to.slice(0, 10)}`,
+      );
       if (!res.ok) return [];
       return res.json();
     },
@@ -803,30 +1065,14 @@ function BvReportTable({
             <div className="md:col-span-3 space-y-2">
               <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select User</Label>
               {canSelectUser ? (
-                <Select value={selectedUser} onValueChange={onUserChange}>
-                  <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800" data-testid="select-bv-user">
-                    <SelectValue placeholder={usersLoading ? "Loading users..." : "Choose..."} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    {usersError ? (
-                      <div className="px-2 py-1.5 text-sm text-destructive">Failed to load users</div>
-                    ) : !usersLoading && groupedUsers.length === 0 ? (
-                      <div className="px-2 py-1.5 text-sm text-muted-foreground">No users found</div>
-                    ) : (
-                      groupedUsers.map(({ role, users }) => (
-                        <SelectGroup key={role}>
-                          <SelectLabel>{role}</SelectLabel>
-                          {users.filter(u => u.fullName || u.username).map((u) => (
-                            <SelectItem key={u.id} value={u.id}>
-                              {u.fullName || u.username}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  users={allUsers}
+                  value={selectedUser}
+                  onChange={onUserChange}
+                  extraOptions={[{ value: "all", label: "All" }]}
+                  placeholder={usersError ? "Failed to load users" : usersLoading ? "Loading users..." : "Choose..."}
+                  className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800"
+                />
               ) : (
                 <Input
                   readOnly
@@ -846,10 +1092,14 @@ function BvReportTable({
                   <SelectItem value="all">All</SelectItem>
                   {scope === "company" ? (
                     <>
+                      {/* Old type_fillter (renwal code) as the Rc/New labels the API
+                          returns in `status` (Create GM page's gmTypeLabel mapping). */}
                       <SelectItem value="New">New</SelectItem>
-                      <SelectItem value="Renew">Renew</SelectItem>
-                      <SelectItem value="Expire">Expire</SelectItem>
-                      <SelectItem value="Rc/Up">Rc/Up</SelectItem>
+                      <SelectItem value="Rc">Rc</SelectItem>
+                      <SelectItem value="Ec">Ec</SelectItem>
+                      <SelectItem value="Rc-Up">Rc-Up</SelectItem>
+                      <SelectItem value="Kwa">Kwa</SelectItem>
+                      <SelectItem value="None">None</SelectItem>
                     </>
                   ) : (
                     <>
@@ -965,7 +1215,9 @@ function BvReportTable({
                           <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.package || "-"}</TableCell>
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.price != null ? Number(item.price).toLocaleString() : "-"}</TableCell>
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.extraDisc != null ? Number(item.extraDisc).toLocaleString() : "-"}</TableCell>
-                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.comm ?? "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">
+                            <EditableCommCell item={item} canEdit={canEditComm} />
+                          </TableCell>
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.reward ?? "-"}</TableCell>
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.vas ?? "-"}</TableCell>
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.kwa ?? "-"}</TableCell>
@@ -974,7 +1226,7 @@ function BvReportTable({
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.pay ? new Date(item.pay).toLocaleDateString() : "-"}</TableCell>
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.bvSubmit ? new Date(item.bvSubmit).toLocaleDateString() : "-"}</TableCell>
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.bv ? new Date(item.bv).toLocaleDateString() : "-"}</TableCell>
-                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.rcNew || "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{gmTypeLabel(item.rcNew)}</TableCell>
                           {/* func.php's Dropout column and Type dropdown share the exact same
                               option codes (DropoutTiltle uses the same 0-6 values as
                               changeAcoountType) — Dropout there is just the display of
@@ -982,7 +1234,7 @@ function BvReportTable({
                               data source. Reflects the Type selection below; still not
                               persisted anywhere since there's no backend column to save it to. */}
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">
-                            {BV_TYPE_OPTIONS.find((opt) => opt.value === typeSelections[item.id])?.label ?? "-"}
+                            {BV_TYPE_OPTIONS.find((opt) => opt.value === typeSelections[item.id])?.label ?? item.dropout ?? "-"}
                           </TableCell>
                           <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">
                             <Select
@@ -1016,15 +1268,18 @@ function BvReportTable({
                         <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.kwa.toLocaleString()}</TableCell>
                         <TableCell colSpan={9}></TableCell>
                       </TableRow>
-                      {personTotals.map((p) => (
+                      {/* People without a target are listed in the red table below instead. */}
+                      {personTotals.filter((p) => personAchievement?.some((a) => a.personId === p.personId)).map((p) => (
                         <BvCommissionPanelRow
                           key={p.personId}
                           personId={p.personId}
                           personName={p.personName}
-                          totals={{ comm: p.comm, reward: p.reward }}
+                          totals={p}
                           achievement={personAchievement?.find((a) => a.personId === p.personId)}
+                          footer={footer && footer.personId === p.personId ? footer : null}
                           commPeriod={commPeriod}
-                          canManage={canSelectUser}
+                          canManage={canVerifyComm}
+                          canPay={canPayComm}
                           currentUserId={currentUserId}
                         />
                       ))}
@@ -1111,18 +1366,55 @@ function BvReportTable({
         </CardContent>
       </Card>
 
+      {/* Salespeople in this BV report without a target: commission can't be verified for them. */}
+      {scope === "company" && (() => {
+        const noTarget = personTotals.filter((p) => !personAchievement?.some((a) => a.personId === p.personId));
+        if (noTarget.length === 0) return null;
+        return (
+          <Card className="border-0 shadow-sm overflow-hidden">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader className="bg-red-600 dark:bg-red-700">
+                  <TableRow className="hover:bg-red-600 dark:hover:bg-red-700 border-b-0">
+                    <TableHead className="w-12 text-center font-bold text-white">#</TableHead>
+                    <TableHead className="font-bold text-white">No Target Assigned — Salesperson ({noTarget.length})</TableHead>
+                    <TableHead className="text-center font-bold text-white">Comm</TableHead>
+                    <TableHead className="text-center font-bold text-white">Reward</TableHead>
+                    <TableHead className="font-bold text-white">Note</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {noTarget.map((p, i) => (
+                    <TableRow key={p.personId}>
+                      <TableCell className="text-center">{i + 1}</TableCell>
+                      <TableCell className="font-semibold">{p.personName}</TableCell>
+                      <TableCell className="text-center">{p.comm.toLocaleString()}</TableCell>
+                      <TableCell className="text-center">{p.reward.toLocaleString()}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        Commission can't be verified until a target is assigned (Set Target).
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       {scope === "company" && personTotals.map((p) => {
         const personKwaRecords = kwaRecords.filter(
-          (r: any) => (r.employee || "").trim().toLowerCase() === p.personName.trim().toLowerCase(),
+          (r: any) => (r.usedBy || "").trim().toLowerCase() === p.personName.trim().toLowerCase(),
         );
         if (personKwaRecords.length === 0) return null;
         const kwaTotals = personKwaRecords.reduce(
           (acc: any, r: any) => ({
             remaining: acc.remaining + Number(r.remaining || 0),
-            used: acc.used + (Number(r.kwa || 0) - Number(r.remaining || 0)),
+            kwa: acc.kwa + Number(r.kwa || 0),
+            used: acc.used + Number(r.used || 0),
             reward: acc.reward + Number(r.reward || 0),
           }),
-          { remaining: 0, used: 0, reward: 0 },
+          { kwa: 0, remaining: 0, used: 0, reward: 0 },
         );
         return (
           <Card key={p.personId} className="border border-border shadow-sm">
@@ -1154,13 +1446,13 @@ function BvReportTable({
                       <TableRow key={r.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                         <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{idx + 1}</TableCell>
                         <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.company || "-"}</TableCell>
-                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.employee || "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.sellBy || "-"}</TableCell>
                         <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.usedBy || "-"}</TableCell>
                         <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${Number(r.kwa ?? 0).toLocaleString()}</TableCell>
                         <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{r.type || "-"}</TableCell>
                         <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.detail || "-"}</TableCell>
                         <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${Number(r.remaining ?? 0).toLocaleString()}</TableCell>
-                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${(Number(r.kwa ?? 0) - Number(r.remaining ?? 0)).toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${Number(r.used ?? 0).toLocaleString()}</TableCell>
                         <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{Number(r.reward ?? 0).toLocaleString()}</TableCell>
                         <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{r.status || "-"}</TableCell>
                         <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "-"}</TableCell>
@@ -1168,7 +1460,9 @@ function BvReportTable({
                       </TableRow>
                     ))}
                     <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
-                      <TableCell colSpan={7} className="font-bold text-black dark:text-zinc-300">Total</TableCell>
+                      <TableCell colSpan={4} className="font-bold text-black dark:text-zinc-300">Total</TableCell>
+                      <TableCell className="text-center font-bold text-black dark:text-zinc-300">${kwaTotals.kwa.toLocaleString()}</TableCell>
+                      <TableCell colSpan={2}></TableCell>
                       <TableCell className="text-center font-bold text-black dark:text-zinc-300">${kwaTotals.remaining.toLocaleString()}</TableCell>
                       <TableCell className="text-center font-bold text-black dark:text-zinc-300">${kwaTotals.used.toLocaleString()}</TableCell>
                       <TableCell className="text-center font-bold text-black dark:text-zinc-300">{kwaTotals.reward.toLocaleString()}</TableCell>
@@ -1177,6 +1471,7 @@ function BvReportTable({
                   </TableBody>
                 </Table>
               </div>
+              <KwaServiceCommStatus personId={p.personId} dateFrom={dateRange.from} />
             </CardContent>
           </Card>
         );
@@ -1185,9 +1480,322 @@ function BvReportTable({
   );
 }
 
+type LegacyVasCommission = {
+  mode: "list" | "monthWise" | "allCommission";
+  rows?: { period: string; person: string | null; total: number; per: number; reward: number; comm: number; amount: number }[];
+  due?: number;
+  totals?: { total: number; reward: number; comm: number; amount: number };
+};
+
+type VasAllRow = {
+  legacyUserId: string;
+  person: string | null;
+  period: string;
+  total: number;
+  per: number;
+  reward: number;
+  paidReward: number;
+  comm: number;
+  amount: number;
+  alreadyCreated: boolean;
+  team: {
+    members: { legacyUserId: string; name: string | null; total: number }[];
+    total: number;
+    per: number;
+    comm: number;
+    alreadyCreated: boolean;
+  } | null;
+};
+
+type VasAllCommission = {
+  mode: "allCommission";
+  period: string;
+  from: string;
+  to: string;
+  rows: VasAllRow[];
+  totals: { total: number; reward: number; comm: number; amount: number };
+};
+
+// Old VasController "All" users table (Select User = All). Rows/slabs come
+// from getVasAllUsersCommission (backend reports-routes.ts). "% test" and
+// "System Reward" are editable like the old page: editing % recomputes Comm =
+// round(% * Total) and Amount = Reward + Comm in the browser only; Verify
+// sends the current values (POST /api/reports/vas/commission/verify).
+function VasAllUsersCommissionTable({ data, onRefresh }: { data: VasAllCommission; onRefresh?: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [edits, setEdits] = useState<Record<string, { per: string; reward: string }>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [invoiceUser, setInvoiceUser] = useState<VasAllRow | null>(null);
+  const [dupUser, setDupUser] = useState<VasAllRow | null>(null);
+  useEffect(() => { setEdits({}); }, [data]);
+
+  const fmt = (v: unknown) => Number(v ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const current = (r: VasAllRow) => {
+    const e = edits[r.legacyUserId];
+    const per = e ? Number(e.per) || 0 : r.per;
+    const reward = e ? Number(e.reward) || 0 : r.reward;
+    const comm = e ? Math.round((per / 100) * r.total) : r.comm;
+    return { per, reward, comm, amount: e ? reward + comm : r.amount };
+  };
+  const setEdit = (r: VasAllRow, field: "per" | "reward", value: string) =>
+    setEdits((prev) => {
+      const base = prev[r.legacyUserId] ?? { per: String(r.per), reward: String(r.reward) };
+      return { ...prev, [r.legacyUserId]: { ...base, [field]: value } };
+    });
+
+  const invoices = useQuery<{ rows: any[] }>({
+    queryKey: ["/api/reports/vas/commission/invoices", invoiceUser?.legacyUserId, data.from, data.to],
+    enabled: !!invoiceUser,
+    queryFn: () => apiRequestJson("GET", `/api/reports/vas/commission/invoices?legacyUserId=${encodeURIComponent(invoiceUser!.legacyUserId)}&from=${data.from}&to=${data.to}`),
+  });
+  const duplicates = useQuery<{ rows: any[] }>({
+    queryKey: ["/api/reports/vas/commission/duplicates", dupUser?.legacyUserId],
+    enabled: !!dupUser,
+    queryFn: () => apiRequestJson("GET", `/api/reports/vas/commission/duplicates?legacyUserId=${encodeURIComponent(dupUser!.legacyUserId)}`),
+  });
+
+  const verify = async (key: string, body: Record<string, unknown>) => {
+    setBusy(key);
+    try {
+      await apiRequestJson("POST", "/api/reports/vas/commission/verify", { ...body, from: data.from });
+      toast({ title: "Commission verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/vas/commission/duplicates"] });
+      onRefresh?.();
+    } catch (e: any) {
+      toast({ title: e?.message || "Failed to verify commission", variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const head = "font-bold text-black dark:text-zinc-300 text-center h-12";
+  const created = <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Already Created</span>;
+
+  return (
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHeader className="bg-[#fde2e1] dark:bg-red-950/30">
+          <TableRow className="border-b-0">
+            {["#", "Person", "Total", "% test", "System Reward", "Paid Reward", "Comm", "Amount", "Date", "Action"].map((h) => (
+              <TableHead key={h} className={head}>{h}</TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {data.rows.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No Records Found</TableCell>
+            </TableRow>
+          ) : (
+            data.rows.map((r, idx) => {
+              const c = current(r);
+              const e = edits[r.legacyUserId];
+              return (
+                <TableRow key={r.legacyUserId} className="align-top">
+                  <TableCell className="text-center">{idx + 1}</TableCell>
+                  <TableCell className="text-center min-w-[220px]">
+                    <div className="font-semibold">{r.person || "-"}</div>
+                    {r.team && (
+                      <table className="mt-2 w-full border border-slate-200 text-xs dark:border-zinc-700">
+                        <thead className="bg-slate-100 dark:bg-zinc-800">
+                          <tr><th className="p-1">Name</th><th className="p-1">Amount</th><th className="p-1">...</th><th className="p-1">...</th></tr>
+                        </thead>
+                        <tbody>
+                          {r.team.members.map((m) => (
+                            <tr key={m.legacyUserId} className="border-t border-slate-200 dark:border-zinc-700">
+                              <td className="p-1">{m.name || "-"}</td><td className="p-1">{fmt(m.total)}</td><td className="p-1">...</td><td className="p-1">...</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-slate-50 font-semibold dark:bg-zinc-800/60">
+                          <tr className="border-t border-slate-200 dark:border-zinc-700">
+                            <td className="p-1">Total</td>
+                            <td className="p-1">{fmt(r.team.total)}</td>
+                            <td className="p-1">{fmt(r.team.total)}-{r.team.per}% = {fmt(r.team.comm)}</td>
+                            <td className="p-1 space-y-1">
+                              <div>{fmt(r.team.comm)}</div>
+                              {r.team.alreadyCreated ? created : (
+                                <Button
+                                  size="sm"
+                                  className="h-6 px-2 text-xs bg-[#008d4c] hover:bg-[#00733e] text-white"
+                                  disabled={busy !== null}
+                                  onClick={() => verify(`team-${r.legacyUserId}`, {
+                                    legacyUserId: r.legacyUserId, commType: "Team-Vas", totalAmount: r.team!.total,
+                                    per: r.team!.per, comm: r.team!.comm, reward: 0, finalPayAmount: r.team!.comm,
+                                  })}
+                                >
+                                  {busy === `team-${r.legacyUserId}` ? <Loader2 className="h-3 w-3 animate-spin" /> : "Verify"}
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-center">{fmt(r.total)}</TableCell>
+                  <TableCell className="text-center">
+                    <Input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={e ? e.per : String(r.per)}
+                      onChange={(ev) => setEdit(r, "per", ev.target.value)}
+                      className="h-8 w-20 mx-auto text-center"
+                      aria-label={`Commission % for ${r.person ?? ""}`}
+                    />
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={e ? e.reward : String(r.reward)}
+                      onChange={(ev) => setEdit(r, "reward", ev.target.value)}
+                      className="h-8 w-24 mx-auto text-center"
+                      aria-label={`System reward for ${r.person ?? ""}`}
+                    />
+                  </TableCell>
+                  <TableCell className="text-center">{fmt(r.paidReward)}</TableCell>
+                  <TableCell className="text-center">{fmt(c.comm)}</TableCell>
+                  <TableCell className="text-center">{fmt(c.amount)}</TableCell>
+                  <TableCell className="text-center whitespace-nowrap">{r.period}</TableCell>
+                  <TableCell className="text-center">
+                    {r.alreadyCreated ? created : (
+                      <div className="flex items-center justify-center gap-1">
+                        <Button
+                          size="sm"
+                          className="h-8 bg-[#008d4c] hover:bg-[#00733e] text-white"
+                          disabled={busy !== null}
+                          onClick={() => verify(`vas-${r.legacyUserId}`, {
+                            legacyUserId: r.legacyUserId, commType: "Vas", totalAmount: r.total,
+                            per: c.per, comm: c.comm, reward: c.reward, finalPayAmount: c.amount,
+                          })}
+                        >
+                          {busy === `vas-${r.legacyUserId}` ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify"}
+                        </Button>
+                        <Button size="icon" variant="outline" className="h-8 w-8" title="Duplicate records" onClick={() => setDupUser(r)}>
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button size="icon" variant="outline" className="h-8 w-8" title="Invoice details" onClick={() => setInvoiceUser(r)}>
+                          <Receipt className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })
+          )}
+        </TableBody>
+        <TableFooter>
+          <TableRow className="bg-slate-50 dark:bg-zinc-800/60 font-bold">
+            <TableCell colSpan={2} className="text-center">Total</TableCell>
+            <TableCell className="text-center">{fmt(data.totals.total)}</TableCell>
+            <TableCell />
+            <TableCell className="text-center">{fmt(data.totals.reward)}</TableCell>
+            <TableCell />
+            <TableCell className="text-center">{fmt(data.totals.comm)}</TableCell>
+            <TableCell className="text-center">{fmt(data.totals.amount)}</TableCell>
+            <TableCell colSpan={2} />
+          </TableRow>
+        </TableFooter>
+      </Table>
+
+      <Dialog open={!!invoiceUser} onOpenChange={(o) => { if (!o) setInvoiceUser(null); }}>
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Invoice Details</DialogTitle>
+            <DialogDescription>{invoiceUser?.person} · {data.period}</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-auto">
+            {invoices.isLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin" /></div>
+            ) : invoices.isError ? (
+              <p className="py-6 text-center text-destructive">{(invoices.error as any)?.message || "Failed to load invoice details"}</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {["Invoice ID", "Company DRM ID", "Company Name", "Amount", "Invoice Type", "Pay", "Method", "Date"].map((h) => (
+                      <TableHead key={h} className="text-center">{h}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(invoices.data?.rows ?? []).length === 0 ? (
+                    <TableRow><TableCell colSpan={8} className="text-center py-6 text-muted-foreground">No Records Found</TableCell></TableRow>
+                  ) : (
+                    (invoices.data?.rows ?? []).map((x, i) => (
+                      <TableRow key={`${x.invoiceId}-${i}`}>
+                        <TableCell className="text-center">{x.invoiceId}</TableCell>
+                        <TableCell className="text-center">{x.comId}</TableCell>
+                        <TableCell className="text-center">{x.cname || "-"}</TableCell>
+                        <TableCell className="text-center">{fmt(x.amount)}</TableCell>
+                        <TableCell className="text-center">{x.item || "-"}</TableCell>
+                        <TableCell className="text-center">{x.pay ?? "-"}</TableCell>
+                        <TableCell className="text-center">{x.method || "-"}</TableCell>
+                        <TableCell className="text-center whitespace-nowrap">{x.createDate ? String(x.createDate).replace("T", " ") : "-"}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!dupUser} onOpenChange={(o) => { if (!o) setDupUser(null); }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Duplicate Records</DialogTitle>
+            <DialogDescription>{dupUser?.person}</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-auto">
+            {duplicates.isLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin" /></div>
+            ) : duplicates.isError ? (
+              <p className="py-6 text-center text-destructive">{(duplicates.error as any)?.message || "Failed to load records"}</p>
+            ) : (duplicates.data?.rows ?? []).length === 0 ? (
+              <p className="py-6 text-center text-muted-foreground">No duplicate records found.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {["Month", "Year", "Conversion", "Reward", "Commission Type", "Commission", "Final Comm"].map((h) => (
+                      <TableHead key={h} className="text-center">{h}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(duplicates.data?.rows ?? []).map((x) => (
+                    <TableRow key={x.id}>
+                      <TableCell className="text-center">{x.commMonth}</TableCell>
+                      <TableCell className="text-center">{x.commYear}</TableCell>
+                      <TableCell className="text-center">{x.per}</TableCell>
+                      <TableCell className="text-center">{fmt(x.reward)}</TableCell>
+                      <TableCell className="text-center">{x.commType}</TableCell>
+                      <TableCell className="text-center">{fmt(x.comm)}</TableCell>
+                      <TableCell className="text-center">{fmt(x.finalPayAmount)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function VasReportTable({
   details,
   totals,
+  departmentSummary = [],
+  legacyVas,
   dateRange,
   onDateChange,
   selectedUser,
@@ -1196,6 +1804,10 @@ function VasReportTable({
 }: {
   details: any[];
   totals?: { totalAdvance: number };
+  /** Old-DRM "Department Wise Summary": invoice value split by item department. */
+  departmentSummary?: { department: string; amount: number }[];
+  /** Old-DRM Month Wise commission (one user) / all-users commission table. */
+  legacyVas?: LegacyVasCommission;
   dateRange: { from: string; to: string };
   onDateChange: (field: "from" | "to", value: string) => void;
   selectedUser: string;
@@ -1225,17 +1837,8 @@ function VasReportTable({
 
   // Same role-grouping convention already used for the user picker in
   // LoanReportTable's "Add Loan" form (groupedUsers), reused here for consistency.
-  const groupedUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    (allUsers || []).forEach((u: any) => {
-      const role = u.role || "Unassigned Role";
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(u);
-    });
-    return Object.entries(grouped)
-      .map(([role, users]) => ({ role, users }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [allUsers]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedUsers = useMemo(() => groupUsersByRoleTitle(allUsers), [allUsers]);
 
   // The backend already scopes `details` to the selected user/date range
   // (GET /api/reports/vas) — nothing further to filter client-side.
@@ -1297,6 +1900,7 @@ function VasReportTable({
   }, [filtered]);
 
   const sourceLabels: Record<string, string> = {
+    legacy_payment: "Payment",
     vas_reports: "VAS Report",
     product_posting_invoice: "Invoice (Product Posting)",
     invoice: "Invoice",
@@ -1310,6 +1914,13 @@ function VasReportTable({
     { key: "status", header: "Status" },
     { key: "date", header: "Date", format: (v) => (v ? new Date(v).toLocaleDateString() : "") },
   ];
+
+  // Old VAS views computed by the backend (getVasCompanyLegacyReport): Select
+  // User = All always shows the old all-users commission table (Month Wise or
+  // not); one user + Month Wise shows the per-month commission rows.
+  const allUsersView = legacyVas?.mode === "allCommission" ? (legacyVas as unknown as VasAllCommission) : null;
+  const commissionView = isMonthWise && legacyVas?.mode === "monthWise" ? legacyVas : null;
+  const money = (v: unknown) => Number(v ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
   const handleCopy = async () => {
     if (!filtered.length) return;
@@ -1371,24 +1982,14 @@ function VasReportTable({
                 </div>
               </div>
               {canSelectUser ? (
-                <Select value={selectedUser} onValueChange={onUserChange}>
-                  <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800" data-testid="select-vas-user">
-                    <SelectValue placeholder="Choose..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    {groupedUsers.map(({ role, users }) => (
-                      <SelectGroup key={role}>
-                        <SelectLabel>{role}</SelectLabel>
-                        {users.filter(u => u.fullName || u.username).map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.fullName || u.username}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  users={allUsers}
+                  value={selectedUser}
+                  onChange={onUserChange}
+                  extraOptions={[{ value: "all", label: "All" }]}
+                  placeholder="Choose..."
+                  className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800"
+                />
               ) : (
                 <Input
                   readOnly
@@ -1447,6 +2048,59 @@ function VasReportTable({
             <button onClick={() => exportToCSV(filtered, vasExportColumns, "VAS_Report")} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">CSV</button>
             <button onClick={() => exportToPDF(filtered, vasExportColumns, "VAS_Report", { title: "VAS Report" })} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors">PDF</button>
           </div>
+          {allUsersView ? (
+            <VasAllUsersCommissionTable data={allUsersView} onRefresh={onRefresh} />
+          ) : commissionView ? (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-[#fde2e1] dark:bg-red-950/30">
+                <TableRow className="border-b-0">
+                  {["#", "Date", "Person", "Total", "%", "Reward", "Comm", "Amount"].map((h) => (
+                    <TableHead key={h} className="font-bold text-black dark:text-zinc-300 text-center h-12">{h}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(commissionView.rows ?? []).length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No Records Found</TableCell>
+                  </TableRow>
+                ) : (
+                  (commissionView.rows ?? []).map((r, idx) => (
+                    <TableRow key={`${r.period}-${r.person}-${idx}`}>
+                      <TableCell className="text-center">{idx + 1}</TableCell>
+                      <TableCell className="text-center">{r.period}</TableCell>
+                      <TableCell className="text-center">{r.person || "-"}</TableCell>
+                      <TableCell className="text-center">{money(r.total)}</TableCell>
+                      <TableCell className="text-center">{r.per}</TableCell>
+                      <TableCell className="text-center">{money(r.reward)}</TableCell>
+                      <TableCell className="text-center">{money(r.comm)}</TableCell>
+                      <TableCell className="text-center">{money(r.amount)}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+              <TableFooter>
+                <TableRow className="bg-slate-50 dark:bg-zinc-800/60 font-bold">
+                  {commissionView.mode === "monthWise" ? (
+                    <>
+                      <TableCell className="text-center text-red-600">Due</TableCell>
+                      <TableCell className="text-center text-red-600">{money(commissionView.due)}</TableCell>
+                    </>
+                  ) : (
+                    <TableCell colSpan={2}></TableCell>
+                  )}
+                  <TableCell className="text-center">Total</TableCell>
+                  <TableCell className="text-center">{money(commissionView.totals?.total)}</TableCell>
+                  <TableCell></TableCell>
+                  <TableCell className="text-center">{money(commissionView.totals?.reward)}</TableCell>
+                  <TableCell className="text-center">{money(commissionView.totals?.comm)}</TableCell>
+                  <TableCell className="text-center">{money(commissionView.totals?.amount)}</TableCell>
+                </TableRow>
+              </TableFooter>
+            </Table>
+          </div>
+          ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
@@ -1510,6 +2164,8 @@ function VasReportTable({
               )}
             </Table>
           </div>
+          )}
+
         </CardContent>
       </Card>
     </div>
@@ -1679,20 +2335,82 @@ function LegacyVasReportTable({
   );
 }
 
+const LOAN_LIST_PAGE_SIZE = 10;
+
+function buildLoanPageNumbers(current: number, total: number, maxButtons = 7): number[] {
+  if (total <= 1) return total === 1 ? [1] : [];
+  const half = Math.floor(maxButtons / 2);
+  let start = Math.max(1, current - half);
+  let end = Math.min(total, start + maxButtons - 1);
+  start = Math.max(1, end - maxButtons + 1);
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
+function LoanListPagination({
+  page,
+  totalItems,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  totalItems: number;
+  totalPages: number;
+  onPageChange: (p: number) => void;
+}) {
+  if (totalItems === 0) return null;
+  const pageNums = buildLoanPageNumbers(page, totalPages);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 border-t border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+      <p className="text-[12px] text-muted-foreground">
+        Showing {(page - 1) * LOAN_LIST_PAGE_SIZE + 1} to {Math.min(page * LOAN_LIST_PAGE_SIZE, totalItems)} of {totalItems} entries
+        {totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""}
+      </p>
+      {totalPages > 1 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <Button variant="outline" size="sm" className="h-8 text-[12px] font-bold" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+            Previous
+          </Button>
+          {pageNums.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onPageChange(p)}
+              className={`h-8 min-w-8 px-1 rounded-md text-[12px] font-bold ${p === page ? "bg-[#00a65a] text-white" : "text-muted-foreground hover:bg-muted"}`}
+            >
+              {p}
+            </button>
+          ))}
+          <Button variant="outline" size="sm" className="h-8 text-[12px] font-bold" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
+            Next
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtMoney(n: number) {
+  return Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
 function LoanReportTable({
   loans,
   totals,
   activeSubTab,
-  setActiveSubTab
+  setActiveSubTab,
+  reportScope,
 }: {
   loans: LoanDetail[];
-  totals?: { totalAdvance: number; totalRemaining: number };
+  totals?: { totalAdvance: number; totalRemaining: number; totalRepaid?: number };
   activeSubTab: "list" | "add" | "history";
   setActiveSubTab: (tab: "list" | "add" | "history") => void;
+  reportScope?: string | null;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const safeLoans = loans ?? [];
+  const [employeeLoans, setEmployeeLoans] = useState<LoanDetail[] | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
+  const safeLoans = employeeLoans ?? loans ?? [];
   const [search, setSearch] = useState("");
   const [viewItem, setViewItem] = useState<LoanDetail | null>(null);
   const [showAddLoan, setShowAddLoan] = useState(false);
@@ -1701,11 +2419,22 @@ function LoanReportTable({
   const [historyEnd, setHistoryEnd] = useState("");
   const [appliedStart, setAppliedStart] = useState("");
   const [appliedEnd, setAppliedEnd] = useState("");
-  const [selectedEmployee, setSelectedEmployee] = useState<string>("all");
+  const [historyUserId, setHistoryUserId] = useState<string>("");
+  const [appliedHistoryUser, setAppliedHistoryUser] = useState<string>("");
+  const [historyRequested, setHistoryRequested] = useState(false);
+  const [listEmpDraft, setListEmpDraft] = useState<string>("all");
+  const [listStartDraft, setListStartDraft] = useState("");
+  const [listEndDraft, setListEndDraft] = useState("");
+  const [appliedListEmp, setAppliedListEmp] = useState<string>("all");
+  const [appliedListStart, setAppliedListStart] = useState("");
+  const [appliedListEnd, setAppliedListEnd] = useState("");
   const [addLoanTargetUserId, setAddLoanTargetUserId] = useState<string>("");
   const [payAmount, setPayAmount] = useState<string>("");
+  const [payRemaining, setPayRemaining] = useState<string>("");
+  const [payStatus, setPayStatus] = useState<"Pending" | "Complete">("Pending");
   const [rejectingLoanId, setRejectingLoanId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [listPage, setListPage] = useState(1);
 
   const uniqueEmployees = useMemo(() => {
     const names = safeLoans.map(l => l.employeeName).filter(Boolean);
@@ -1717,32 +2446,40 @@ function LoanReportTable({
     queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
 
-  const isManager = currentUser?.role && ['admin', 'manager', 'hod', 'assistant_manager', 'super_hod', 'super_admin'].some(r => currentUser.role.toLowerCase().includes(r));
+  const isManager = currentUser?.role && ['admin', 'manager', 'hod', 'assistant_manager', 'super_hod', 'super_admin', 'account_manager'].some(r => currentUser.role.toLowerCase().includes(r));
   // HOD-tier: who may perform the second-stage HOD approval (mirrors the
   // backend's isHodAllowed — hod/super_hod/admin/sales_manager).
   const activeRole = (currentUser?.role || "").toLowerCase();
   const isHodTier = ["admin", "super_admin", "hod", "super_hod", "sales_manager"].includes(activeRole);
 
   const { data: allUsers } = useQuery<any[]>({
-    queryKey: ["/api/users", { assigned: true }],
+    queryKey: ["/api/users", "loan-report-all"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/users?assigned=true");
+      const res = await apiRequest("GET", "/api/users");
       const data = await res.json();
       return data.users || [];
     },
   });
 
-  const groupedUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    (allUsers || []).forEach((user) => {
-      const role = user.role || 'Unassigned Role';
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(user);
-    });
-    return Object.entries(grouped)
-      .map(([role, users]) => ({ role, users }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [allUsers]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedUsers = useMemo(() => groupUsersByRoleTitle(allUsers), [allUsers]);
+
+  // Old DRM "Loan History": pay-loan rows for one person between Start and End.
+  const { data: loanHistory, isFetching: loanHistoryLoading } = useQuery<{
+    person: string; remaining: number; totalPay: number;
+    rows: { id: string; pay: number; detail: string | null; date: string }[];
+  }>({
+    queryKey: ["/api/loans/history", appliedHistoryUser, appliedStart, appliedEnd],
+    enabled: showLoanHistory && historyRequested,
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (appliedHistoryUser) params.set("userId", appliedHistoryUser);
+      if (appliedStart) params.set("start", appliedStart);
+      if (appliedEnd) params.set("end", appliedEnd);
+      const res = await apiRequest("GET", `/api/loans/history?${params}`);
+      return res.json();
+    },
+  });
 
   // Managers/HOD/account_manager submit via /api/admin/loans (lets them pick
   // the target employee, and auto-approves since they already hold decision
@@ -1799,11 +2536,11 @@ function LoanReportTable({
   });
 
   const payInstallmentMutation = useMutation({
-    mutationFn: async ({ id, amount }: { id: string; amount: number }) => {
+    mutationFn: async ({ id, amount, remaining, status }: { id: string; amount: number; remaining: number; status: "Pending" | "Complete" }) => {
       const res = await fetch(`/api/loans/${id}/pay-installment`, {
         method: "PATCH",
         headers: { ...getAuthHeader(), "Content-Type": "application/json" },
-        body: JSON.stringify({ amount }),
+        body: JSON.stringify({ amount, remaining, status }),
       });
       if (!res.ok) {
         const error = await res.json().catch(() => ({}));
@@ -1838,24 +2575,46 @@ function LoanReportTable({
     createLoanMutation.mutate({ userId, amount, installmentAmount, detail });
   };
 
-  const filtered = useMemo(() => {
-    let result = safeLoans;
-
-    if (showLoanHistory) {
-      if (appliedStart) {
-        const start = new Date(appliedStart);
-        start.setHours(0, 0, 0, 0);
-        result = result.filter(l => l.date && new Date(l.date).getTime() >= start.getTime());
-      }
-      if (appliedEnd) {
-        const end = new Date(appliedEnd);
-        end.setHours(23, 59, 59, 999);
-        result = result.filter(l => l.date && new Date(l.date).getTime() <= end.getTime());
-      }
+  const employeeNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const u of allUsers ?? []) {
+      const id = String(u?.id ?? "");
+      const name = String(u?.fullName || u?.full_name || u?.name || u?.username || "").trim();
+      if (id && name) m.set(id, name);
     }
+    return m;
+  }, [allUsers]);
 
-    if (selectedEmployee !== "all") {
-      result = result.filter(l => l.employeeName === selectedEmployee);
+  const filtered = useMemo(() => {
+    let result = [...safeLoans].sort(
+      (a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime(),
+    );
+
+    if (appliedListEmp !== "all" && !employeeLoans) {
+      const pick = appliedListEmp;
+      const pickName = employeeNameById.get(pick)?.toLowerCase();
+      result = result.filter((l) => {
+        if (l.userId && String(l.userId) === pick) return true;
+        const en = String(l.employeeName ?? "").toLowerCase().replace(/\s*\(main\)\s*$/i, "").trim();
+        if (pickName && (en === pickName || en.includes(pickName) || pickName.includes(en))) return true;
+        return false;
+      });
+    }
+    if (appliedListStart) {
+      const from = new Date(appliedListStart);
+      from.setHours(0, 0, 0, 0);
+      result = result.filter((l) => {
+        const t = l.date ? new Date(l.date) : null;
+        return t && !Number.isNaN(t.getTime()) && t >= from;
+      });
+    }
+    if (appliedListEnd) {
+      const to = new Date(appliedListEnd);
+      to.setHours(23, 59, 59, 999);
+      result = result.filter((l) => {
+        const t = l.date ? new Date(l.date) : null;
+        return t && !Number.isNaN(t.getTime()) && t <= to;
+      });
     }
     const term = search.trim().toLowerCase();
     if (!term) return result;
@@ -1875,7 +2634,78 @@ function LoanReportTable({
         .toLowerCase()
         .includes(term)
     );
-  }, [safeLoans, search, selectedEmployee, showLoanHistory, appliedStart, appliedEnd]);
+  }, [safeLoans, search, appliedListEmp, appliedListStart, appliedListEnd, employeeNameById, employeeLoans]);
+
+  const applyListFilters = async () => {
+    if (listStartDraft && listEndDraft && listStartDraft > listEndDraft) {
+      toast({ title: "Invalid dates", description: "Start date must be on or before end date.", variant: "destructive" });
+      return;
+    }
+    const emp = isManager ? listEmpDraft : "all";
+    setAppliedListEmp(emp);
+    setAppliedListStart(listStartDraft);
+    setAppliedListEnd(listEndDraft);
+    setListPage(1);
+    if (emp !== "all") {
+      setFilterLoading(true);
+      try {
+        const params = new URLSearchParams({
+          from: listStartDraft || "2000-01-01",
+          to: listEndDraft || "2099-12-31",
+          userId: emp,
+        });
+        if (reportScope) params.set("scope", reportScope);
+        const data = await apiRequestJson<{ details: LoanDetail[] }>("GET", `/api/reports/loan?${params}`);
+        setEmployeeLoans(data.details ?? []);
+      } catch {
+        setEmployeeLoans(null);
+        toast({ title: "Could not load employee loans", variant: "destructive" });
+      } finally {
+        setFilterLoading(false);
+      }
+    } else {
+      setEmployeeLoans(null);
+    }
+  };
+
+  const clearListFilters = () => {
+    setListEmpDraft("all");
+    setListStartDraft("");
+    setListEndDraft("");
+    setAppliedListEmp("all");
+    setAppliedListStart("");
+    setAppliedListEnd("");
+    setEmployeeLoans(null);
+    setSearch("");
+    setListPage(1);
+  };
+
+  useEffect(() => {
+    setListPage(1);
+  }, [search, appliedListEmp, appliedListStart, appliedListEnd]);
+
+  const filteredTotals = useMemo(() => {
+    // Rejected / cancelled loans were never paid out, so they don't count as advance or
+    // repaid (old DRM: repaid = sum of pay-loan rows = approved advance - remaining).
+    const counted = filtered.filter((l) => !/reject|cancel/i.test(String(l.status || "")));
+    const totalAdvance = counted.reduce((sum, l) => sum + Number(l.amount || 0), 0);
+    const totalRemaining = counted.reduce((sum, l) => sum + Number(l.remainingAmount || 0), 0);
+    const totalInstalment = counted.reduce((sum, l) => sum + Number(l.installmentAmount || 0), 0);
+    const totalRepaid = counted
+      .filter((l) => /completed|hodapproved/i.test(String(l.status || "")))
+      .reduce((sum, l) => sum + Math.max(0, Number(l.amount || 0) - Number(l.remainingAmount || 0)), 0);
+    return { totalAdvance, totalRemaining, totalRepaid, totalInstalment };
+  }, [filtered]);
+
+  const listTotalPages = Math.max(1, Math.ceil(filtered.length / LOAN_LIST_PAGE_SIZE));
+  const paginatedLoans = useMemo(() => {
+    const start = (listPage - 1) * LOAN_LIST_PAGE_SIZE;
+    return filtered.slice(start, start + LOAN_LIST_PAGE_SIZE);
+  }, [filtered, listPage]);
+
+  useEffect(() => {
+    if (listPage > listTotalPages) setListPage(listTotalPages);
+  }, [listPage, listTotalPages]);
 
   const totalAdvance = totals?.totalAdvance ?? safeLoans.reduce((sum, l) => sum + Number(l.amount || 0), 0);
   const totalRemaining = totals?.totalRemaining ?? safeLoans.reduce((sum, l) => sum + Number(l.remainingAmount || 0), 0);
@@ -2014,21 +2844,13 @@ function LoanReportTable({
               <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Employee</Label>
               {isManager ? (
                 <>
-                  <Select value={addLoanTargetUserId} onValueChange={setAddLoanTargetUserId}>
-                    <SelectTrigger className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 text-xs">
-                      <SelectValue placeholder="Choose employee" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {groupedUsers.map(({ role, users }) => (
-                        <SelectGroup key={role}>
-                          <SelectLabel className="text-[10px] uppercase">{role}</SelectLabel>
-                          {users.map((u: any) => (
-                            <SelectItem key={u.id} value={u.id}>{u.fullName || u.username}</SelectItem>
-                          ))}
-                        </SelectGroup>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <RoleGroupedUserSelect
+                    users={allUsers}
+                    value={addLoanTargetUserId}
+                    onChange={setAddLoanTargetUserId}
+                    placeholder="Choose employee"
+                    className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 text-xs"
+                  />
                   <input type="hidden" name="userId" value={addLoanTargetUserId} />
                 </>
               ) : (
@@ -2067,11 +2889,21 @@ function LoanReportTable({
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-white dark:bg-zinc-900 p-4 rounded-md border border-slate-200 dark:border-zinc-800 shadow-sm">
             <div className="space-y-1.5 md:col-span-1">
               <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Employee</Label>
-              <Input
-                readOnly
-                value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
-                className="bg-[#f0f2f5] dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 h-9 text-xs text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0"
-              />
+              {isManager ? (
+                <RoleGroupedUserSelect
+                  users={allUsers}
+                  value={historyUserId}
+                  onChange={setHistoryUserId}
+                  placeholder="Choose employee"
+                  className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 text-xs"
+                />
+              ) : (
+                <Input
+                  readOnly
+                  value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
+                  className="bg-[#f0f2f5] dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 h-9 text-xs text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0"
+                />
+              )}
             </div>
             <div className="space-y-1.5 md:col-span-2">
               <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Start:</Label>
@@ -2084,9 +2916,12 @@ function LoanReportTable({
             <div className="md:col-span-5">
               <Button 
                 type="button" 
+                disabled={isManager && !historyUserId}
                 onClick={() => {
                   setAppliedStart(historyStart);
                   setAppliedEnd(historyEnd);
+                  setAppliedHistoryUser(isManager ? historyUserId : "");
+                  setHistoryRequested(true);
                 }}
                 className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 font-bold text-sm rounded-sm"
               >
@@ -2096,40 +2931,120 @@ function LoanReportTable({
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex flex-wrap gap-[1px] bg-[#6c757d] p-[1px] rounded-sm overflow-hidden">
-              {["Copy", "Excel", "CSV", "PDF"].map((label) => (
-                <Button key={label} variant="ghost" size="sm" className="px-4 bg-[#6c757d] text-white hover:bg-[#5a6268] hover:text-white h-8 text-xs font-semibold rounded-none" onClick={() => handleExport(label as any)}>
-                  {label}
-                </Button>
-              ))}
-            </div>
-            {isManager && (
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] font-semibold text-slate-600 dark:text-zinc-400">Filter:</span>
-                <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
-                  <SelectTrigger className="w-[200px] h-8 bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-300 dark:border-zinc-700 text-xs rounded-sm focus-visible:ring-0">
-                    <SelectValue placeholder="Select Employee" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Employees</SelectItem>
-                    {allUsers?.filter(u => u.fullName || u.username).map(user => (
-                      <SelectItem key={user.id} value={user.id}>
-                        {user.fullName || user.username}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        {showLoanHistory && historyRequested && (
+          <div className="bg-white dark:bg-zinc-900 rounded-md border border-slate-200 dark:border-zinc-800 overflow-x-auto">
+            <Table className="w-full text-[13px]">
+              <TableHeader>
+                <TableRow className="bg-[#d1e7dd] dark:bg-emerald-950/40 hover:bg-[#d1e7dd]">
+                  <TableHead className="py-2 px-3 font-bold text-[#555] dark:text-zinc-300">#</TableHead>
+                  <TableHead className="py-2 px-3 font-bold text-[#555] dark:text-zinc-300">Person</TableHead>
+                  <TableHead className="py-2 px-3 font-bold text-[#555] dark:text-zinc-300">Pay</TableHead>
+                  <TableHead className="py-2 px-3 font-bold text-[#555] dark:text-zinc-300">Detail</TableHead>
+                  <TableHead className="py-2 px-3 font-bold text-[#555] dark:text-zinc-300">Date</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {loanHistoryLoading && !loanHistory ? (
+                  <TableRow><TableCell colSpan={5} className="text-center py-4 text-muted-foreground">Loading...</TableCell></TableRow>
+                ) : !loanHistory?.rows?.length ? (
+                  <TableRow><TableCell colSpan={5} className="text-center py-4 text-muted-foreground">No data available in table</TableCell></TableRow>
+                ) : (
+                  loanHistory.rows.map((r, i) => (
+                    <TableRow key={r.id}>
+                      <TableCell className="py-2 px-3">{i + 1}</TableCell>
+                      <TableCell className="py-2 px-3">{loanHistory.person}</TableCell>
+                      <TableCell className="py-2 px-3">{Number(r.pay || 0).toString()}</TableCell>
+                      <TableCell className="py-2 px-3">{r.detail ?? ""}</TableCell>
+                      <TableCell className="py-2 px-3 whitespace-nowrap">{r.date}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+                {loanHistory && (
+                  <TableRow className="font-bold">
+                    <TableCell className="py-2 px-3">Remaning</TableCell>
+                    <TableCell className="py-2 px-3">{Number(loanHistory.remaining || 0).toString()}</TableCell>
+                    <TableCell className="py-2 px-3">{Number(loanHistory.totalPay || 0).toString()}</TableCell>
+                    <TableCell colSpan={2} />
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        <div className="rounded-md border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 space-y-3">
+          <div className="text-[12px] font-bold text-[#555] dark:text-zinc-300 uppercase">Filter advance list</div>
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+            {isManager ? (
+              <div className="md:col-span-4 space-y-1">
+                <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Employee name</Label>
+                <RoleGroupedUserSelect
+                  grouped={false}
+                  users={allUsers}
+                  value={listEmpDraft}
+                  onChange={setListEmpDraft}
+                  extraOptions={[{ value: "all", label: "All employees" }]}
+                  placeholder="All employees"
+                  searchPlaceholder="Search employee..."
+                  className="w-full h-9 bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700 text-xs"
+                />
+              </div>
+            ) : (
+              <div className="md:col-span-4 space-y-1">
+                <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Employee</Label>
+                <Input
+                  readOnly
+                  className="h-9 text-xs bg-[#f0f2f5] dark:bg-zinc-800 cursor-not-allowed"
+                  value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Your loans"}
+                />
               </div>
             )}
+            <div className="md:col-span-3 space-y-1">
+              <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Start date</Label>
+              <Input type="date" value={listStartDraft} onChange={(e) => setListStartDraft(e.target.value)}
+                className="h-9 text-xs bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700" />
+            </div>
+            <div className="md:col-span-3 space-y-1">
+              <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">End date</Label>
+              <Input type="date" value={listEndDraft} onChange={(e) => setListEndDraft(e.target.value)}
+                className="h-9 text-xs bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700" />
+            </div>
+            <div className="md:col-span-2 flex flex-wrap gap-2">
+              <Button type="button" onClick={() => void applyListFilters()} disabled={filterLoading}
+                className="h-9 flex-1 min-w-[72px] bg-[#00a65a] hover:bg-[#008d4c] text-white text-xs font-bold rounded-sm">
+                {filterLoading ? "..." : "View"}
+              </Button>
+              <Button type="button" variant="outline" onClick={clearListFilters} className="h-9 flex-1 min-w-[72px] text-xs rounded-sm">
+                Clear
+              </Button>
+            </div>
+          </div>
+          {(appliedListEmp !== "all" || appliedListStart || appliedListEnd) && (
+            <p className="text-[11px] text-slate-500">
+              Active filter:
+              {appliedListEmp !== "all" && <> employee <b>{employeeNameById.get(appliedListEmp) || appliedListEmp}</b></>}
+              {appliedListStart && <> from <b>{appliedListStart}</b></>}
+              {appliedListEnd && <> to <b>{appliedListEnd}</b></>}
+              {" "}— {filtered.length} record(s)
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
+          <div className="flex flex-wrap gap-[1px] bg-[#6c757d] p-[1px] rounded-sm overflow-hidden">
+            {["Copy", "Excel", "CSV", "PDF"].map((label) => (
+              <Button key={label} variant="ghost" size="sm" className="px-4 bg-[#6c757d] text-white hover:bg-[#5a6268] hover:text-white h-8 text-xs font-semibold rounded-none" onClick={() => handleExport(label as any)}>
+                {label}
+              </Button>
+            ))}
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-slate-600 dark:text-zinc-400">Search:</span>
+            <span className="text-[13px] font-semibold text-slate-600 dark:text-zinc-400">Quick search:</span>
             <Input
-              className="w-[200px] h-8 bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-300 dark:border-zinc-700 text-xs rounded-sm focus-visible:ring-0 focus-visible:border-slate-400"
+              className="w-[220px] h-8 bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-300 dark:border-zinc-700 text-xs rounded-sm focus-visible:ring-0 focus-visible:border-slate-400"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              placeholder="Detail, amount, status..."
             />
           </div>
         </div>
@@ -2157,11 +3072,12 @@ function LoanReportTable({
                   </TableCell>
                 </TableRow>
               ) : (
-                filtered.map((loan, idx) => {
+                paginatedLoans.map((loan, idx) => {
                   const isRejectingThis = rejectingLoanId === loan.id;
+                  const rowNo = (listPage - 1) * LOAN_LIST_PAGE_SIZE + idx + 1;
                   return (
                   <TableRow key={loan.id} className="border-b border-white dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800 transition-colors">
-                    <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{idx + 1}</TableCell>
+                    <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{rowNo}</TableCell>
                     <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 font-semibold">{loan.employeeName} (Main)</TableCell>
                     <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{Number(loan.amount || 0).toString()}</TableCell>
                     <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 truncate max-w-[200px]">{loan.detail}</TableCell>
@@ -2212,7 +3128,7 @@ function LoanReportTable({
                               </>
                             )}
                             {loan.status === "HODApproved" && (
-                              <button onClick={() => setViewItem(loan)} title="Record Payment" className="text-[#00a65a] hover:text-[#008d4c] transition-colors">
+                              <button onClick={() => { setViewItem(loan); setPayAmount(""); setPayRemaining(Number(loan.remainingAmount || 0).toString()); setPayStatus("Pending"); }} title="Pay Loan" className="text-[#00a65a] hover:text-[#008d4c] transition-colors">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-plus-circle" viewBox="0 0 16 16">
                                   <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
                                   <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
@@ -2231,12 +3147,45 @@ function LoanReportTable({
                 })
               )}
             </TableBody>
+            {filtered.length > 0 && (
+              <TableFooter className="bg-[#e8f5e9] dark:bg-emerald-950/30 font-bold border-t-2 border-[#00a65a]/30">
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={2} className="py-3 px-3 text-[#333] dark:text-zinc-200">
+                    Total
+                  </TableCell>
+                  <TableCell className="py-3 px-3 text-[#333] dark:text-zinc-200" title="Total advance given (borrowed amount)">
+                    {fmtMoney(filteredTotals.totalAdvance)}
+                  </TableCell>
+                  <TableCell className="py-3 px-3 text-[11px] font-semibold text-slate-700 dark:text-zinc-300" title="Advance minus remaining = recovered">
+                    Repaid: {fmtMoney(filteredTotals.totalRepaid)}
+                  </TableCell>
+                  <TableCell className="py-3 px-3 text-[#333] dark:text-zinc-200">
+                    {fmtMoney(filteredTotals.totalInstalment)}
+                  </TableCell>
+                  <TableCell className="py-3 px-3 text-[#333] dark:text-zinc-200" title="Outstanding balance">
+                    {fmtMoney(filteredTotals.totalRemaining)}
+                  </TableCell>
+                  <TableCell colSpan={isManager ? 3 : 2} />
+                </TableRow>
+              </TableFooter>
+            )}
           </Table>
+          <LoanListPagination
+            page={listPage}
+            totalItems={filtered.length}
+            totalPages={listTotalPages}
+            onPageChange={setListPage}
+          />
         </div>
-
-        <p className="text-sm text-muted-foreground">
-          Showing {filtered.length} of {safeLoans.length} entries
-        </p>
+        {filtered.length > 0 && (
+          <p className="text-[12px] text-slate-600 dark:text-zinc-400">
+            <span className="font-semibold">Summary:</span>{" "}
+            Total advance given <b>{fmtMoney(filteredTotals.totalAdvance)}</b>
+            {" · "}Total repaid (recovered) <b>{fmtMoney(filteredTotals.totalRepaid)}</b>
+            {" · "}Total remaining (due) <b>{fmtMoney(filteredTotals.totalRemaining)}</b>
+            {filtered.length !== safeLoans.length ? ` — based on ${filtered.length} filtered rows` : ` — all ${safeLoans.length} loans`}
+          </p>
+        )}
         <Dialog open={!!viewItem} onOpenChange={(open) => { if (!open) { setViewItem(null); setPayAmount(""); } }}>
           <DialogContent className="max-w-[450px] p-0 gap-0">
             <DialogHeader className="p-4 border-b border-slate-100 dark:border-zinc-800 bg-white dark:bg-zinc-900">
@@ -2245,12 +3194,17 @@ function LoanReportTable({
             {viewItem && (
               <form onSubmit={(e) => {
                 e.preventDefault();
-                const amt = parseFloat(payAmount);
-                if (!amt || amt <= 0) {
+                const amt = parseFloat(payAmount || "0");
+                const rem = parseFloat(payRemaining || "0");
+                if (!(amt > 0) && payStatus !== "Complete") {
                   toast({ title: "Error", description: "Enter a valid payment amount", variant: "destructive" });
                   return;
                 }
-                payInstallmentMutation.mutate({ id: viewItem.id, amount: amt });
+                if (!(rem >= 0)) {
+                  toast({ title: "Error", description: "Enter a valid remaining amount", variant: "destructive" });
+                  return;
+                }
+                payInstallmentMutation.mutate({ id: viewItem.id, amount: amt, remaining: rem, status: payStatus });
               }} className="p-5 space-y-4 bg-white dark:bg-zinc-900">
                 <div className="space-y-1.5">
                   <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Name</Label>
@@ -2258,8 +3212,12 @@ function LoanReportTable({
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Remaining</Label>
-                  <Input readOnly value={Number(viewItem.remainingAmount || 0).toString()} className="bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-700 text-[#555] dark:text-zinc-300 h-9 focus-visible:ring-0" />
+                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Remaning</Label>
+                  <Input
+                    type="number" step="0.01"
+                    value={payRemaining} onChange={e => setPayRemaining(e.target.value)}
+                    className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 text-[#555] h-9 focus-visible:ring-0"
+                  />
                 </div>
 
                 <div className="space-y-1.5">
@@ -2269,29 +3227,27 @@ function LoanReportTable({
                     value={payAmount} onChange={e => setPayAmount(e.target.value)}
                     className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 text-[#555] h-9 focus-visible:ring-0"
                   />
-                  <p className="text-[11px] text-slate-400">
-                    Any amount is accepted — skip a month, then pay a lump sum later; the loan closes automatically once the remaining balance reaches zero.
-                  </p>
                 </div>
 
-                <div className="flex justify-between items-center gap-2 pt-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    disabled={decideLoanMutation.isPending}
-                    onClick={() => { decideLoanMutation.mutate({ id: viewItem.id, action: "complete" }); setViewItem(null); }}
-                    className="text-[12px] font-semibold text-slate-500 hover:text-slate-700"
+                <div className="space-y-1.5">
+                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Status</Label>
+                  <select
+                    value={payStatus}
+                    onChange={e => setPayStatus(e.target.value as "Pending" | "Complete")}
+                    className="w-full h-9 rounded-md border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-[#555] dark:text-zinc-100 px-3 text-sm"
                   >
-                    Mark fully repaid
+                    <option value="Pending">Pending</option>
+                    <option value="Complete">Complete</option>
+                  </select>
+                </div>
+
+                <div className="flex justify-end items-center gap-2 pt-2 border-t border-slate-100 dark:border-zinc-800">
+                  <Button type="button" variant="outline" onClick={() => setViewItem(null)} className="bg-[#f0f2f5] dark:bg-zinc-800 text-[#555] dark:text-zinc-300 hover:bg-[#e4e6e9] dark:hover:bg-zinc-700 border-none px-5 h-9 text-[13px] font-semibold">
+                    Close
                   </Button>
-                  <div className="flex gap-2">
-                    <Button type="button" variant="outline" onClick={() => setViewItem(null)} className="bg-[#f0f2f5] dark:bg-zinc-800 text-[#555] dark:text-zinc-300 hover:bg-[#e4e6e9] dark:hover:bg-zinc-700 border-none px-5 h-9 text-[13px] font-semibold">
-                      Close
-                    </Button>
-                    <Button type="submit" disabled={payInstallmentMutation.isPending} className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-5 h-9 text-[13px] font-semibold">
-                      {payInstallmentMutation.isPending ? "..." : "Save"}
-                    </Button>
-                  </div>
+                  <Button type="submit" disabled={payInstallmentMutation.isPending} className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-5 h-9 text-[13px] font-semibold">
+                    {payInstallmentMutation.isPending ? "..." : "Save"}
+                  </Button>
                 </div>
               </form>
             )}
@@ -2717,17 +3673,6 @@ function ReportTab({
           <p className="text-sm text-muted-foreground">{reportTypeLabels[type].description}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
-          {type === "vas" && scope !== "company" && (
-            <Link href="/reports/vas/new">
-              <Button
-                size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                data-testid="button-create-vas-report"
-              >
-                + New VAS Report
-              </Button>
-            </Link>
-          )}
           {type === "gm" && (
             <Link href="/reports/gm/new">
               <Button
@@ -2778,6 +3723,7 @@ function ReportTab({
           totals={report.totals}
           activeSubTab={loanActiveSubTab}
           setActiveSubTab={setLoanActiveSubTab}
+          reportScope={scope}
         />
       )}
 
@@ -2786,6 +3732,8 @@ function ReportTab({
           <VasReportTable
             details={report.details ?? []}
             totals={report.totals}
+            departmentSummary={(report as any).departmentSummary ?? []}
+            legacyVas={(report as any).legacyVas}
             dateRange={dateRange}
             onDateChange={onDateChange}
             selectedUser={selectedUser}
@@ -2821,6 +3769,7 @@ function ReportTab({
           details={report.details ?? []}
           totals={report.totals}
           personAchievement={(report as any).personAchievement}
+          footer={(report as any).footer}
           dateRange={dateRange}
           onDateChange={onDateChange}
           selectedUser={selectedUser}
@@ -2836,7 +3785,8 @@ function ReportTab({
   );
 }
 
-import { isManagerialRole, isCompanyWideRole } from "@/lib/role-utils";
+import { isManagerialRole, isCompanyWideRole, normalizeRole } from "@/lib/role-utils";
+import { gmTypeLabel } from "@/lib/gm-type-label";
 
 export default function UserReports() {
   useModuleData("/reports");

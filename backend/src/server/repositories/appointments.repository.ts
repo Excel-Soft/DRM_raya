@@ -55,7 +55,17 @@ export class AppointmentsRepository {
       params.push(dateTo);
     }
     const whereSql = `where ${clauses.join(" and ")}`;
-    const sql = `
+    const legacyStaging = process.env.SKIP_SCHEMA_ENSURE === "true";
+    const sql = legacyStaging
+      ? `
+      select a.id as appointment_id, a.customer_id, a.starts_at, a.notes,
+             c.company_name, c.account_name, c.id as customer_row_id
+      from drm.appointments a
+      left join drm.customers c on c.id = a.customer_id
+      ${whereSql}
+      order by a.starts_at asc
+    `
+      : `
       select a.id as appointment_id, a.customer_id, a.starts_at, a.ends_at, a.notes, a.location,
              a.manager_status as managerstatus, a.manager_comment as managercomment,
              c.*
@@ -70,14 +80,18 @@ export class AppointmentsRepository {
       customerId: row.customer_id,
       userId,
       startsAt: row.starts_at,
-      endsAt: row.ends_at,
+      endsAt: row.ends_at ?? null,
       notes: row.notes ?? row.location ?? "Meeting",
-      location: row.location,
-      managerStatus: row.managerstatus,
-      managerComment: row.managercomment,
+      location: row.location ?? null,
+      managerStatus: row.managerstatus ?? "Pending",
+      managerComment: row.managercomment ?? "",
       createdAt: row.created_at ?? row.starts_at,
       isDeleted: row.is_deleted ?? false,
-      customer: row.id ? row : ({} as any),
+      customer: legacyStaging
+        ? ({ companyName: row.company_name, accountName: row.account_name, id: row.customer_row_id } as any)
+        : row.id
+          ? row
+          : ({} as any),
     } as any));
   }
 

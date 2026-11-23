@@ -39,7 +39,6 @@ import {
   Tag,
   Target,
   ChevronRight,
-  ChevronLeft,
   ChevronDown,
   ChevronUp,
   Plus,
@@ -63,8 +62,19 @@ type Ticket = {
   priority: "Low" | "Medium" | "High";
   channel: string;
   createdAt: string;
+  externalReference?: string | null;
   customer?: { companyName?: string; phone?: string } | null;
   assignedTo?: { name?: string } | null;
+};
+
+type ComplaintTicketsResponse = {
+  data: Ticket[];
+  stats: {
+    totalTickets: number;
+    pending: number;
+    resolved: number;
+    highPriority: number;
+  };
 };
 
 type CustomerSearchResult = {
@@ -89,6 +99,8 @@ function formatRoleLabel(role: string) {
 }
 
 function ticketNo(t: Ticket) {
+  const ref = t.externalReference?.trim();
+  if (ref) return ref;
   return `TKT-${t.id.slice(0, 8).toUpperCase()}`;
 }
 
@@ -96,6 +108,109 @@ function formatTicketDate(iso: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleString([], { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Compact page list — avoids rendering 80+ page buttons on legacy data. */
+function buildPageNumbers(current: number, total: number, maxButtons = 7): number[] {
+  if (total <= 1) return total === 1 ? [1] : [];
+  if (total <= maxButtons) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const half = Math.floor(maxButtons / 2);
+  let start = Math.max(1, current - half);
+  let end = Math.min(total, start + maxButtons - 1);
+  start = Math.max(1, end - maxButtons + 1);
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
+function TablePaginationBar({
+  page,
+  pageSize,
+  totalItems,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalItems === 0) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-t border-border/50">
+        <p className="text-[12px] text-muted-foreground">Showing 0 entries</p>
+      </div>
+    );
+  }
+  const pageNums = buildPageNumbers(page, totalPages);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-t border-border/50">
+      <p className="text-[12px] text-muted-foreground">
+        {`Showing ${(page - 1) * pageSize + 1} to ${Math.min(page * pageSize, totalItems)} of ${totalItems} entries`}
+        {totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""}
+      </p>
+      <div className="flex flex-wrap items-center gap-1">
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 text-[12px] font-bold"
+          disabled={page <= 1}
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+        >
+          Previous
+        </Button>
+        {pageNums[0] > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={() => onPageChange(1)}
+              className="h-8 min-w-8 px-1 rounded-md text-[12px] font-bold text-muted-foreground hover:bg-muted"
+            >
+              1
+            </button>
+            {pageNums[0] > 2 && <span className="text-[12px] text-muted-foreground px-0.5">…</span>}
+          </>
+        )}
+        {pageNums.map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onPageChange(p)}
+            className={cn(
+              "h-8 min-w-8 px-1 rounded-md text-[12px] font-bold transition-colors",
+              p === page ? "bg-emerald-500 text-white" : "text-muted-foreground hover:bg-muted",
+            )}
+          >
+            {p}
+          </button>
+        ))}
+        {pageNums.length > 0 && pageNums[pageNums.length - 1] < totalPages && (
+          <>
+            {pageNums[pageNums.length - 1] < totalPages - 1 && (
+              <span className="text-[12px] text-muted-foreground px-0.5">…</span>
+            )}
+            <button
+              type="button"
+              onClick={() => onPageChange(totalPages)}
+              className="h-8 min-w-8 px-1 rounded-md text-[12px] font-bold text-muted-foreground hover:bg-muted"
+            >
+              {totalPages}
+            </button>
+          </>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 text-[12px] font-bold"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function isToday(iso: string) {
@@ -234,7 +349,10 @@ export default function ComplaintManagerDashboard() {
 
   const [resolvedFocus, setResolvedFocus] = useState(false);
   const [resolvedPage, setResolvedPage] = useState(1);
-  const RESOLVED_PAGE_SIZE = 5;
+  const RESOLVED_PAGE_SIZE = 10;
+
+  const [highPriorityPage, setHighPriorityPage] = useState(1);
+  const HIGH_PRIORITY_PAGE_SIZE = 10;
 
   const [companySearch, setCompanySearch] = useState("");
   const [debouncedCompanySearch, setDebouncedCompanySearch] = useState("");
@@ -268,8 +386,15 @@ export default function ComplaintManagerDashboard() {
     return () => clearTimeout(t);
   }, [assigneeSearch]);
 
-  const ticketsQuery = useQuery<Ticket[]>({ queryKey: ["/api/support/tickets"] });
-  const tickets = ticketsQuery.data || [];
+  const ticketsQuery = useQuery<ComplaintTicketsResponse>({
+    queryKey: ["/api/complaint-manager/tickets", period],
+    queryFn: () =>
+      apiRequestJson<ComplaintTicketsResponse>(
+        "GET",
+        `/api/complaint-manager/tickets?period=${encodeURIComponent(period)}`,
+      ),
+  });
+  const tickets = ticketsQuery.data?.data ?? [];
 
   // Same shared endpoint hod-dashboard/product-posting-dashboard/etc. use for
   // their "Important" widget (see backend hod-routes.ts — it's department-
@@ -298,22 +423,24 @@ export default function ComplaintManagerDashboard() {
   const assigneeSearchQuery = useQuery<AssigneeResult[]>({
     queryKey: ["/api/users", "assignee-search", debouncedAssigneeSearch],
     queryFn: async () => {
-      const res = await apiRequestJson<{ users: Array<{ id: string; fullName: string; role: string }> }>(
+      const res = await apiRequestJson<{ users: Array<{ id: string; fullName: string; role: string; isDeactive?: boolean }> }>(
         "GET",
         `/api/users?search=${encodeURIComponent(debouncedAssigneeSearch)}`
       );
-      return res.users.map((u) => ({ id: u.id, fullName: u.fullName, role: u.role }));
+      // Disabled (role 54 "Deactive") profiles can't be assigned.
+      return res.users.filter((u) => !u.isDeactive).map((u) => ({ id: u.id, fullName: u.fullName, role: u.role }));
     },
   });
 
   const reassignSearchQuery = useQuery<AssigneeResult[]>({
     queryKey: ["/api/users", "reassign-search", debouncedReassignSearch],
     queryFn: async () => {
-      const res = await apiRequestJson<{ users: Array<{ id: string; fullName: string; role: string }> }>(
+      const res = await apiRequestJson<{ users: Array<{ id: string; fullName: string; role: string; isDeactive?: boolean }> }>(
         "GET",
         `/api/users?search=${encodeURIComponent(debouncedReassignSearch)}`
       );
-      return res.users.map((u) => ({ id: u.id, fullName: u.fullName, role: u.role }));
+      // Disabled (role 54 "Deactive") profiles can't be assigned.
+      return res.users.filter((u) => !u.isDeactive).map((u) => ({ id: u.id, fullName: u.fullName, role: u.role }));
     },
   });
 
@@ -327,9 +454,18 @@ export default function ComplaintManagerDashboard() {
   });
   const DEPARTMENT_OPTIONS = (departmentsQuery.data?.data ?? []).map((d) => d.name);
 
-  const todayList = useMemo(() => tickets.filter((t) => isToday(t.createdAt)), [tickets]);
+  const todayList = useMemo(() => {
+    const pendingToday = tickets.filter(
+      (t) => isToday(t.createdAt) && (t.status === "Open" || t.status === "InProgress"),
+    );
+    if (pendingToday.length > 0) return pendingToday;
+    return tickets.filter((t) => t.status === "Open" || t.status === "InProgress");
+  }, [tickets]);
   const pendingList = useMemo(() => tickets.filter((t) => t.status === "Open" || t.status === "InProgress"), [tickets]);
-  const resolvedList = useMemo(() => tickets.filter((t) => t.status === "Resolved"), [tickets]);
+  const resolvedList = useMemo(
+    () => tickets.filter((t) => t.status === "Resolved" || t.status === "Closed"),
+    [tickets],
+  );
   const highPriorityList = useMemo(() => tickets.filter((t) => t.priority === "High"), [tickets]);
 
   const visibleTicketRows = useMemo(() => {
@@ -359,11 +495,17 @@ export default function ComplaintManagerDashboard() {
 
   const resolvedTotalPages = Math.max(1, Math.ceil((resolvedFocus ? 1 : resolvedList.length) / RESOLVED_PAGE_SIZE));
 
+  const highPriorityTotalPages = Math.max(1, Math.ceil(highPriorityList.length / HIGH_PRIORITY_PAGE_SIZE));
+  const pagedHighPriority = useMemo(() => {
+    const start = (highPriorityPage - 1) * HIGH_PRIORITY_PAGE_SIZE;
+    return highPriorityList.slice(start, start + HIGH_PRIORITY_PAGE_SIZE);
+  }, [highPriorityList, highPriorityPage]);
+
   const stats = {
-    totalTickets: tickets.length,
-    pending: pendingList.length,
-    resolved: resolvedList.length,
-    highPriority: highPriorityList.length,
+    totalTickets: ticketsQuery.data?.stats?.totalTickets ?? tickets.length,
+    pending: ticketsQuery.data?.stats?.pending ?? pendingList.length,
+    resolved: ticketsQuery.data?.stats?.resolved ?? resolvedList.length,
+    highPriority: ticketsQuery.data?.stats?.highPriority ?? highPriorityList.length,
   };
 
   const importantStats = {
@@ -383,7 +525,7 @@ export default function ComplaintManagerDashboard() {
       // prefix instead of silently dropping them.
       const subjectParts = [addTicketForm.service, addTicketForm.department].filter(Boolean);
       subjectParts.push(addTicketForm.detail.trim());
-      return apiRequestJson("POST", "/api/support/tickets", {
+      return apiRequestJson("POST", "/api/complaint-manager/tickets", {
         customerId: selectedCustomer?.id,
         assignedToUserId: selectedAssignee?.id,
         subject: subjectParts.join(" · "),
@@ -392,7 +534,7 @@ export default function ComplaintManagerDashboard() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/support/tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/complaint-manager/tickets"] });
       toast({ title: "Ticket added", description: selectedCustomer?.companyName || "No company linked" });
       setAddTicketForm({ service: "", department: "", priority: "", detail: "" });
       setSelectedCustomer(null);
@@ -417,8 +559,8 @@ export default function ComplaintManagerDashboard() {
   // Shows prior comments on the ticket thread — including rejection reasons
   // from whoever it was assigned to (see ticket-assignment-popup.tsx).
   const ticketMessagesQuery = useQuery<Array<{ id: string; senderName?: string | null; message: string; createdAt: string }>>({
-    queryKey: ["/api/support/tickets", statusDialogTicket?.id, "messages"],
-    queryFn: () => apiRequestJson("GET", `/api/support/tickets/${statusDialogTicket?.id}/messages`),
+    queryKey: ["/api/complaint-manager/tickets", statusDialogTicket?.id, "messages"],
+    queryFn: () => apiRequestJson("GET", `/api/complaint-manager/tickets/${statusDialogTicket?.id}/messages`),
     enabled: !!statusDialogTicket,
   });
 
@@ -426,25 +568,21 @@ export default function ComplaintManagerDashboard() {
     mutationFn: async () => {
       if (!statusDialogTicket) throw new Error("No ticket selected");
       if (!statusForm.status) throw new Error("Status is required");
-      await apiRequestJson("POST", `/api/support/tickets/${statusDialogTicket.id}/status`, { status: statusForm.status });
+      await apiRequestJson("POST", `/api/complaint-manager/tickets/${statusDialogTicket.id}/status`, { status: statusForm.status });
       if (statusForm.comment.trim()) {
-        await apiRequestJson("POST", "/api/support/messages", {
+        await apiRequestJson("POST", "/api/complaint-manager/messages", {
           ticketId: statusDialogTicket.id,
           message: statusForm.comment.trim(),
         });
       }
       if (selectedReassignee) {
-        // Reassigning resets assignmentStatus to "pending" server-side, so the
-        // new assignee gets the sticky accept/reject popup again — this is how
-        // a rejected ticket gets handed to someone else (or back to the same
-        // person) after the complaint manager reviews the rejection reason.
-        await apiRequestJson("POST", `/api/support/tickets/${statusDialogTicket.id}/assign`, {
+        await apiRequestJson("POST", `/api/complaint-manager/tickets/${statusDialogTicket.id}/assign`, {
           userId: selectedReassignee.id,
         });
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/support/tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/complaint-manager/tickets"] });
       toast({
         title: "Project status updated",
         description: selectedReassignee
@@ -593,45 +731,13 @@ export default function ComplaintManagerDashboard() {
                     </TableBody>
                   </Table>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-t border-border/50">
-                  <p className="text-[12px] text-muted-foreground">
-                    {visibleTicketRows.length === 0
-                      ? "Showing 0 entries"
-                      : `Showing ${(ticketsPage - 1) * ticketsPageSize + 1} to ${Math.min(ticketsPage * ticketsPageSize, visibleTicketRows.length)} of ${visibleTicketRows.length} entries`}
-                  </p>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-[12px] font-bold"
-                      disabled={ticketsPage <= 1}
-                      onClick={() => setTicketsPage((p) => Math.max(1, p - 1))}
-                    >
-                      Previous
-                    </Button>
-                    {Array.from({ length: ticketsTotalPages }, (_, i) => i + 1).map((p) => (
-                      <button
-                        key={p}
-                        onClick={() => setTicketsPage(p)}
-                        className={cn(
-                          "h-8 w-8 rounded-md text-[12px] font-bold transition-colors",
-                          p === ticketsPage ? "bg-emerald-500 text-white" : "text-muted-foreground hover:bg-muted"
-                        )}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-[12px] font-bold"
-                      disabled={ticketsPage >= ticketsTotalPages}
-                      onClick={() => setTicketsPage((p) => Math.min(ticketsTotalPages, p + 1))}
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
+                <TablePaginationBar
+                  page={ticketsPage}
+                  pageSize={ticketsPageSize}
+                  totalItems={visibleTicketRows.length}
+                  totalPages={ticketsTotalPages}
+                  onPageChange={setTicketsPage}
+                />
               </CardContent>
             </Card>
 
@@ -700,26 +806,13 @@ export default function ComplaintManagerDashboard() {
                     </TableBody>
                   </Table>
                 </div>
-                <div className="flex items-center justify-center gap-2 py-4 border-t border-border/50">
-                  <Button variant="ghost" size="icon" className="h-8 w-8" disabled={resolvedPage <= 1} onClick={() => setResolvedPage((p) => Math.max(1, p - 1))}>
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  {Array.from({ length: resolvedTotalPages }, (_, i) => i + 1).map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => setResolvedPage(p)}
-                      className={cn(
-                        "h-8 w-8 rounded-full text-[12px] font-bold transition-colors",
-                        p === resolvedPage ? "bg-emerald-500 text-white" : "text-muted-foreground hover:bg-muted"
-                      )}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                  <Button variant="ghost" size="icon" className="h-8 w-8" disabled={resolvedPage >= resolvedTotalPages} onClick={() => setResolvedPage((p) => Math.min(resolvedTotalPages, p + 1))}>
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
+                <TablePaginationBar
+                  page={resolvedPage}
+                  pageSize={RESOLVED_PAGE_SIZE}
+                  totalItems={resolvedFocus ? Math.min(1, resolvedList.length) : resolvedList.length}
+                  totalPages={resolvedTotalPages}
+                  onPageChange={setResolvedPage}
+                />
               </CardContent>
             </Card>
           </div>
@@ -933,9 +1026,9 @@ export default function ComplaintManagerDashboard() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    highPriorityList.map((h, i) => (
+                    pagedHighPriority.map((h, i) => (
                       <TableRow key={h.id}>
-                        <TableCell className="pl-6">{i + 1}</TableCell>
+                        <TableCell className="pl-6">{(highPriorityPage - 1) * HIGH_PRIORITY_PAGE_SIZE + i + 1}</TableCell>
                         <TableCell className="font-bold whitespace-nowrap">{ticketNo(h)}</TableCell>
                         <TableCell className="font-bold">{h.customer?.companyName || "-"}</TableCell>
                         <TableCell className="whitespace-nowrap">{h.customer?.phone || "-"}</TableCell>
@@ -952,6 +1045,13 @@ export default function ComplaintManagerDashboard() {
                 </TableBody>
               </Table>
             </div>
+            <TablePaginationBar
+              page={highPriorityPage}
+              pageSize={HIGH_PRIORITY_PAGE_SIZE}
+              totalItems={highPriorityList.length}
+              totalPages={highPriorityTotalPages}
+              onPageChange={setHighPriorityPage}
+            />
           </CardContent>
         </Card>
 

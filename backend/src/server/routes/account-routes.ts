@@ -71,6 +71,24 @@ import {
   type GmSalesConfig,
 } from "@shared/gm-sales-constants";
 import { normalizeRole, ROLES } from "../utils/role-utils";
+import { computeLegacyAbStats } from "../services/ab-report-legacy.service";
+import {
+  countLegacyDollarFullPayments,
+  countLegacyDollarPartialCleared,
+  countLegacyDollarPartialPending,
+  fetchLegacyDollarDailyTx,
+  fetchLegacyAbDollarSystem,
+  fetchLegacyDollarFullPayments,
+  fetchLegacyDollarPartialPayments,
+  computeLegacyDollarAbLiabilities,
+  computeLegacyWalletStats,
+  resolveWalletPeriod,
+  fetchLegacyMonthBuyingUsd,
+  legacyDollarHistoryAvailable,
+  legacyVerifyGmAvailable,
+  modernDollarBuyingEmpty,
+  modernDollarFullPaymentsWhere,
+} from "../utils/dollar-system-legacy";
 import { requireRole } from "../middleware/auth.middleware";
 import { InvoiceWorkflowService, INVOICE_AUDIT_ENTITY } from "./services/invoice-workflow.service";
 type Actor = any;
@@ -85,6 +103,7 @@ import {
   recordInvoiceApprovalPayment,
   shouldRunProjectGenerationForApproval,
 } from "../services/invoice-project-threshold.service";
+import { loadRoleTitles, userRoleInfo } from "../utils/user-role-titles";
 
 // ── Phase 3: Strict Zod schemas for account-routes write endpoints ──────────
 const createProjectFromGmSchema = z.object({
@@ -106,8 +125,8 @@ const donationCreateSchema = z.object({
   title: z.string().trim().max(20).optional(),
   amount: z.coerce.number().positive("amount must be positive"),
   currency: z.enum(["PKR", "USD"]).default("PKR"),
-  referenceNumber: z.string().trim().max(200).optional(),
-  comment: z.string().trim().max(2000).optional(),
+  referenceNumber: z.string().trim().max(200).nullable().optional(),
+  comment: z.string().trim().max(2000).nullable().optional(),
 }).strict();
 
 const tempGmCreateSchema = z.object({
@@ -127,6 +146,38 @@ const tempGmDeleteSchema = z.object({
   deleteReason: z.string().trim().min(3, "deleteReason is required").max(2000),
 }).strict();
 
+// Temp GM / Refund GM edit and Refund GM status change: admin, Account and HOD only
+// (product rule, Nov 2026). The financial-permission middleware is a pass-through
+// stub in this checkout, so the role is checked here.
+const GM_EDIT_ROLES: string[] = [ROLES.ADMIN, ROLES.ACCOUNT_MANAGER, ROLES.SUPER_HOD, ROLES.HOD];
+function canEditTempRefundGm(req: any): boolean {
+  const u = req.user as any;
+  return GM_EDIT_ROLES.includes(normalizeRole(String(u?.activeRoleId || u?.roleId || u?.role || "")));
+}
+
+const tempGmEditSchema = z.object({
+  companyName: z.string().trim().min(1, "companyName is required").max(500),
+  personName: z.string().trim().min(1, "personName is required").max(500),
+  amount: z.coerce.number().positive("amount must be positive"),
+  amountType: z.enum(["PKR", "USD"]).default("PKR"),
+  reason: z.string().trim().min(1, "reason is required").max(2000),
+  comment: z.string().trim().max(2000).nullable().optional(),
+}).strict();
+
+const refundGmEditSchema = z.object({
+  companyName: z.string().trim().min(1, "companyName is required").max(500),
+  personName: z.string().trim().min(1, "personName is required").max(500),
+  amount: z.coerce.number().positive("amount must be positive"),
+  amountType: z.enum(["PKR", "USD", "EUR"]).default("PKR"),
+  comment: z.string().trim().max(2000).nullable().optional(),
+}).strict();
+
+// Same values the HOD verification queue writes ('Approved' / 'Rejected'); it lists
+// 'pending' / 'Pending' rows.
+const refundGmStatusSchema = z.object({
+  status: z.enum(["Pending", "Approved", "Rejected", "Clear"]),
+}).strict();
+
 const refundGmCreateSchema = z.object({
   // The specific GM/order being refunded — required so the Paid-Alibaba
   // check below has something concrete to check against (a free-text
@@ -142,6 +193,18 @@ const refundGmCreateSchema = z.object({
   amountType: z.enum(["PKR", "USD", "EUR"]).default("PKR"),
   comment: z.string().trim().max(2000).optional(),
 }).strict();
+
+// drm.project_payments.payment_method is the drm.payment_method enum
+// (Cash | BankTransfer | CreditCard | Cheque | Online); the Account Manager UI
+// sends display labels such as "Bank Transfer", which the enum rejects.
+function projectPaymentMethodEnum(raw: unknown): string {
+  const key = String(raw ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  const map: Record<string, string> = {
+    cash: "Cash", banktransfer: "BankTransfer", bank: "BankTransfer",
+    creditcard: "CreditCard", card: "CreditCard", cheque: "Cheque", check: "Cheque", online: "Online",
+  };
+  return map[key] ?? "BankTransfer";
+}
 
 const quotationApproveSchema = z.object({
   action: z.enum(["approve", "reject"]),
@@ -312,6 +375,12 @@ async function ensureLoanTermsReadyForReceivable(
     console.error(`[accounts] ensureLoanTermsReadyForReceivable failed for GM ${gmId} (non-fatal):`, err);
   }
 }
+
+// Old-DRM balance slots copied into drm.dollar_buying (scripts/migration/
+// copy-legacy-dollar-balance-slots.sql) exist so they can be spent in Pay Alibaba.
+// Totals that already count old buys from legacy_archive must skip them.
+const DB_NOT_LEGACY = (idCol: string) =>
+  `NOT EXISTS (SELECT 1 FROM migration_meta.migration_legacy_ids lm_db WHERE lm_db.modern_table = 'dollar_buying' AND lm_db.modern_id = ${idCol}::text)`;
 
 export function registerAccountRoutes(app: Express) {
   // ===== GM Entries Routes =====
@@ -789,7 +858,7 @@ export function registerAccountRoutes(app: Express) {
         WITH combined AS (
           SELECT 
             id::text,
-            gm_type,
+            gm_type::text AS gm_type,
             drm_id,
             member_id,
             order_id,
@@ -798,18 +867,18 @@ export function registerAccountRoutes(app: Express) {
             added_by_name,
             package_type,
             entry_type,
-            amount,
+            amount_usd AS amount,
             amount_usd,
             customer_dollar,
             dollar_rate,
             amount_pkr,
-            status,
+            status::text AS status,
             approval_status,
             hod_status,
             accountant_status,
             final_status,
-            is_loan,
-            is_partial_payment,
+            (coalesce(is_loan, 0) <> 0) AS is_loan,
+            (coalesce(is_partial_payment, 0) <> 0) AS is_partial_payment,
             canonical_gm_type,
             notes,
             created_at,
@@ -928,10 +997,10 @@ export function registerAccountRoutes(app: Express) {
               where date_trunc('month', timezone('Asia/Karachi', created_at))
                   = date_trunc('month', timezone('Asia/Karachi', now()))
             )::int as monthly_count,
-            coalesce(sum(coalesce(amount_usd, amount, 0)),0)::numeric as total_amount,
+            coalesce(sum(coalesce(amount_usd, 0)),0)::numeric as total_amount,
             count(*) filter (where status = 'Pending')::int as pending_count,
-            count(*) filter (where coalesce(is_loan,false))::int as loan_count,
-            count(*) filter (where coalesce(is_partial_payment,false))::int as partial_payment_count,
+            count(*) filter (where (coalesce(is_loan,0) <> 0))::int as loan_count,
+            count(*) filter (where (coalesce(is_partial_payment,0) <> 0))::int as partial_payment_count,
             (
               select dollar_rate
                 from drm.gm_entries
@@ -1407,7 +1476,7 @@ export function registerAccountRoutes(app: Express) {
                 g.payment_status, g.notes, g.dropout, g.extension, g.installments,
                 g.payment_proof_url, g.created_at,
                 COALESCE(cu.full_name, cu.name, cu.username) AS added_by_name,
-                COALESCE(g.is_loan,false) AS is_loan, COALESCE(g.is_partial_payment,false) AS is_partial_payment
+                (coalesce(g.is_loan,0) <> 0) AS is_loan, (coalesce(g.is_partial_payment,0) <> 0) AS is_partial_payment
          FROM drm.gm_entries g
          LEFT JOIN drm.users cu ON cu.id::text = g.created_by::text
          WHERE g.id::text = $1 AND COALESCE(g.is_deleted,false) = false`,
@@ -2509,16 +2578,15 @@ export function registerAccountRoutes(app: Express) {
       const { rows } = await pool.query(
         `SELECT
            id,
-           donor_name AS "personName",
+           person_name AS "personName",
            title,
            reference_number AS "referenceNumber",
            amount,
            currency,
-           notes      AS comment,
+           comment,
            status,
            created_at AS "createdAt"
          FROM drm.donations
-         WHERE is_deleted IS NOT TRUE
          ORDER BY created_at DESC`
       );
       res.json(rows);
@@ -2566,10 +2634,10 @@ export function registerAccountRoutes(app: Express) {
       const { personName, title, amount, currency, referenceNumber, comment } = _don.data;
 
       const { rows } = await pool.query(
-        `INSERT INTO drm.donations (donor_name, title, amount, currency, reference_number, notes, status, date)
-         VALUES ($1, $2, $3, $4, $5, $6, 'Pending', now())
-         RETURNING id, donor_name AS "personName", title, reference_number AS "referenceNumber",
-                   amount, currency, notes AS comment, status, created_at AS "createdAt"`,
+        `INSERT INTO drm.donations (company_name, person_name, title, amount, currency, reference_number, comment, status)
+         VALUES ($1, $1, $2, $3, $4, $5, $6, 'Pending')
+         RETURNING id, person_name AS "personName", title, reference_number AS "referenceNumber",
+                   amount, currency, comment, status, created_at AS "createdAt"`,
         [personName, title || "Mr.", amount, currency, referenceNumber || null, comment || null]
       );
       res.status(201).json(rows[0]);
@@ -2579,6 +2647,30 @@ export function registerAccountRoutes(app: Express) {
     }
   });
 
+
+  // PATCH /api/account/donations/:id - edit a donation (same fields as Add Donation)
+  app.patch("/api/account/donations/:id", requireFinancialPermission(FINANCIAL_ACTIONS.donationCreate), async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const _don = donationCreateSchema.safeParse(req.body);
+      if (!_don.success) return res.status(400).json({ error: "Invalid payload", issues: _don.error.issues });
+      const { personName, title, amount, currency, referenceNumber, comment } = _don.data;
+      const { rows } = await pool.query(
+        `UPDATE drm.donations
+            SET person_name = $2, title = $3, amount = $4, currency = $5,
+                reference_number = $6, comment = $7
+          WHERE id = $1
+          RETURNING id, person_name AS "personName", title, reference_number AS "referenceNumber",
+                    amount, currency, comment, status, created_at AS "createdAt"`,
+        [req.params.id, personName, title ?? "", amount, currency, referenceNumber || null, comment || null]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "Donation not found" });
+      res.json(rows[0]);
+    } catch (error) {
+      console.error("Error updating donation:", error);
+      res.status(500).json({ error: "Failed to update donation" });
+    }
+  });
 
   // DELETE /api/account/donations/:id
   app.delete("/api/account/donations/:id", async (req, res) => {
@@ -2597,6 +2689,354 @@ export function registerAccountRoutes(app: Express) {
   });
 
 
+  // ===== Make Invoice (old-DRM invoice list) =====
+  // Legacy text amount -> numeric.
+  const MI_NUM = (col: string) =>
+    `coalesce(nullif(regexp_replace(coalesce(${col}, ''), '[^0-9.]', '', 'g'), '')::numeric, 0)`;
+  // Item payments saved from this page (the rows copied from webxl_invoice_item_pay are
+  // already counted in the legacy pay columns, so only rows without a mapping are added).
+  const MI_NEW_PAY = (a: string) =>
+    `NOT EXISTS (SELECT 1 FROM migration_meta.migration_legacy_ids mm
+                  WHERE mm.modern_table = 'legacy_invoice_item_payments' AND mm.modern_id = ${a}.id::text)`;
+
+  // Old page (drm/make-invoice): webxl_invoice created in the last month, newest first;
+  // Company = comname(com_id), Sale Person = username(user_id), Create, Payment = grand_total;
+  // plus icon green ("Payed") when the invoice has a webxl_payments row, else red ("Pending").
+  // The archive is a snapshot, so the month is counted back from the newest invoice in it
+  // (counting from today would empty the list as the snapshot ages). A search looks
+  // through every invoice, not just the last month.
+  app.get("/api/account/make-invoice", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const page = Math.max(1, parseInt(String(req.query.page ?? "1")) || 1);
+      const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? "10")) || 10));
+      const search = String(req.query.search ?? "").trim();
+      const params: any[] = [];
+      let where: string;
+      if (search) {
+        params.push(`%${search}%`);
+        where = `(coalesce(c.cname, i.cname) ILIKE $1 OR u.name ILIKE $1 OR i.invoice_id = $2 OR c.com_id ILIKE $1)`;
+        params.push(search);
+      } else {
+        where = `i.create_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+                 AND i.create_date::timestamp > (SELECT max(create_date::timestamp) FROM legacy_archive.webxl_invoice
+                                                  WHERE create_date ~ '^\\d{4}-\\d{2}-\\d{2}') - interval '1 month'`;
+      }
+      const base = `
+        FROM legacy_archive.webxl_invoice i
+        LEFT JOIN legacy_archive.webxl_company c ON c._source_table = 'webxl_company' AND c._legacy_pk = i.com_id
+        LEFT JOIN legacy_archive.webxl_user u ON u._source_table = 'webxl_user' AND u._legacy_pk = i.user_id
+        WHERE ${where}`;
+      const countRes = await pool.query(`SELECT count(*)::int AS total ${base}`, params);
+      params.push(pageSize, (page - 1) * pageSize);
+      const { rows } = await pool.query(
+        `SELECT i.invoice_id AS "invoiceId", i.com_id AS "comId",
+                coalesce(nullif(btrim(c.cname), ''), i.cname) AS "companyName",
+                i.cname AS "invoiceName",
+                u.name AS "salePerson",
+                i.create_date AS "createdAt",
+                coalesce(nullif(i.grand_total, ''), '0') AS "grandTotal",
+                (${MI_NUM("i.pay")} + coalesce(np.amount, 0) + coalesce((
+                   SELECT sum(le.amount) FROM drm.ledger_entries le
+                    WHERE le.reference_id = (SELECT m.modern_id FROM migration_meta.migration_legacy_ids m
+                                              WHERE m.entity_type = 'invoice' AND m.legacy_table = 'webxl_invoice' AND m.legacy_id = i.invoice_id LIMIT 1)
+                      AND le.category = 'Invoice Payment' AND le.entry_type = 'Credit'), 0))::text AS "pay",
+                i.phone, i.email, i.address, i.sub_total AS "subTotal", i.discount, i.gst,
+                i.doller_rate AS "dollarRate", i.account,
+                (EXISTS (SELECT 1 FROM legacy_archive.webxl_payments p WHERE p.invoice_id = i.invoice_id)
+                 OR np.n > 0) AS "isPaid"
+         ${base.replace("WHERE", `LEFT JOIN LATERAL (
+              SELECT count(*)::int AS n, sum(x.amount) AS amount
+                FROM drm.legacy_invoice_item_payments x
+               WHERE x.legacy_invoice_id = i.invoice_id AND ${MI_NEW_PAY("x")}) np ON true
+         WHERE`)}
+         ORDER BY i.invoice_id::int DESC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params,
+      );
+      res.json({ data: rows, total: countRes.rows[0]?.total ?? 0, page, pageSize });
+    } catch (error) {
+      console.error("Error fetching make-invoice list:", error);
+      res.status(500).json({ error: "Failed to fetch invoices" });
+    }
+  });
+
+  // POST /api/account/make-invoice/:invoiceId/payment — the old "Create Project" Save
+  // (func.php add_invoice). The legacy archive is read-only, so the payment is written to
+  // the new tables:
+  //   - drm.legacy_invoice_item_payments: one row per selected item; the amount fills the
+  //     selected items in order up to each item's open PKR, the rest goes to the last one
+  //   - drm.ledger_entries: one Credit for the whole amount, referenced to the invoice
+  //   - drm.invoices (the copied invoice): Paid once everything is received
+  //   - drm.projects: a project for each selected item that reaches 30% of its PKR (the
+  //     figure the old dropdown shows) or is Free / Delay, once per item
+  const makeInvoicePaymentSchema = z.object({
+    amount: z.coerce.number().min(0),
+    method: z.enum(["cash", "Bank Transfar", "Free", "Delay"]),
+    payRecDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable().or(z.literal("")),
+    comments: z.string().trim().max(2000).optional().nullable(),
+    items: z.array(z.string().regex(/^\d+$/)).min(1, "Select at least one project item"),
+  }).strict();
+
+  app.post("/api/account/make-invoice/:invoiceId/payment", requireRole("account_manager", "admin"), async (req, res) => {
+    const parsed = makeInvoicePaymentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid payload", issues: parsed.error.issues });
+    const { amount, method, payRecDate, comments, items } = parsed.data;
+    const isFreeOrDelay = method === "Free" || method === "Delay";
+    if (!isFreeOrDelay && !(amount > 0)) return res.status(400).json({ error: "Enter the amount received" });
+    const legacyId = String(req.params.invoiceId);
+    if (!/^\d+$/.test(legacyId)) return res.status(400).json({ error: "Invalid invoice" });
+    const userId = getUserId(req)!;
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const invRes = await client.query(
+        `SELECT i.invoice_id, i.com_id, i.user_id, coalesce(nullif(btrim(i.cname), ''), '-') AS cname,
+                ${MI_NUM("i.grand_total")} AS grand_total, ${MI_NUM("i.pay")} AS legacy_pay,
+                (SELECT m.modern_id FROM migration_meta.migration_legacy_ids m
+                  WHERE m.entity_type = 'invoice' AND m.legacy_table = 'webxl_invoice' AND m.legacy_id = i.invoice_id LIMIT 1) AS modern_invoice_id,
+                (SELECT m.modern_id::uuid FROM migration_meta.migration_legacy_ids m
+                  WHERE m.entity_type = 'customer' AND m.legacy_table = 'webxl_company' AND m.legacy_id = i.com_id LIMIT 1) AS customer_id,
+                (SELECT m.modern_id::uuid FROM migration_meta.migration_legacy_ids m
+                  WHERE m.entity_type = 'user' AND m.legacy_table = 'webxl_user' AND m.legacy_id = i.user_id
+                    AND EXISTS (SELECT 1 FROM drm.users x WHERE x.id = m.modern_id::uuid) LIMIT 1) AS sales_user_id
+           FROM legacy_archive.webxl_invoice i
+          WHERE i._source_table = 'webxl_invoice' AND i._legacy_pk = $1`,
+        [legacyId],
+      );
+      const inv = invRes.rows[0];
+      if (!inv) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Invoice not found" }); }
+      if (inv.modern_invoice_id) {
+        // Serialise saves on the same invoice.
+        await client.query(`SELECT id FROM drm.invoices WHERE id = $1 FOR UPDATE`, [inv.modern_invoice_id]);
+      }
+
+      const itemRes = await client.query(
+        `SELECT it.id, coalesce(nullif(btrim(it.item), ''), 'Item') AS item, ${MI_NUM("it.pkr")} AS pkr,
+                ${MI_NUM("it.pay")} + coalesce((SELECT sum(x.amount) FROM drm.legacy_invoice_item_payments x
+                                                 WHERE x.legacy_inv_item_id = it.id AND ${MI_NEW_PAY("x")}), 0) AS paid,
+                coalesce(it.start, '0') = '1'
+                  OR EXISTS (SELECT 1 FROM drm.projects pr WHERE pr.notes = 'make-invoice item ' || it.id) AS started
+           FROM legacy_archive.webxl_invoice_item it
+          WHERE it.invoice_id = $1 AND it.id = ANY($2::text[])
+          ORDER BY array_position($2::text[], it.id)`,
+        [legacyId, items],
+      );
+      if (itemRes.rows.length !== new Set(items).size) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "A selected project item does not belong to this invoice" });
+      }
+
+      // Split the amount over the selected items.
+      let left = amount;
+      const parts = itemRes.rows.map((it: any, idx: number) => {
+        const open = Math.max(0, Number(it.pkr) - Number(it.paid));
+        const share = idx === itemRes.rows.length - 1 ? left : Math.min(left, open);
+        left = Math.round((left - share) * 100) / 100;
+        return { ...it, share: Math.round(share * 100) / 100 };
+      });
+
+      const paidAt = payRecDate ? `${payRecDate} 12:00:00` : null;
+      for (const it of parts) {
+        await client.query(
+          `INSERT INTO drm.legacy_invoice_item_payments
+             (invoice_id, legacy_invoice_id, legacy_inv_item_id, item_label, amount, method, paid_at)
+           VALUES ($1::uuid, $2, $3, $4, $5, $6, coalesce($7::timestamp, now()))`,
+          [inv.modern_invoice_id, legacyId, it.id, it.item, it.share, method, paidAt],
+        );
+      }
+
+      await client.query(
+        `INSERT INTO drm.ledger_entries
+           (entry_type, amount, currency, description, category, date, entry_date, reference_id, reference_type,
+            created_by_user_id, status, remarks, posted_at, posted_by_user_id)
+         VALUES ('Credit', $1, 'PKR', $2, 'Invoice', coalesce($3::timestamp, now()), coalesce($3::timestamp, now()),
+                 $4, 'invoice', $5, 'Posted', $6, now(), $5)`,
+        [amount, `Payment inv ${legacyId} - ${inv.cname} (${method})`, paidAt, inv.modern_invoice_id, userId,
+         [comments ? `Comments: ${comments}` : null, `make-invoice legacy_invoice_id=${legacyId}`].filter(Boolean).join(" | ")],
+      );
+
+      // Invoice total received = old pay + everything saved from this page.
+      const totRes = await client.query(
+        `SELECT coalesce(sum(x.amount), 0) AS s FROM drm.legacy_invoice_item_payments x
+          WHERE x.legacy_invoice_id = $1 AND ${MI_NEW_PAY("x")}`,
+        [legacyId],
+      );
+      const received = Number(inv.legacy_pay) + Number(totRes.rows[0].s);
+      const fullyPaid = Number(inv.grand_total) > 0 && received >= Number(inv.grand_total);
+      if (inv.modern_invoice_id) {
+        await client.query(
+          `UPDATE drm.invoices
+              SET payment_method = $2,
+                  status = CASE WHEN $3 THEN 'Paid'::drm.invoice_status ELSE status END,
+                  paid_at = CASE WHEN $3 AND paid_at IS NULL THEN now() ELSE paid_at END,
+                  updated_at = now()
+            WHERE id = $1`,
+          [inv.modern_invoice_id, method, fullyPaid],
+        );
+      }
+
+      // Start projects (once per item).
+      const started: string[] = [];
+      for (const it of parts) {
+        if (it.started) continue;
+        const itemPaid = Number(it.paid) + it.share;
+        if (!(isFreeOrDelay || itemPaid >= Number(it.pkr) * 0.3)) continue;
+        const dept = await client.query(
+          `SELECT department_type FROM drm.projects
+            WHERE project_type = 'INVOICE_ROOT' AND lower(btrim(name)) = lower(btrim($1)) AND department_type IS NOT NULL
+            GROUP BY 1 ORDER BY count(*) DESC LIMIT 1`,
+          [it.item],
+        );
+        await client.query(
+          `INSERT INTO drm.projects
+             (customer_id, name, description, owner_user_id, department_type, project_type, status, start_date, notes, created_by)
+           VALUES ($1, $2, $2, $3, $4, 'INVOICE_ROOT', 'Active', now(), $5, $6)`,
+          [inv.customer_id, it.item, inv.sales_user_id || userId, dept.rows[0]?.department_type ?? null,
+           `make-invoice item ${it.id}`, userId],
+        );
+        started.push(it.item);
+      }
+
+      await client.query("COMMIT");
+      res.status(201).json({ success: true, received, fullyPaid, projectsStarted: started });
+    } catch (error: any) {
+      await client.query("ROLLBACK").catch(() => {});
+      console.error("Error saving make-invoice payment:", error);
+      res.status(500).json({ error: "Failed to save payment", detail: error?.message });
+    } finally {
+      client.release();
+    }
+  });
+
+  // Payments already received on an old invoice (read-only Create Project view):
+  // webxl_payments rows + payments saved from this page (grouped per save via the ledger).
+  app.get("/api/account/make-invoice/:invoiceId/payments", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const id = String(req.params.invoiceId);
+      const { rows } = await pool.query(
+        `SELECT * FROM (
+           SELECT p.create_date AS "paidAt", ${MI_NUM("p.amount")} AS amount,
+                  coalesce(nullif(btrim(p.method), ''), '-') AS method,
+                  nullif(nullif(btrim(p.receipt_number), ''), '0') AS "receiptNumber",
+                  NULL::text AS comments
+             FROM legacy_archive.webxl_payments p
+            WHERE p.invoice_id = $1
+           UNION ALL
+           SELECT to_char(l.entry_date, 'YYYY-MM-DD HH24:MI:SS'), l.amount,
+                  substring(l.description from '\\(([^()]*)\\)$'), NULL,
+                  substring(l.remarks from 'Comments: (.*?)( \\| |$)')
+             FROM drm.ledger_entries l
+            WHERE l.reference_type = 'invoice' AND l.remarks LIKE '%make-invoice legacy_invoice_id=' || $1
+         ) t
+         ORDER BY "paidAt"`,
+        [id],
+      );
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching make-invoice payments:", error);
+      res.status(500).json({ error: "Failed to fetch payments" });
+    }
+  });
+
+  // Items of one old invoice (Create Project "Project" options + invoice view).
+  // Old option label: item (30% of item pkr)-(item pay).
+  // GET /api/account/invoice-view?legacyId=<old invoice_id>|modernId=<drm.invoices.id>
+  // One invoice (header + items) in the shape the Make Invoice receipt view uses, so other
+  // pages (e.g. Balance Report detail) can open the same invoice template.
+  app.get("/api/account/invoice-view", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const legacyQ = typeof req.query.legacyId === "string" ? req.query.legacyId.trim() : "";
+      const modernId = typeof req.query.modernId === "string" ? req.query.modernId.trim() : "";
+      let legacyId = /^[0-9]+$/.test(legacyQ) ? legacyQ : "";
+      if (!legacyId && modernId) {
+        const m = await pool.query(
+          `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+            WHERE modern_table = 'invoices' AND legacy_table = 'webxl_invoice' AND modern_id = $1 LIMIT 1`, [modernId]);
+        legacyId = m.rows[0]?.legacy_id ?? "";
+      }
+      if (legacyId) {
+        const head = await pool.query(
+          `SELECT i.invoice_id AS "invoiceId", i.com_id AS "comId",
+                  coalesce(nullif(btrim(c.cname), ''), i.cname) AS "companyName", i.cname AS "invoiceName",
+                  u.name AS "salePerson", i.create_date AS "createdAt",
+                  coalesce(nullif(i.grand_total, ''), '0') AS "grandTotal", coalesce(nullif(i.pay, ''), '0') AS pay,
+                  i.phone, i.email, i.address, i.sub_total AS "subTotal", i.discount, i.gst,
+                  i.doller_rate AS "dollarRate", i.account
+             FROM legacy_archive.webxl_invoice i
+             LEFT JOIN legacy_archive.webxl_company c ON c._source_table = 'webxl_company' AND c._legacy_pk = i.com_id
+             LEFT JOIN legacy_archive.webxl_user u ON u._source_table = 'webxl_user' AND u._legacy_pk = i.user_id
+            WHERE i._source_table = 'webxl_invoice' AND i._legacy_pk = $1`, [legacyId]);
+        if (!head.rows[0]) return res.status(404).json({ error: "Invoice not found" });
+        const items = await pool.query(
+          `SELECT it.id, it.item, it.detail, it.unit_price AS "unitPrice", it.qty, it."totalPkr" AS "totalPkr",
+                  coalesce(nullif(it.pkr, ''), '0') AS pkr, coalesce(nullif(it.pay, ''), '0') AS pay, it.start
+             FROM legacy_archive.webxl_invoice_item it WHERE it.invoice_id = $1 ORDER BY it.id::int`, [legacyId]);
+        return res.json({ header: head.rows[0], items: items.rows, source: "legacy" });
+      }
+      if (!modernId) return res.status(400).json({ error: "legacyId or modernId is required" });
+      const inv = await pool.query(
+        `SELECT i.id, i.invoice_number, i.customer_name, i.customer_email, i.customer_address, i.subtotal, i.tax, i.total,
+                i.dollar_rate, i.items, i.created_at, i.status, c.phone
+           FROM drm.invoices i LEFT JOIN drm.customers c ON c.id::text = i.customer_id::text
+          WHERE i.id = $1`, [modernId]);
+      const r = inv.rows[0];
+      if (!r) return res.status(404).json({ error: "Invoice not found" });
+      let list: any[] = [];
+      try { const parsed = typeof r.items === "string" ? JSON.parse(r.items) : r.items; list = Array.isArray(parsed) ? parsed : []; } catch { list = []; }
+      const n = (v: unknown) => { const x = Number(String(v ?? "").replace(/[^0-9.-]/g, "")); return Number.isFinite(x) ? x : 0; };
+      const rate = n(r.dollar_rate);
+      const items = list.map((it: any, k: number) => {
+        const qty = n(it.quantity ?? it.qty) || 1;
+        const price = n(it.unitPrice ?? it.price);
+        const totalPkr = n(it.totalPkr) || Math.round(price * qty * (rate || 1));
+        return { id: String(it.id ?? k), item: it.detail || it.name || "Service", detail: it.detail ?? "",
+                 unitPrice: String(price), qty: String(qty), totalPkr: String(totalPkr), pkr: String(totalPkr), pay: "0", start: null };
+      });
+      const subPkr = items.reduce((s2, it) => s2 + n(it.totalPkr), 0);
+      const discount = list.reduce((s2, it: any) => s2 + n(it.discount), 0);
+      return res.json({
+        header: {
+          invoiceId: r.invoice_number || r.id, comId: null, companyName: r.customer_name, invoiceName: r.customer_name,
+          salePerson: null, createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
+          grandTotal: String(subPkr - discount), pay: "0", phone: r.phone ?? null, email: r.customer_email ?? null,
+          address: r.customer_address ?? null, subTotal: String(subPkr), discount: String(discount),
+          gst: String(n(r.tax)), dollarRate: String(rate), account: null,
+        },
+        items, source: "modern",
+      });
+    } catch (error) {
+      console.error("Error fetching invoice view:", error);
+      res.status(500).json({ error: "Failed to fetch invoice" });
+    }
+  });
+
+  app.get("/api/account/make-invoice/:invoiceId/items", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const { rows } = await pool.query(
+        `SELECT it.id, it.item, it.detail, it.unit_price AS "unitPrice", it.qty,
+                it."totalPkr" AS "totalPkr", coalesce(nullif(it.pkr, ''), '0') AS pkr,
+                (${MI_NUM("it.pay")} + coalesce((
+                   SELECT sum(x.amount) FROM drm.legacy_invoice_item_payments x
+                    WHERE x.legacy_inv_item_id = it.id AND ${MI_NEW_PAY("x")}), 0))::text AS pay,
+                CASE WHEN EXISTS (SELECT 1 FROM drm.projects pr WHERE pr.notes = 'make-invoice item ' || it.id)
+                     THEN '1' ELSE it.start END AS start
+           FROM legacy_archive.webxl_invoice_item it
+          WHERE it.invoice_id = $1
+          ORDER BY it.id::int`,
+        [req.params.invoiceId],
+      );
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching make-invoice items:", error);
+      res.status(500).json({ error: "Failed to fetch invoice items" });
+    }
+  });
+
   // ===== Invoices Routes =====
 
   // GET /api/account/invoices - List all invoices
@@ -2609,7 +3049,7 @@ export function registerAccountRoutes(app: Express) {
       let paramIndex = 1;
 
       if (status) {
-        conditions.push(`status = $${paramIndex++}`);
+        conditions.push(`status::text = $${paramIndex++}`);
         params.push(status);
       }
       if (dateFrom) {
@@ -2625,14 +3065,54 @@ export function registerAccountRoutes(app: Express) {
       const ppWhereSql = conditions.length > 0 ? `WHERE ${conditions.map((c) => c.replace('issue_date', 'invoice_date').replace('status', "CASE WHEN status = 'APPROVED' THEN 'Paid' ELSE status END")).join(' AND ')}` : '';
 
       const { rows } = await pool.query(
-        `SELECT id, customer_id, invoice_number, total as amount, status, issue_date as issued_at, due_date as due_at, notes, NULL as payment_method, created_at, updated_at
+        `SELECT id::text AS id, customer_id, invoice_number, total as amount, status::text AS status,
+                issue_date as issued_at, due_date as due_at, notes, payment_method, currency, created_at, updated_at,
+                'standard'::text AS entry_source
          FROM drm.invoices ${invWhereSql}
          UNION ALL
-         SELECT id, customer_id, CASE WHEN invoice_number LIKE 'INV-%' THEN invoice_number ELSE 'INV-' || LPAD(invoice_number, 5, '0') END as invoice_number, amount, CASE WHEN status = 'APPROVED' THEN 'Paid' ELSE status END as status, invoice_date as issued_at, NULL as due_at, notes, payment_method, created_at, updated_at
+         SELECT id::text AS id, customer_id,
+                CASE WHEN invoice_number LIKE 'INV-%' THEN invoice_number ELSE 'INV-' || LPAD(invoice_number::text, 5, '0') END as invoice_number,
+                amount,
+                CASE WHEN status = 'APPROVED' THEN 'Paid' WHEN status = 'PENDING_ACCOUNT' THEN 'Sent' ELSE status END as status,
+                invoice_date as issued_at, NULL as due_at, notes, payment_method, 'PKR'::text AS currency, created_at, updated_at,
+                'product_posting'::text AS entry_source
          FROM drm.product_posting_invoices ${ppWhereSql}
          ORDER BY created_at DESC`,
         params
       );
+
+      const idsMissingMethod = rows
+        .filter((r) => !r.payment_method)
+        .map((r) => String(r.id));
+      const ledgerMethodByInvoice: Record<string, string> = {};
+      if (idsMissingMethod.length > 0) {
+        const ledgerRes = await pool.query(
+          `SELECT DISTINCT ON (reference_id) reference_id, remarks
+             FROM drm.ledger_entries
+            WHERE reference_type = 'Invoice'
+              AND category = 'Invoice Payment'
+              AND reference_id = ANY($1::text[])
+              AND remarks IS NOT NULL AND trim(remarks) <> ''
+            ORDER BY reference_id, entry_date DESC`,
+          [idsMissingMethod],
+        );
+        for (const r of ledgerRes.rows) {
+          if (r.reference_id && r.remarks) ledgerMethodByInvoice[String(r.reference_id)] = String(r.remarks);
+        }
+      }
+
+      const resolveListedPaymentMethod = (row: any): string | null => {
+        if (row.payment_method) return String(row.payment_method);
+        const fromLedger = ledgerMethodByInvoice[String(row.id)];
+        if (fromLedger) return fromLedger;
+        if (!row.notes) return null;
+        try {
+          const parsed = typeof row.notes === "string" ? JSON.parse(row.notes) : row.notes;
+          return parsed?.paymentMethod ? String(parsed.paymentMethod) : null;
+        } catch {
+          return null;
+        }
+      };
 
       res.json(
         rows.map((row: any) => ({
@@ -2644,9 +3124,11 @@ export function registerAccountRoutes(app: Express) {
           issueDate: row.issued_at || row.created_at,
           dueDate: row.due_at,
           notes: row.notes,
-          paymentMethod: row.payment_method,
-          currency: 'PKR',
+          paymentMethod: resolveListedPaymentMethod(row),
+          currency: row.currency || 'PKR',
           createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          entrySource: row.entry_source || "standard",
         }))
       );
     } catch (error) {
@@ -2848,7 +3330,41 @@ export function registerAccountRoutes(app: Express) {
 
       const [existing] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
       if (!existing) {
-        return res.status(404).json({ error: "Invoice not found" });
+        const ppRes = await pool.query(
+          `SELECT id, status, notes, payment_method FROM drm.product_posting_invoices WHERE id = $1 LIMIT 1`,
+          [req.params.id],
+        );
+        const ppRow = ppRes.rows[0];
+        if (!ppRow) {
+          return res.status(404).json({ error: "Invoice not found" });
+        }
+        if (ppRow.status === "APPROVED" || ppRow.status === "REJECTED") {
+          return res.status(403).json({
+            error: "This invoice is finalized and cannot be edited after approval or rejection.",
+          });
+        }
+        const ppPayment =
+          writable.paymentMethod !== undefined ? writable.paymentMethod : ppRow.payment_method;
+        const nextNotes =
+          writable.notes !== undefined ? writable.notes : ppRow.notes;
+        await pool.query(
+          `UPDATE drm.product_posting_invoices
+             SET payment_method = COALESCE($1, payment_method),
+                 notes = COALESCE($2, notes),
+                 updated_at = now()
+           WHERE id = $3`,
+          [ppPayment || null, nextNotes ?? null, req.params.id],
+        );
+        return res.json({
+          id: ppRow.id,
+          status: ppRow.status,
+          notes: nextNotes,
+          paymentMethod: ppPayment ?? ppRow.payment_method,
+        });
+      }
+
+      if (String(existing.status) === "Paid") {
+        return res.status(403).json({ error: "Paid invoices cannot be edited." });
       }
 
       // Phase 4 — this legacy table never had a transition-legality check on
@@ -3094,13 +3610,18 @@ export function registerAccountRoutes(app: Express) {
   // accounts (confirmed: normal staff like admins/managers, not placeholders).
   app.get("/api/account/users-list", async (_req, res) => {
     try {
+      // No LIMIT: the old "LIMIT 200 ORDER BY full_name" silently dropped every
+      // user after the 200th name (739 users). roleIds/roleTitles/isDeactive feed
+      // the shared role-grouped pickers (role 54 "Deactive" excluded there).
       const result = await pool.query(
-        `SELECT id, full_name, email, role
+        `SELECT id, full_name, email, role, role_id, roles
          FROM drm.users
-         ORDER BY full_name
-         LIMIT 200`
+         ORDER BY full_name`
       );
-      res.json(result.rows);
+      const titles = await loadRoleTitles();
+      res.json(
+        result.rows.map(({ role_id, roles, ...u }) => ({ ...u, ...userRoleInfo({ role_id, roles, role: u.role }, titles) })),
+      );
     } catch (error) {
       console.error("Error fetching users list:", error);
       res.status(500).json({ error: "Failed to fetch users" });
@@ -3162,7 +3683,7 @@ export function registerAccountRoutes(app: Express) {
       }
       if (await companyHasActiveGm(pool, companyName)) {
         return res.status(409).json({
-          error: "This company already has a GM (Full, Loan, or Partial). Temp GM cannot be added.",
+          error: "This company already has a GM (Full / Loan / Partial, an old-DRM GM account or a GM pool entry). Temp GM cannot be added.",
           code: "COMPANY_HAS_GM",
         });
       }
@@ -3206,6 +3727,47 @@ export function registerAccountRoutes(app: Express) {
       res.json(rows[0]);
     } catch (error) {
       console.error("Error updating temp GM entry:", error);
+      res.status(500).json({ error: "Failed to update entry" });
+    }
+  });
+
+  // PATCH /api/account/temp-gm/:id — edit a Temp GM (admin / Account / HOD)
+  app.patch("/api/account/temp-gm/:id", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!canEditTempRefundGm(req)) return res.status(403).json({ error: "Only admin, Account or HOD can edit a Temp GM" });
+      const parsed = tempGmEditSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid payload", issues: parsed.error.issues });
+      const { companyName, personName, amount, amountType, reason, comment } = parsed.data;
+
+      const cur = await pool.query(
+        `SELECT company_name FROM drm.temp_gm_entries WHERE id = $1 AND coalesce(is_deleted, false) = false`,
+        [req.params.id],
+      );
+      if (cur.rows.length === 0) return res.status(404).json({ error: "Entry not found" });
+      // Moving the Temp GM to another company: same checks as adding one.
+      const companyChanged = String(cur.rows[0].company_name || "").trim().toLowerCase() !== companyName.toLowerCase();
+      if (companyChanged) {
+        if (await companyHasActiveGm(pool, companyName)) {
+          return res.status(409).json({ error: "This company already has a GM. Temp GM cannot be moved to it.", code: "COMPANY_HAS_GM" });
+        }
+        if (await companyHasBlockingTempGm(pool, companyName)) {
+          return res.status(409).json({ error: "This company already has an active Temp GM.", code: "COMPANY_HAS_TEMP_GM" });
+        }
+      }
+
+      const { rows } = await pool.query(
+        `UPDATE drm.temp_gm_entries
+            SET company_name = $2, person_name = $3, amount = $4, amount_type = $5,
+                reason = $6, comment = $7, updated_at = NOW()
+          WHERE id = $1 AND coalesce(is_deleted, false) = false
+          RETURNING id, company_name, person_name, amount, amount_type, reason, comment, status, created_at AS "createdAt"`,
+        [req.params.id, companyName, personName, amount, amountType, reason, comment || null],
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "Entry not found" });
+      res.json(rows[0]);
+    } catch (error) {
+      console.error("Error editing temp GM entry:", error);
       res.status(500).json({ error: "Failed to update entry" });
     }
   });
@@ -3322,6 +3884,51 @@ export function registerAccountRoutes(app: Express) {
     }
   });
 
+  // PATCH /api/account/refund-gm/:id — edit a refund (admin / Account / HOD).
+  // The linked GM (gm_entry_id) is not changed here.
+  app.patch("/api/account/refund-gm/:id", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!canEditTempRefundGm(req)) return res.status(403).json({ error: "Only admin, Account or HOD can edit a refund" });
+      const parsed = refundGmEditSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid payload", issues: parsed.error.issues });
+      const { companyName, personName, amount, amountType, comment } = parsed.data;
+      const { rows } = await pool.query(
+        `UPDATE drm.refund_gm_entries
+            SET company_name = $2, person_name = $3, amount = $4, amount_type = $5, comment = $6
+          WHERE id = $1
+          RETURNING id, company_name AS "companyName", person_name AS "personName",
+                    amount, amount_type AS "amountType", comment, status, created_at AS "createdAt"`,
+        [req.params.id, companyName, personName, amount, amountType, comment || null],
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "Entry not found" });
+      res.json(rows[0]);
+    } catch (error) {
+      console.error("Error editing refund GM entry:", error);
+      res.status(500).json({ error: "Failed to update entry" });
+    }
+  });
+
+  // PATCH /api/account/refund-gm/:id/status — admin / Account / HOD
+  app.patch("/api/account/refund-gm/:id/status", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!canEditTempRefundGm(req)) return res.status(403).json({ error: "Only admin, Account or HOD can change refund status" });
+      const parsed = refundGmStatusSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid status", issues: parsed.error.issues });
+      const { rows } = await pool.query(
+        `UPDATE drm.refund_gm_entries SET status = $2 WHERE id = $1
+          RETURNING id, status`,
+        [req.params.id, parsed.data.status],
+      );
+      if (rows.length === 0) return res.status(404).json({ error: "Entry not found" });
+      res.json(rows[0]);
+    } catch (error) {
+      console.error("Error updating refund GM status:", error);
+      res.status(500).json({ error: "Failed to update status" });
+    }
+  });
+
   // DELETE /api/account/refund-gm/:id
   app.delete("/api/account/refund-gm/:id", requireFinancialPermission(FINANCIAL_ACTIONS.refundGmDelete, { roles: FINANCIAL_VOID_ROLES }), async (req, res) => {
     try {
@@ -3358,7 +3965,7 @@ export function registerAccountRoutes(app: Express) {
         : `p.status IN ('PENDING_ACCOUNT', 'APPROVED')`;
       const standardInvoiceStatusSql = pendingOnly
         ? `i.status = 'Sent'`
-        : `i.status IN ('Sent', 'Paid', 'Partial', 'Overdue')`;
+        : `i.status::text IN ('Sent', 'Paid', 'Partial', 'Overdue')`;
 
       const { rows } = await pool.query(`
         SELECT * FROM (
@@ -3390,7 +3997,9 @@ export function registerAccountRoutes(app: Express) {
           q.contact          AS "customerPhone",
           cq.address         AS "customerAddress",
           q.dollar_rate      AS "dollarRate",
-          q.pkr_total        AS "pkrTotal"
+          q.pkr_total        AS "pkrTotal",
+          'Approved'         AS "hodStatus",
+          CASE WHEN q.save_status = 'pending_account_manager' THEN 'Pending' ELSE 'Approved' END AS "accountStatus"
         FROM drm.quotations q
         LEFT JOIN drm.users u ON u.id::text = q.created_by::text
         LEFT JOIN drm.customers cq ON cq.id::text = q.customer_id
@@ -3426,7 +4035,16 @@ export function registerAccountRoutes(app: Express) {
           cp.phone           AS "customerPhone",
           cp.address         AS "customerAddress",
           NULL::numeric      AS "dollarRate",
-          NULL::numeric      AS "pkrTotal"
+          NULL::numeric      AS "pkrTotal",
+          CASE
+            WHEN p.hod_approved_at IS NOT NULL OR p.status IN ('PENDING_ACCOUNT', 'APPROVED') THEN 'Approved'
+            ELSE 'Pending'
+          END              AS "hodStatus",
+          CASE
+            WHEN p.status = 'PENDING_ACCOUNT' THEN 'Pending'
+            WHEN p.status = 'APPROVED' THEN 'Approved'
+            ELSE 'Pending'
+          END              AS "accountStatus"
         FROM drm.product_posting_invoices p
         LEFT JOIN drm.users u ON u.id = p.sales_exec_id
         LEFT JOIN drm.customers cp ON cp.id = p.customer_id
@@ -3464,7 +4082,20 @@ export function registerAccountRoutes(app: Express) {
           ci.phone            AS "customerPhone",
           COALESCE(i.customer_address, ci.address) AS "customerAddress",
           i.dollar_rate       AS "dollarRate",
-          qi.pkr_total        AS "pkrTotal"
+          qi.pkr_total        AS "pkrTotal",
+          CASE
+            WHEN i.status::text IN ('Paid') THEN 'Approved'
+            WHEN i.status::text = 'Sent' THEN 'Approved'
+            WHEN i.status::text = 'Cancelled' THEN 'Rejected'
+            WHEN lower(i.status::text) LIKE '%reject%' THEN 'Rejected'
+            ELSE 'Pending'
+          END                 AS "hodStatus",
+          CASE
+            WHEN i.status::text = 'Paid' THEN 'Approved'
+            WHEN i.status::text = 'Cancelled' THEN 'Rejected'
+            WHEN lower(i.status::text) LIKE '%reject%' THEN 'Rejected'
+            ELSE 'Pending'
+          END                 AS "accountStatus"
         FROM drm.invoices i
         LEFT JOIN drm.users u ON u.id::text = i.created_by_user_id::text
         LEFT JOIN drm.customers ci ON ci.id = i.customer_id
@@ -3520,6 +4151,15 @@ export function registerAccountRoutes(app: Express) {
       const { action, note, amount, paymentMethod, receiptNumber, receiptImage, projectName: customProjectName } = _qaParsed.data;
       const approving = action === "approve";
       const actorUserId = getUserId(req)!;
+      /** Set when product-posting approval creates a PMS project inline (skip slow second pass). */
+      let productPostingGenResult: {
+        ok: boolean;
+        created: boolean;
+        linked: boolean;
+        projectId: string;
+        status: string;
+        reason?: string;
+      } | null = null;
 
       // 1) Identify the source WITHOUT mutating anything yet.
       const quotRes = await pool.query(
@@ -3661,14 +4301,14 @@ export function registerAccountRoutes(app: Express) {
                         deptType = svcRes.rows[0].project_department;
                     }
                 }
-                await pool.query(
+                const insProj = await pool.query(
                     `INSERT INTO drm.projects (
                         invoice_id, name, customer_id, owner_user_id, status, department_type, invoice_type, created_at, updated_at
                     ) VALUES (
                         $1, $2, $3, $4, 'Active', $5, $6, now(), now()
-                    )`,
+                    ) RETURNING id, status`,
                     [
-                        approvedInv.id, 
+                        approvedInv.id,
                         approvedInv.project_name || approvedInv.invoice_type || 'Product Posting',
                         approvedInv.customer_id,
                         approvedInv.sales_exec_id,
@@ -3676,6 +4316,16 @@ export function registerAccountRoutes(app: Express) {
                         approvedInv.invoice_type
                     ]
                 );
+                if (insProj.rows[0]) {
+                    productPostingGenResult = {
+                        ok: true,
+                        created: true,
+                        linked: false,
+                        projectId: insProj.rows[0].id,
+                        status: insProj.rows[0].status || "Active",
+                        reason: "created_on_product_posting_approval",
+                    };
+                }
             }
             quotation = {
                 id,
@@ -3819,6 +4469,9 @@ export function registerAccountRoutes(app: Express) {
               reason: "below_33_percent_threshold",
             };
           } else if (quotation.source === 'product_posting') {
+            if (productPostingGenResult) {
+              genResult = productPostingGenResult;
+            } else {
             // Same projectGenerationMode gate as /api/invoices/:id/account-approve
             // (invoice-routes.ts) — this endpoint is the one the mounted Account
             // Manager UI actually calls, so without this gate the Manual/Automatic
@@ -3842,13 +4495,17 @@ export function registerAccountRoutes(app: Express) {
               // "available shortly" rather than pointing the sales exec at a
               // PMS project that doesn't exist yet (see D-018 comment below).
               const existing = await pool.query(
-                `SELECT id, status FROM drm.projects WHERE invoice_id = $1 AND COALESCE(is_deleted, false) = false LIMIT 1`,
+                `SELECT id, status FROM drm.projects
+                   WHERE COALESCE(is_deleted, false) = false
+                     AND (legacy_source_id = $1::text OR invoice_id = $1::uuid)
+                   LIMIT 1`,
                 [quotation.id],
               );
               const existingProject = existing.rows[0];
               genResult = existingProject
                 ? { ok: true, created: false, linked: true, projectId: existingProject.id, status: existingProject.status, reason: "MANUAL mode — already linked" }
                 : { ok: false, created: false, linked: false, projectId: undefined, status: null, reason: "MANUAL mode — use Generate Project" } as any;
+            }
             }
           } else {
             genResult = await createOrLinkProjectForLegacySource({
@@ -3928,7 +4585,7 @@ export function registerAccountRoutes(app: Express) {
                 await pool.query(
                   `INSERT INTO drm.project_payments (id, project_id, amount, payment_method, reference, notes, paid_by_user_id, paid_at, created_at)
                      VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())`,
-                  [crypto.randomUUID(), newProjectId, amount, paymentMethod || 'BankTransfer', receiptNumber || '', note || '', ownerUserId],
+                  [crypto.randomUUID(), newProjectId, amount, projectPaymentMethodEnum(paymentMethod), receiptNumber || '', note || '', ownerUserId],
                 );
               }
 
@@ -4470,7 +5127,7 @@ export function registerAccountRoutes(app: Express) {
             COALESCE(SUM(pkr_amount),    0) AS buy_pkr,
             COUNT(*)                         AS buy_count
           FROM drm.dollar_buying
-          WHERE ${buyWhere}
+          WHERE ${buyWhere} AND ${DB_NOT_LEGACY("dollar_buying.id")}
         ),
         ab_pmt AS (
           SELECT
@@ -4574,6 +5231,13 @@ export function registerAccountRoutes(app: Express) {
   });
 
   // GET /api/account/ab-report/stats - Get statistics for AB Report
+  // AB report ranges are whole days: a plain YYYY-MM-DD "to" means the end of that day
+  // (new Date("2026-12-31") is midnight, which left the last day out).
+  const abRangeEnd = (v: unknown) => {
+    const str = String(v);
+    return /^\d{4}-\d{2}-\d{2}$/.test(str) ? new Date(`${str}T23:59:59.999`) : new Date(str);
+  };
+
   app.get("/api/account/ab-report/stats", requireFinancialPermission(FINANCIAL_ACTIONS.abReportView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
     try {
       const { dateFrom, dateTo } = req.query;
@@ -4586,13 +5250,27 @@ export function registerAccountRoutes(app: Express) {
 
       if (dateFrom && dateTo) {
         params.push(new Date(String(dateFrom)));
-        params.push(new Date(String(dateTo)));
+        params.push(abRangeEnd(dateTo));
         dateWhere = ` AND created_at >= $1 AND created_at <= $2`;
         dateWhereG = ` AND g.created_at >= $1 AND g.created_at <= $2`;
         buyingDateWhere = ` AND date >= $1 AND date <= $2`;
         advanceDateWhere = ` AND pay_date >= $1 AND pay_date <= $2`;
         chequeDateWhere = ` AND cheque_date >= $1 AND cheque_date <= $2`;
       }
+
+      // Rows copied from the old DRM are counted by the old formulas (computeLegacyAbStats);
+      // the queries below only count rows created in this app.
+      const NOT_LEGACY = (table: string, col: string) =>
+        `AND NOT EXISTS (SELECT 1 FROM migration_meta.migration_legacy_ids lm WHERE lm.modern_table = '${table}' AND lm.modern_id = ${col}::text)`;
+      const ymd = (v: unknown, fallback: string) => {
+        const str = String(v ?? "").slice(0, 10);
+        return /^\d{4}-\d{2}-\d{2}$/.test(str) ? str : fallback;
+      };
+      const legacyPromise = computeLegacyAbStats(
+        pool,
+        dateFrom && dateTo ? ymd(dateFrom, "0001-01-01") : "0001-01-01",
+        dateFrom && dateTo ? ymd(dateTo, "9999-12-31") : "9999-12-31",
+      );
 
       const { rows } = await pool.query(`
         WITH gm_stats AS (
@@ -4601,34 +5279,34 @@ export function registerAccountRoutes(app: Express) {
             -- (gm-pool-add-gm.tsx) are 'Cash Received' / 'Online Paid' / 'Customer Paid' — this
             -- mirrors the legacy acc_pay_status concept directly, unlike entry_type/gm_type
             -- (renewal-classification columns that are unrelated to payment method).
-            COUNT(*) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid')) as client_count,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid')), 0) as client_amount,
+            COUNT(*) FILTER (WHERE status IN ('Approved', 'Completed') AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid')) as client_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status IN ('Approved', 'Completed') AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid')), 0) as client_amount,
             -- Client Payment's 3-way split (Full / Loan-first / Partial), mirroring the legacy's
             -- "Full payment" / "Loan First payment Received" / "Partial payment" breakdown rows.
-            COUNT(*) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,false) = false AND coalesce(is_partial_payment,false) = false) as client_full_count,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,false) = false AND coalesce(is_partial_payment,false) = false), 0) as client_full_amount,
-            COUNT(*) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND is_loan IS TRUE) as client_loanfirst_count,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND is_loan IS TRUE), 0) as client_loanfirst_amount,
-            COUNT(*) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,false) = false AND is_partial_payment IS TRUE) as client_partial_count,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,false) = false AND is_partial_payment IS TRUE), 0) as client_partial_amount,
-            COUNT(*) FILTER (WHERE status = 'Approved' AND is_loan IS TRUE) as loan_count,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND is_loan IS TRUE), 0) as loan_amount,
-            COALESCE(SUM(extra_discount_usd) FILTER (WHERE status = 'Approved'), 0) as extra_discount,
-            COALESCE(SUM(extra_discount_pkr) FILTER (WHERE status = 'Approved'), 0) as extra_discount_pkr,
+            COUNT(*) FILTER (WHERE status IN ('Approved', 'Completed') AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND (coalesce(is_loan,0) <> 0) = false AND (coalesce(is_partial_payment,0) <> 0) = false) as client_full_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status IN ('Approved', 'Completed') AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND (coalesce(is_loan,0) <> 0) = false AND (coalesce(is_partial_payment,0) <> 0) = false), 0) as client_full_amount,
+            COUNT(*) FILTER (WHERE status IN ('Approved', 'Completed') AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,0) <> 0) as client_loanfirst_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status IN ('Approved', 'Completed') AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,0) <> 0), 0) as client_loanfirst_amount,
+            COUNT(*) FILTER (WHERE status IN ('Approved', 'Completed') AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND (coalesce(is_loan,0) <> 0) = false AND coalesce(is_partial_payment,0) <> 0) as client_partial_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status IN ('Approved', 'Completed') AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND (coalesce(is_loan,0) <> 0) = false AND coalesce(is_partial_payment,0) <> 0), 0) as client_partial_amount,
+            COUNT(*) FILTER (WHERE status IN ('Approved', 'Completed') AND coalesce(is_loan,0) <> 0) as loan_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status IN ('Approved', 'Completed') AND coalesce(is_loan,0) <> 0), 0) as loan_amount,
+            COALESCE(SUM(extra_discount_usd) FILTER (WHERE status IN ('Approved', 'Completed')), 0) as extra_discount,
+            COALESCE(SUM(extra_discount_pkr) FILTER (WHERE status IN ('Approved', 'Completed')), 0) as extra_discount_pkr,
             COUNT(*) FILTER (WHERE status = 'Pending') as pending_count,
             COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Pending'), 0) as pending_dollar_amount,
             COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Pending'), 0) as pending_pkr_amount,
             -- "Required": Full (non-installment) vs Partial (installment) pending dollars —
             -- mirrors the legacy's separate webxl_required_dollars_to_pay_full_payment vs
             -- webxl_required_dollars_to_pay (installment) functions.
-            COUNT(*) FILTER (WHERE status = 'Pending' AND coalesce(is_partial_payment,false) = false) as required_full_count,
-            COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Pending' AND coalesce(is_partial_payment,false) = false), 0) as required_full_amount,
-            COUNT(*) FILTER (WHERE status = 'Pending' AND is_partial_payment IS TRUE) as required_partial_count,
-            COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Pending' AND is_partial_payment IS TRUE), 0) as required_partial_amount,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Pending' AND is_partial_payment IS TRUE), 0) as pending_partial_pkr_amount,
-            COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Approved'), 0) as total_dollar_balance
+            COUNT(*) FILTER (WHERE status = 'Pending' AND (coalesce(is_partial_payment,0) <> 0) = false) as required_full_count,
+            COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Pending' AND (coalesce(is_partial_payment,0) <> 0) = false), 0) as required_full_amount,
+            COUNT(*) FILTER (WHERE status = 'Pending' AND coalesce(is_partial_payment,0) <> 0) as required_partial_count,
+            COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Pending' AND coalesce(is_partial_payment,0) <> 0), 0) as required_partial_amount,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Pending' AND coalesce(is_partial_payment,0) <> 0), 0) as pending_partial_pkr_amount,
+            COALESCE(SUM(amount_usd) FILTER (WHERE status IN ('Approved', 'Completed')), 0) as total_dollar_balance
           FROM drm.gm_entries
-          WHERE coalesce(is_deleted, false) = false ${dateWhere}
+          WHERE coalesce(is_deleted, false) = false ${dateWhere} ${NOT_LEGACY('gm_entries', 'gm_entries.id')}
         ),
         -- "Loan Recovered": the legacy concept is money actually COLLECTED against an
         -- installment/delay schedule — in this app that's gm_partial_receipts (the real
@@ -4641,7 +5319,7 @@ export function registerAccountRoutes(app: Express) {
             COALESCE(SUM(amount_pkr), 0) as recovery_pkr_raw,
             COALESCE(SUM(amount_usd * COALESCE(dollar_rate, 0)), 0) as recovery_pkr_derived
           FROM drm.gm_partial_receipts
-          WHERE 1=1 ${dateWhere.replace(/created_at/g, "receipt_date")}
+          WHERE 1=1 ${dateWhere.replace(/created_at/g, "receipt_date")} ${NOT_LEGACY('gm_partial_receipts', 'gm_partial_receipts.id')}
         ),
         -- "Cheque"/"Pending Cheque": sourced from the real /office/cheques ledger (drm.cheques),
         -- the same table that feature already manages — not a separate system. "Paid" mirrors
@@ -4667,7 +5345,7 @@ export function registerAccountRoutes(app: Express) {
             WHERE cheque_number IS NOT NULL
             GROUP BY cheque_number
           ) oe ON oe.cheque_number = c.cheque_number OR oe.cheque_number = c.id::text
-          WHERE 1=1 ${chequeDateWhere.replace(/cheque_date/g, "c.cheque_date")}
+          WHERE 1=1 ${chequeDateWhere.replace(/cheque_date/g, "c.cheque_date")} ${NOT_LEGACY('cheques', 'c.id')}
         ),
         buy_stats AS (
           SELECT
@@ -4682,9 +5360,10 @@ export function registerAccountRoutes(app: Express) {
             COUNT(*) FILTER (WHERE COALESCE(remaining_usd, dollar_amount) < dollar_amount) as buy_account_paid_count,
             COALESCE(SUM(dollar_amount) FILTER (WHERE COALESCE(remaining_usd, dollar_amount) < dollar_amount), 0) as buy_account_paid_amount,
             COUNT(*) FILTER (WHERE martini = 'Not Show') as martini_not_show_count,
-            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Not Show'), 0) as martini_not_show_amount
+            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Not Show'), 0) as martini_not_show_amount,
+            COALESCE(SUM(paid_pkr), 0) as buy_paid_pkr
           FROM drm.dollar_buying
-          WHERE 1=1 ${buyingDateWhere}
+          WHERE ${DB_NOT_LEGACY("dollar_buying.id")} ${buyingDateWhere}
         ),
         -- "Martini Status": the real buyer-dollar PKR liability — how much of a dollar
         -- buy's pkr_amount hasn't yet been repaid to the buyer (paid_pkr/installments).
@@ -4697,7 +5376,7 @@ export function registerAccountRoutes(app: Express) {
             COUNT(*) FILTER (WHERE coalesce(pkr_amount,0) - coalesce(paid_pkr,0) > 0.009) as martini_status_count,
             COALESCE(SUM(dollar_amount) FILTER (WHERE coalesce(pkr_amount,0) - coalesce(paid_pkr,0) > 0.009), 0) as martini_status_amount
           FROM drm.dollar_buying
-          WHERE 1=1 ${buyingDateWhere}
+          WHERE ${DB_NOT_LEGACY("dollar_buying.id")} ${buyingDateWhere}
         ),
         -- "Balance": approved-order dollar total split by real calendar quarter (independent of
         -- the page's own date-range filter), mirroring the legacy's LastQueStart/CurQueEnd split.
@@ -4708,20 +5387,20 @@ export function registerAccountRoutes(app: Express) {
             COUNT(*) FILTER (WHERE created_at >= date_trunc('quarter', CURRENT_DATE) AND created_at < date_trunc('quarter', CURRENT_DATE) + INTERVAL '3 months') as balance_current_quarter_count,
             COALESCE(SUM(amount_usd) FILTER (WHERE created_at >= date_trunc('quarter', CURRENT_DATE) AND created_at < date_trunc('quarter', CURRENT_DATE) + INTERVAL '3 months'), 0) as balance_current_quarter_amount
           FROM drm.gm_entries
-          WHERE coalesce(is_deleted, false) = false AND status = 'Approved'
+          WHERE coalesce(is_deleted, false) = false AND status IN ('Approved', 'Completed') ${NOT_LEGACY('gm_entries', 'gm_entries.id')}
         ),
         temp_stats AS (
           SELECT
             COUNT(*) as temp_count,
             COALESCE(SUM(amount), 0) as temp_amount
           FROM drm.temp_gm_entries
-          WHERE 1=1 ${dateWhere}
+          WHERE coalesce(is_deleted, false) = false ${dateWhere} ${NOT_LEGACY('temp_gm_entries', 'temp_gm_entries.id')}
         ),
         refund_stats AS (
           SELECT
             COALESCE(SUM(amount), 0) as refund_amount
           FROM drm.refund_gm_entries
-          WHERE status = 'approved' ${dateWhere}
+          WHERE lower(status) = 'approved' ${dateWhere} ${NOT_LEGACY('refund_gm_entries', 'refund_gm_entries.id')}
         ),
         advance_stats AS (
           SELECT
@@ -4737,12 +5416,47 @@ export function registerAccountRoutes(app: Express) {
             COALESCE(SUM(g.extra_discount_pkr) FILTER (WHERE ap.status = 'paid'), 0) as ex_paid_pkr
           FROM drm.gm_entries g
           LEFT JOIN drm.ab_payments ap ON ap.gm_drm_id = g.drm_id AND coalesce(ap.is_deleted, false) = false
-          WHERE coalesce(g.is_deleted, false) = false AND coalesce(g.extra_discount_usd, 0) > 0 ${dateWhereG}
+          WHERE coalesce(g.is_deleted, false) = false AND coalesce(g.extra_discount_usd, 0) > 0 ${dateWhereG} ${NOT_LEGACY('gm_entries', 'g.id')}
         )
         SELECT * FROM gm_stats, recovery_stats, cheque_stats, buy_stats, martini_status_stats, balance_stats, temp_stats, refund_stats, advance_stats, extra_disc_paid;
       `, params);
 
       const stats = rows[0] || {};
+      const L = await legacyPromise;
+      const add = (k: string, v: number) => { stats[k] = Number(stats[k] || 0) + Number(v || 0); };
+      const lClientCount = L.clientFull.count + L.clientLoanFirst.count + L.clientPartial.count;
+      const lClientAmount = Math.round(L.clientFull.amount + L.clientLoanFirst.amount + L.clientPartial.amount);
+      add("client_count", lClientCount); add("client_amount", lClientAmount);
+      add("client_full_count", L.clientFull.count); add("client_full_amount", L.clientFull.amount);
+      add("client_loanfirst_count", L.clientLoanFirst.count); add("client_loanfirst_amount", L.clientLoanFirst.amount);
+      add("client_partial_count", L.clientPartial.count); add("client_partial_amount", L.clientPartial.amount);
+      add("cheque_used_count", L.chequeUsed.count); add("cheque_used_amount", L.chequeUsed.amount);
+      add("cheque_unused_count", L.chequeUnused.count); add("cheque_unused_amount", L.chequeUnused.amount);
+      add("closing_cheque_used_count", L.closingChequeUsed.count); add("closing_cheque_used_amount", L.closingChequeUsed.amount);
+      add("closing_cheque_unused_count", L.closingChequeUnused.count); add("closing_cheque_unused_amount", L.closingChequeUnused.amount);
+      stats.recovery_pkr_raw = (Number(stats.recovery_pkr_raw || 0) > 0 ? Number(stats.recovery_pkr_raw) : Number(stats.recovery_pkr_derived || 0)) + L.loanRecovered.amount;
+      add("recovery_count", L.loanRecovered.count);
+      add("loan_count", L.loanPayment.count); add("loan_amount", L.loanPayment.amount);
+      add("buy_count", L.buy.count); add("total_dollar_buy", L.buy.amount);
+      add("martini_show_count", L.martiniShow.count); add("martini_show_amount", L.martiniShow.amount);
+      add("martini_not_show_count", L.martiniNotShow.count); add("martini_not_show_amount", L.martiniNotShow.amount);
+      add("martini_refund_count", L.martiniRefund.count); add("martini_refund_amount", L.martiniRefund.amount);
+      add("buy_account_paid_count", L.accountPaid.count); add("buy_account_paid_amount", L.accountPaid.amount);
+      add("martini_status_count", L.martiniPending.count); add("martini_status_amount", L.martiniPending.amount);
+      add("buy_paid_pkr", L.totalDollarPkr);
+      add("required_full_count", L.requiredFull.count); add("required_full_amount", L.requiredFull.amount);
+      add("required_partial_count", L.requiredPartial.count); add("required_partial_amount", L.requiredPartial.amount);
+      add("temp_count", L.tempGm.count); add("temp_amount", L.tempGm.amount);
+      add("refund_amount", L.refund);
+      add("advance_count", L.advancePay.count); add("advance_amount", L.advancePay.amount);
+      add("ex_paid_count", L.extraDiscountPaid.count); add("ex_paid_usd", L.extraDiscountPaid.amount); add("ex_paid_pkr", L.extraDiscountPaid.pkr);
+      add("extra_discount", L.extraDiscount.amount); add("extra_discount_pkr", L.extraDiscount.pkr);
+      const exReceivedCount = L.extraDiscount.count;
+      // Dollar balance (old buyer_total_dollar): remaining dollars of buyer slots; the new app's
+      // "approved GM dollars" figure is a different concept and is no longer added here.
+      const lBalanceCount = L.balanceCount;
+      const lBalanceLast = L.balanceLast;
+      const lBalanceCurrent = L.balanceCurrent;
 
       // Last confirmed daily closing (most recent fully-signed-off ab_closing_history row)
       const lastClosingRes = await pool.query(`
@@ -4760,13 +5474,18 @@ export function registerAccountRoutes(app: Express) {
       const tempGmByReasonRes = await pool.query(`
         SELECT reason, COUNT(*) as count, COALESCE(SUM(amount), 0) as amount
         FROM drm.temp_gm_entries
-        WHERE 1=1 ${dateWhere}
+        WHERE coalesce(is_deleted, false) = false ${dateWhere} ${NOT_LEGACY('temp_gm_entries', 'temp_gm_entries.id')}
         GROUP BY reason
         ORDER BY SUM(amount) DESC
       `, params);
       const tempGmBreakdown = tempGmByReasonRes.rows.map((r: any) => ({
         reason: r.reason, count: Number(r.count), amount: Number(r.amount),
       }));
+      for (const lr of L.tempGmByReason) {
+        const hit = tempGmBreakdown.find((t: any) => String(t.reason).toLowerCase() === String(lr.reason).toLowerCase());
+        if (hit) { hit.count += Number(lr.count); hit.amount += Number(lr.amount); }
+        else tempGmBreakdown.push({ reason: lr.reason, count: Number(lr.count), amount: Number(lr.amount) });
+      }
 
       // Cheque tracking: sourced from the real /office/cheques ledger (see cheque_stats CTE
       // above) — "used" cheques are the Cash/Account-Closing "Cheque" figure, "un-used" ones
@@ -4788,37 +5507,48 @@ export function registerAccountRoutes(app: Express) {
       const recoveryUsd = Number(stats.recovery_usd || 0);
       // Prefer the PKR actually captured on the receipt; fall back to USD*rate when a receipt
       // didn't store a PKR amount (e.g. older rows created before that field was populated).
-      const recoveryPkr = Number(stats.recovery_pkr_raw || 0) > 0 ? Number(stats.recovery_pkr_raw) : Number(stats.recovery_pkr_derived || 0);
+      const recoveryPkr = Number(stats.recovery_pkr_raw || 0);
 
       // Calculate derived values
-      const sum_pkr = Number(stats.client_amount) + chequeAmount + recoveryPkr;
+      // Old AB report formulas (old ab-report page):
+      //   Last Closing = closing cheques (+ the new app's last confirmed closing)
+      //   SUM = client payment + cheque + loan recovered + last closing
+      //   Cash In Hand = SUM - (Total Dollar PKR paid to buyers + refund)
+      //   Get Funds ($) = max(0, SUM - Total Dollar PKR) / dollar rate
+      //   Gap ($) = balance + martini not show + get funds - required
+      const lastClosingCount = Number(stats.closing_cheque_used_count || 0) + (lastClosingRow ? 1 : 0);
+      const lastClosingAmount = Number(stats.closing_cheque_used_amount || 0) + lastClosingCashInHand;
+      const sum_pkr = Number(stats.client_amount) + chequeAmount + recoveryPkr + lastClosingAmount;
       const total_dollar_usd = Number(stats.total_dollar_buy);
-      const dollarPkrRate: number | null = null;
-      const cash_in_hand = sum_pkr - Number(stats.refund_amount) + lastClosingCashInHand;
+      const totalDollarPkr = Number(stats.buy_paid_pkr || 0);
+      const dollarPkrRate: number | null = L.dollarRate > 0 ? L.dollarRate : null;
+      const cash_in_hand = sum_pkr - totalDollarPkr - Number(stats.refund_amount);
 
-      const dollarBalanceUsd = Number(stats.total_dollar_balance) + Number(stats.total_dollar_buy);
-      const requiredUsd = Number(stats.pending_dollar_amount);
-      // "Get Funds": USD shortfall still needed if pending dollar requirements exceed what's
-      // already on hand (bought + received) — kept in USD since no stored PKR/USD rate exists
-      // to convert this safely (see meta.dollarConversion below).
-      const getFundsUsd = Math.max(0, requiredUsd - dollarBalanceUsd);
-      const balanceUsdOnly = Number(stats.total_dollar_balance);
-      const balanceLastQuarterCount = Number(stats.balance_last_quarter_count || 0);
-      const balanceLastQuarterAmount = Number(stats.balance_last_quarter_amount || 0);
-      const balanceCurrentQuarterCount = Number(stats.balance_current_quarter_count || 0);
-      const balanceCurrentQuarterAmount = Number(stats.balance_current_quarter_amount || 0);
-      const balanceEntryCount = balanceLastQuarterCount + balanceCurrentQuarterCount;
+      const requiredUsd = Number(stats.required_full_amount || 0) + Number(stats.required_partial_amount || 0);
+      const requiredCount = Number(stats.required_full_count || 0) + Number(stats.required_partial_count || 0);
+      const getFundsUsd = dollarPkrRate ? Math.max(0, sum_pkr - totalDollarPkr) / dollarPkrRate : 0;
+      const balanceLastQuarterCount = lBalanceLast.count;
+      const balanceLastQuarterAmount = lBalanceLast.amount;
+      const balanceCurrentQuarterCount = lBalanceCurrent.count;
+      const balanceCurrentQuarterAmount = lBalanceCurrent.amount;
+      const balanceUsdOnly = balanceLastQuarterAmount + balanceCurrentQuarterAmount;
+      const balanceEntryCount = lBalanceCount;
+      const dollarBalanceUsd = balanceUsdOnly;
       const buyUsdOnly = Number(stats.total_dollar_buy);
       const martiniNotShowUsd = Number(stats.martini_not_show_amount || 0);
-      const dollarGapUsd = balanceUsdOnly + buyUsdOnly - requiredUsd;
-      const pendingPartialPkr = Number(stats.pending_partial_pkr_amount || 0);
+      const dollarGapUsd = balanceUsdOnly + martiniNotShowUsd + getFundsUsd - requiredUsd;
+      const pendingPartialPkr = L.partialNotFull;
+      const clientUsd = L.clientFull.usd + L.clientLoanFirst.usd + L.clientPartial.usd;
+      const tempTotalCount = Number(stats.temp_count) + Number(stats.martini_status_count || 0) + Number(stats.cheque_unused_count || 0) + Number(stats.advance_count || 0);
+      const tempTotalAmount = Number(stats.temp_amount) + Number(stats.martini_status_amount || 0) + Number(stats.cheque_unused_amount || 0) + Number(stats.advance_amount || 0);
 
       const exPaidUsd = Number(stats.ex_paid_usd || 0);
       const exPaidPkr = Number(stats.ex_paid_pkr || 0);
       const exReceivedUsd = Number(stats.extra_discount || 0);
       const exReceivedPkr = Number(stats.extra_discount_pkr || 0);
 
-      const webExcelsClosingAmount = chequeAmount + Number(stats.loan_amount) + recoveryPkr - exPaidPkr;
+      // Old: Cheque Pay - (Loan Payment + Extra-Discount Paid PKR) + Loan Recovered
+      const webExcelsClosingAmount = chequeAmount - (Number(stats.loan_amount) + exPaidPkr) + recoveryPkr;
 
       const clientPayment = {
         count: Number(stats.client_count), amount: Number(stats.client_amount),
@@ -4827,7 +5557,7 @@ export function registerAccountRoutes(app: Express) {
         partial: { count: Number(stats.client_partial_count || 0), amount: Number(stats.client_partial_amount || 0) },
       };
       const required = {
-        count: Number(stats.pending_count), amount: requiredUsd,
+        count: requiredCount, amount: requiredUsd,
         full: { count: Number(stats.required_full_count || 0), amount: Number(stats.required_full_amount || 0) },
         partial: { count: Number(stats.required_partial_count || 0), amount: Number(stats.required_partial_amount || 0) },
       };
@@ -4839,21 +5569,23 @@ export function registerAccountRoutes(app: Express) {
             cheque: chequeSummary,
             loanRecovered: { count: recoveryCount, amount: recoveryPkr },
             lastClosing: {
-              count: lastClosingRow ? 1 : 0, amount: lastClosingCashInHand,
+              count: lastClosingCount, amount: lastClosingAmount,
               closingCheque: {
                 full: { count: Number(stats.closing_cheque_used_count || 0) + Number(stats.closing_cheque_unused_count || 0), amount: Number(stats.closing_cheque_used_amount || 0) + Number(stats.closing_cheque_unused_amount || 0) },
                 paid: { count: Number(stats.closing_cheque_used_count || 0), amount: Number(stats.closing_cheque_used_amount || 0) },
                 unpaid: { count: Number(stats.closing_cheque_unused_count || 0), amount: Number(stats.closing_cheque_unused_amount || 0) },
               },
             },
-            total: { count: Number(stats.client_count) + fullChequeCount + recoveryCount, amount: sum_pkr }
+            total: { count: Number(stats.client_count) + chequeCount + Number(stats.closing_cheque_used_count || 0), amount: sum_pkr }
           },
           dollars: {
             balance: {
               count: balanceEntryCount,
-              amount: Number(stats.total_dollar_balance),
+              amount: balanceUsdOnly,
               lastQuarter: { count: balanceLastQuarterCount, amount: balanceLastQuarterAmount },
               currentQuarter: { count: balanceCurrentQuarterCount, amount: balanceCurrentQuarterAmount },
+              // counted in the old Balance count, but not in its amount (old report rule)
+              otherDates: { count: L.balanceOther.count, amount: L.balanceOther.amount },
             },
             buy: {
               count: Number(stats.buy_count || 0), amount: Number(stats.total_dollar_buy),
@@ -4863,8 +5595,9 @@ export function registerAccountRoutes(app: Express) {
               accountPaid: { count: Number(stats.buy_account_paid_count || 0), amount: Number(stats.buy_account_paid_amount || 0) },
             },
             required,
-            getFunds: { count: getFundsUsd > 0 ? 1 : 0, amount: getFundsUsd },
-            total: { count: 0, amount: dollarBalanceUsd }
+            // count cell shows the dollar rate, like the old report
+            getFunds: { count: dollarPkrRate ?? 0, amount: getFundsUsd },
+            total: { count: balanceEntryCount + Number(stats.buy_count || 0) + requiredCount, amount: balanceUsdOnly + buyUsdOnly + requiredUsd + getFundsUsd }
           },
           tempPayment: {
             tempGm: { count: Number(stats.temp_count), amount: Number(stats.temp_amount), breakdown: tempGmBreakdown },
@@ -4874,31 +5607,40 @@ export function registerAccountRoutes(app: Express) {
             martiniPending: { count: Number(stats.martini_status_count || 0), amount: Number(stats.martini_status_amount || 0) },
             pendingCheque: { count: pendingChequeCount, amount: pendingChequeAmount },
             advancePay: { count: Number(stats.advance_count || 0), amount: Number(stats.advance_amount || 0) },
-            total: { count: Number(stats.temp_count), amount: Number(stats.temp_amount) }
+            total: { count: tempTotalCount, amount: tempTotalAmount }
           },
+          // Old report: the count cells here are DOLLARS (client payment $ / cheque $ = buy $ - client $),
+          // Extra Amount = advance pay, and its Total row repeats the temp-payment total.
           accountClosing: {
-            clientPayment,
-            cheque: chequeSummary,
+            clientPayment: {
+              ...clientPayment,
+              count: Math.round(clientUsd),
+              full: { ...clientPayment.full, count: Math.round(L.clientFull.usd) },
+              loanFirst: { ...clientPayment.loanFirst, count: Math.round(L.clientLoanFirst.usd) },
+              partial: { ...clientPayment.partial, count: Math.round(L.clientPartial.usd) },
+            },
+            cheque: { ...chequeSummary, count: Math.round(buyUsdOnly - clientUsd), amount: chequeAmount },
             pendingCheque: { count: pendingChequeCount, amount: pendingChequeAmount },
-            extraAmount: { count: 0, amount: exReceivedPkr },
-            total: { count: Number(stats.client_count) + fullChequeCount, amount: Number(stats.client_amount) + chequeAmount }
+            extraAmount: { count: Number(stats.advance_count || 0), amount: Number(stats.advance_amount || 0) },
+            total: { count: tempTotalCount, amount: tempTotalAmount }
           },
           webExcels: {
             cash: {
               chequePay: chequeSummary,
               loanPayment: { count: Number(stats.loan_count), amount: Number(stats.loan_amount) },
               loanRecovered: { count: recoveryCount, amount: recoveryPkr },
-              extraDiscount: { count: 0, amount: exReceivedUsd },
+              extraDiscount: { count: exReceivedCount, amount: exReceivedUsd },
               extraDiscountPaid: { count: Number(stats.ex_paid_count || 0), amount: exPaidUsd },
-              remainingExtraDiscount: { count: 0, amount: Math.max(0, exReceivedUsd - exPaidUsd) }
+              remainingExtraDiscount: { count: 0, amount: exReceivedUsd - exPaidUsd }
             },
             dollars: {
               balance: { count: balanceEntryCount, amount: Number(stats.total_dollar_balance) },
               buy: { count: Number(stats.buy_count), amount: Number(stats.total_dollar_buy) }
             },
+            // Old: loans (Delay) still pending recovery, overall
             pendingRecovery: {
-              dollar: { count: Number(stats.pending_count), amount: Number(stats.pending_dollar_amount) },
-              pkr: { count: Number(stats.pending_count), amount: Number(stats.pending_pkr_amount) }
+              dollar: { count: L.pendingRecovery.count, amount: L.pendingRecovery.usd },
+              pkr: { count: L.pendingRecovery.count, amount: L.pendingRecovery.pkr }
             },
             closing: {
               chequePay: chequeSummary,
@@ -4915,23 +5657,23 @@ export function registerAccountRoutes(app: Express) {
           }
         },
         closing: [
-          { label: "Client Payment", type: "P", val: Number(stats.client_amount).toLocaleString(), tooltip: "All Client Payment" },
-          { label: "Cheque Payment", type: "P", val: chequeAmount.toLocaleString(), tooltip: "All Cheque Payment (used cheques from /office/cheques)" },
-          { label: "Loan Recovered", type: "P", val: recoveryPkr.toLocaleString(), tooltip: "Real installment/recovery collections (gm_partial_receipts)" },
-          { label: "Last Closing", type: "P", val: lastClosingCashInHand.toLocaleString(), tooltip: "Last confirmed daily closing's Cash In Hand" },
-          { label: "Sum", type: "P", val: sum_pkr.toLocaleString(), color: "text-sky-600 dark:text-sky-400", bold: true, tooltip: "Sum Of All Above Payment" },
-          { label: "Refund Amount", type: "P", val: Number(stats.refund_amount).toLocaleString(), tooltip: "All Refund Payment" },
-          { label: "Total Dollar (USD)", type: "D", val: `$${total_dollar_usd.toLocaleString()}`, color: "text-rose-500 dark:text-rose-400", tooltip: "Total dollars bought in the selected date range" },
-          { label: "Cash In Hand", type: "P", val: cash_in_hand.toLocaleString(), color: "text-emerald-600 dark:text-emerald-400", bold: true, tooltip: "Sum + Last Closing − Refund Amount" },
-          { label: "Buy Dollar", type: "D", val: `$${buyUsdOnly.toLocaleString()}`, tooltip: "Dollar buying total (USD)" },
-          { label: "Balance Dollar", type: "D", val: `$${balanceUsdOnly.toLocaleString()}`, tooltip: "Approved GM order dollars (USD)" },
-          { label: "Required To Pay", type: "D", val: `$${requiredUsd.toLocaleString()}`, tooltip: "Pending GM dollars still required (USD)" },
-          { label: "Martini Not Show", type: "D", val: `$${martiniNotShowUsd.toLocaleString()}`, tooltip: "Dollar buys marked Martini Not Show (USD)" },
-          { label: "Get Funds", type: "D", val: `$${getFundsUsd.toLocaleString()}`, tooltip: "USD still needed after balance + buys vs. required" },
-          { label: "Gap", type: "D", val: `$${dollarGapUsd.toLocaleString()}`, color: dollarGapUsd < 0 ? "text-rose-500 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400", tooltip: "Balance Dollar + Buy Dollar − Required To Pay (USD)" },
-          { label: "Extra Discount Received", type: "P", val: exReceivedPkr.toLocaleString(), tooltip: "Extra discount received from customers (PKR)" },
-          { label: "Extra Discount Paid", type: "P", val: exPaidPkr.toLocaleString(), tooltip: "Extra discount paid out to Alibaba (PKR)" },
-          { label: "Partial Payment Not Full Yat", type: "P", val: pendingPartialPkr.toLocaleString(), tooltip: "Pending partial-payment GM PKR not yet fully settled" },
+          { label: "Client Payment", type: "P", val: Math.round(Number(stats.client_amount)).toLocaleString(), tooltip: "All Client Payment" },
+          { label: "Cheque Payment", type: "P", val: Math.round(chequeAmount).toLocaleString(), tooltip: "All Cheque Payment" },
+          { label: "Loan Recovered", type: "P", val: Math.round(recoveryPkr).toLocaleString(), tooltip: "All Loan Recovered Payment" },
+          { label: "Last Closing", type: "P", val: Math.round(lastClosingAmount).toLocaleString(), tooltip: "Last Quarter Closing Only Not Add Current Months" },
+          { label: "Sum", type: "P", val: Math.round(sum_pkr).toLocaleString(), color: "text-sky-600 dark:text-sky-400", bold: true, tooltip: "Sum Of All Above Payment" },
+          { label: "Refund Amount", type: "P", val: Math.round(Number(stats.refund_amount)).toLocaleString(), tooltip: "All Refund Payment" },
+          { label: "Total Dollar", type: "P", val: Math.round(totalDollarPkr).toLocaleString(), color: "text-rose-500 dark:text-rose-400", tooltip: "Total Dollar PKR by Account Pay Date" },
+          { label: "Cash In Hand", type: "P", val: Math.round(cash_in_hand).toLocaleString(), color: "text-emerald-600 dark:text-emerald-400", bold: true, tooltip: "SUM - (Total Dollar + Refund) = Cash In Hand" },
+          { label: "Buy Dollar", type: "D", val: Math.round(buyUsdOnly).toLocaleString(), tooltip: "Total Buy Dollars" },
+          { label: "Balance Dollar", type: "D", val: Math.round(balanceUsdOnly).toLocaleString(), tooltip: "Both Last & Current quarter" },
+          { label: "Required To Pay", type: "D", val: Math.round(requiredUsd).toLocaleString(), tooltip: "Required To Pay Full Amount" },
+          { label: "Martini Not Show", type: "D", val: Math.round(martiniNotShowUsd).toLocaleString(), tooltip: "Martini Not Show Dollars" },
+          { label: "Get Funds", type: "D", val: Math.round(getFundsUsd).toLocaleString(), tooltip: "Cash in hand / Dollar Rate = get funds" },
+          { label: "Gap", type: "D", val: Math.round(dollarGapUsd).toLocaleString(), color: dollarGapUsd < 0 ? "text-rose-500 dark:text-rose-400" : "text-sky-600 dark:text-sky-400", bold: true, tooltip: "(Balance + Martini + Get Funds) - Required = Gap" },
+          { label: "Extra Discount Received", type: "D", val: Math.round(exReceivedUsd).toLocaleString(), tooltip: "Extra Discount Received" },
+          { label: "Extra Discount Paid", type: "D", val: `${Math.round(exPaidUsd).toLocaleString()} (${Math.round(exPaidPkr).toLocaleString()})`, tooltip: "Extra Discount paid (PKR)" },
+          { label: "Partial Payment Not Full Yat", type: "D", val: Math.round(pendingPartialPkr).toLocaleString(), tooltip: "Partial Payment Not Full Yat" },
         ],
         meta: {
           dollarConversion: {
@@ -5100,7 +5842,7 @@ export function registerAccountRoutes(app: Express) {
       let dateWhere = "";
       if (dateFrom && dateTo) {
         params.push(new Date(String(dateFrom)));
-        params.push(new Date(String(dateTo)));
+        params.push(abRangeEnd(dateTo));
       }
       const range = (col: string) => dateFrom && dateTo ? ` AND ${col} >= $1 AND ${col} <= $2` : "";
 
@@ -5157,14 +5899,14 @@ export function registerAccountRoutes(app: Express) {
         case "client-payment-loanfirst":
         case "client-payment-partial": {
           columns = COLS.gm;
-          const extra = metric === "client-payment-full" ? " AND coalesce(is_loan,false)=false AND coalesce(is_partial_payment,false)=false"
-            : metric === "client-payment-loanfirst" ? " AND is_loan IS TRUE"
-            : metric === "client-payment-partial" ? " AND coalesce(is_loan,false)=false AND is_partial_payment IS TRUE"
+          const extra = metric === "client-payment-full" ? " AND (coalesce(is_loan,0) <> 0)=false AND (coalesce(is_partial_payment,0) <> 0)=false"
+            : metric === "client-payment-loanfirst" ? " AND coalesce(is_loan,0) <> 0"
+            : metric === "client-payment-partial" ? " AND (coalesce(is_loan,0) <> 0)=false AND coalesce(is_partial_payment,0) <> 0"
             : "";
           ({ rows } = await pool.query(`
             SELECT drm_id, company_name, sales_person_name, payment_status, amount_usd, amount_pkr, created_at
             FROM drm.gm_entries
-            WHERE coalesce(is_deleted,false)=false AND status='Approved'
+            WHERE coalesce(is_deleted,false)=false AND status IN ('Approved', 'Completed')
               AND payment_status IN ('Cash Received','Online Paid','Customer Paid')
               ${extra}
               ${range("created_at")}
@@ -5176,8 +5918,8 @@ export function registerAccountRoutes(app: Express) {
         case "required-full":
         case "required-partial": {
           columns = COLS.gm;
-          const extra = metric === "required-full" ? " AND coalesce(is_partial_payment,false)=false"
-            : metric === "required-partial" ? " AND is_partial_payment IS TRUE"
+          const extra = metric === "required-full" ? " AND (coalesce(is_partial_payment,0) <> 0)=false"
+            : metric === "required-partial" ? " AND coalesce(is_partial_payment,0) <> 0"
             : "";
           ({ rows } = await pool.query(`
             SELECT drm_id, company_name, sales_person_name, payment_status, amount_usd, amount_pkr, created_at
@@ -5192,7 +5934,7 @@ export function registerAccountRoutes(app: Express) {
           ({ rows } = await pool.query(`
             SELECT drm_id, company_name, sales_person_name, payment_status, extra_discount_usd AS amount_usd, extra_discount_pkr AS amount_pkr, created_at
             FROM drm.gm_entries
-            WHERE coalesce(is_deleted,false)=false AND status='Approved' AND coalesce(extra_discount_usd,0) > 0 ${range("created_at")}
+            WHERE coalesce(is_deleted,false)=false AND status IN ('Approved', 'Completed') AND coalesce(extra_discount_usd,0) > 0 ${range("created_at")}
             ORDER BY created_at DESC LIMIT 200
           `, params));
           break;
@@ -5224,7 +5966,7 @@ export function registerAccountRoutes(app: Express) {
           ({ rows } = await pool.query(`
             SELECT drm_id, company_name, sales_person_name, payment_status, amount_usd, amount_pkr, created_at
             FROM drm.gm_entries
-            WHERE coalesce(is_deleted,false)=false AND status='Approved' AND is_loan IS TRUE ${range("created_at")}
+            WHERE coalesce(is_deleted,false)=false AND status IN ('Approved', 'Completed') AND coalesce(is_loan,0) <> 0 ${range("created_at")}
             ORDER BY created_at DESC LIMIT 200
           `, params));
           break;
@@ -5289,7 +6031,7 @@ export function registerAccountRoutes(app: Express) {
           ({ rows } = await pool.query(`
             SELECT buyer_name, dollar_amount, pkr_amount, martini, date
             FROM drm.dollar_buying
-            WHERE ${metric === "martini-show" ? "(martini = 'Show' OR martini IS NULL)" : "martini = 'Refund'"} ${range("date")}
+            WHERE ${DB_NOT_LEGACY("dollar_buying.id")} AND ${metric === "martini-show" ? "(martini = 'Show' OR martini IS NULL)" : "martini = 'Refund'"} ${range("date")}
             ORDER BY date DESC LIMIT 200
           `, params));
           break;
@@ -5299,7 +6041,7 @@ export function registerAccountRoutes(app: Express) {
           ({ rows } = await pool.query(`
             SELECT buyer_name, dollar_amount, pkr_amount, martini, date
             FROM drm.dollar_buying
-            WHERE COALESCE(remaining_usd, dollar_amount) < dollar_amount ${range("date")}
+            WHERE ${DB_NOT_LEGACY("dollar_buying.id")} AND COALESCE(remaining_usd, dollar_amount) < dollar_amount ${range("date")}
             ORDER BY date DESC LIMIT 200
           `, params));
           break;
@@ -5313,7 +6055,7 @@ export function registerAccountRoutes(app: Express) {
           ({ rows } = await pool.query(`
             SELECT drm_id, company_name, sales_person_name, payment_status, amount_usd, amount_pkr, created_at
             FROM drm.gm_entries
-            WHERE coalesce(is_deleted,false)=false AND status='Approved' AND ${quarterWhere}
+            WHERE coalesce(is_deleted,false)=false AND status IN ('Approved', 'Completed') AND ${quarterWhere}
             ORDER BY created_at DESC LIMIT 200
           `));
           break;
@@ -5323,7 +6065,7 @@ export function registerAccountRoutes(app: Express) {
           ({ rows } = await pool.query(`
             SELECT buyer_name, dollar_amount, pkr_amount, martini, date
             FROM drm.dollar_buying
-            WHERE 1=1 ${range("date")}
+            WHERE ${DB_NOT_LEGACY("dollar_buying.id")} ${range("date")}
             ORDER BY date DESC LIMIT 200
           `, params));
           break;
@@ -5349,7 +6091,7 @@ export function registerAccountRoutes(app: Express) {
       let dateWhere = "";
       if (dateFrom && dateTo) {
         params.push(new Date(String(dateFrom)));
-        params.push(new Date(String(dateTo)));
+        params.push(abRangeEnd(dateTo));
         dateWhere = ` AND c.cheque_date >= $${params.length - 1} AND c.cheque_date <= $${params.length}`;
       }
 
@@ -5392,7 +6134,7 @@ export function registerAccountRoutes(app: Express) {
       if (type) { params.push(String(type)); where.push(`type = $${params.length}`); }
       if (status) { params.push(String(status)); where.push(`status = $${params.length}`); }
       if (dateFrom) { params.push(new Date(String(dateFrom))); where.push(`cheque_date >= $${params.length}`); }
-      if (dateTo) { params.push(new Date(String(dateTo))); where.push(`cheque_date <= $${params.length}`); }
+      if (dateTo) { params.push(abRangeEnd(dateTo)); where.push(`cheque_date <= $${params.length}`); }
 
       const { rows } = await pool.query(`
         SELECT cp.*, u.name AS created_by_name
@@ -5580,6 +6322,107 @@ export function registerAccountRoutes(app: Express) {
   }
 
   // GET /api/account/dollar-system/list - Get lists for Dollar System (Wallets Dashboard)
+  // GET /api/account/dollar-system/full-payments — Dollar System "Full" tab (legacy page_dollar_gm).
+  app.get("/api/account/dollar-system/full-payments", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+      const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? "15"), 10) || 15));
+      const search = String(req.query.search ?? "").trim();
+      const start = String(req.query.start ?? "").slice(0, 10);
+      const end = String(req.query.end ?? "").slice(0, 10);
+      const type = String(req.query.type ?? "all");
+
+      if (await legacyVerifyGmAvailable(pool)) {
+        const result = await fetchLegacyDollarFullPayments(pool, { page, pageSize, search, start, end, type });
+        return res.json(result);
+      }
+
+      const params: any[] = [];
+      const where = modernDollarFullPaymentsWhere(params, { search, start, end });
+      const TYPE_SQL = `CASE
+          WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type::text = '1' THEN 'New'
+          WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type::text = '0' THEN 'Rc'
+          WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type::text = '2' THEN 'Ec'
+          WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type::text = '3' THEN 'Rc-Up'
+          ELSE 'New' END`;
+      const base = `SELECT g.*, ${TYPE_SQL} AS gm_kind FROM drm.gm_entries g WHERE ${where.join(" AND ")}`;
+      const typeWhere =
+        type === "New" ? "WHERE gm_kind = 'New'"
+        : type === "Rc" ? "WHERE gm_kind IN ('Rc', 'Rc-Up')"
+        : type === "Ec" ? "WHERE gm_kind = 'Ec'" : "";
+
+      const aggRes = await pool.query(
+        `WITH b AS (${base})
+         SELECT count(*)::int AS all_count,
+                count(*) FILTER (WHERE gm_kind = 'New')::int AS nc,
+                count(*) FILTER (WHERE gm_kind IN ('Rc', 'Rc-Up'))::int AS rc,
+                count(*) FILTER (WHERE gm_kind = 'Ec')::int AS ec,
+                coalesce(sum(amount_usd) FILTER (WHERE ${typeWhere ? typeWhere.replace("WHERE ", "") : "true"}), 0) AS usd,
+                coalesce(sum(amount_pkr) FILTER (WHERE ${typeWhere ? typeWhere.replace("WHERE ", "") : "true"}), 0) AS pkr,
+                count(*) FILTER (WHERE ${typeWhere ? typeWhere.replace("WHERE ", "") : "true"})::int AS total
+           FROM b`,
+        params,
+      );
+      const agg = aggRes.rows[0] || {};
+      const { rows } = await pool.query(
+        `WITH b AS (${base})
+         SELECT id, drm_id as "drmId", created_at as "date",
+                company_name as "company", sales_person_name as "salePerson",
+                amount_usd as "dollar",
+                COALESCE(customer_dollar, amount_usd) as "customerDollar",
+                amount_pkr as "pkr",
+                dollar_rate as "rate",
+                COALESCE(extra_discount_usd, 0) as "exDisc",
+                COALESCE(extra_discount_pkr, 0) as "exDiscPkr",
+                member_id as "memberId", order_id as "orderId",
+                package_type as "package",
+                gm_kind as "type",
+                expiry_date as "expireDate",
+                dropout as "dropout",
+                status,
+                payment_proof_url as "proofUrl", notes
+           FROM b ${typeWhere}
+          ORDER BY created_at DESC
+          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, pageSize, (page - 1) * pageSize],
+      );
+      res.json({
+        data: rows,
+        total: Number(agg.total || 0),
+        page,
+        pageSize,
+        counts: { all: Number(agg.all_count || 0), nc: Number(agg.nc || 0), rc: Number(agg.rc || 0), ec: Number(agg.ec || 0) },
+        totals: { usd: Number(agg.usd || 0), pkr: Number(agg.pkr || 0) },
+      });
+    } catch (error) {
+      console.error("Error fetching dollar system full payments:", error);
+      res.status(500).json({ error: "Failed to fetch full payments" });
+    }
+  });
+
+  // GET /api/account/dollar-system/partial-payments — Partial tab (legacy Installment rules).
+  app.get("/api/account/dollar-system/partial-payments", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+      const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? "15"), 10) || 15));
+      const search = String(req.query.search ?? "").trim();
+      const start = String(req.query.start ?? "").slice(0, 10);
+      const end = String(req.query.end ?? "").slice(0, 10);
+      const type = String(req.query.type ?? "all");
+      const mode = String(req.query.mode ?? "cleared") === "pending" ? "pending" : "cleared";
+
+      if (await legacyVerifyGmAvailable(pool)) {
+        const result = await fetchLegacyDollarPartialPayments(pool, { page, pageSize, search, start, end, type, mode });
+        return res.json(result);
+      }
+
+      res.status(501).json({ error: "Partial payments require legacy archive; use /dollar-system/list for modern data." });
+    } catch (error) {
+      console.error("Error fetching dollar system partial payments:", error);
+      res.status(500).json({ error: "Failed to fetch partial payments" });
+    }
+  });
+
   app.get("/api/account/dollar-system/list", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
     try {
       const { startDate, endDate } = req.query;
@@ -5598,12 +6441,12 @@ export function registerAccountRoutes(app: Express) {
       const statsRes = await pool.query(`
         WITH gm_approved AS (
           SELECT
-            COALESCE(SUM(amount_usd)  FILTER (WHERE coalesce(is_loan,false) = false AND coalesce(is_partial_payment,false) = false), 0) as full_usd,
-            COALESCE(SUM(amount_pkr)  FILTER (WHERE coalesce(is_loan,false) = false AND coalesce(is_partial_payment,false) = false), 0) as full_pkr,
-            COALESCE(SUM(amount_usd)  FILTER (WHERE coalesce(is_partial_payment,false) = true), 0) as partial_usd,
-            COALESCE(SUM(amount_pkr)  FILTER (WHERE coalesce(is_partial_payment,false) = true), 0) as partial_pkr,
-            COALESCE(SUM(amount_usd)  FILTER (WHERE coalesce(is_loan,false) = true), 0) as loan_usd,
-            COALESCE(SUM(amount_pkr)  FILTER (WHERE coalesce(is_loan,false) = true), 0) as loan_pkr,
+            COALESCE(SUM(amount_usd)  FILTER (WHERE (coalesce(is_loan,0) <> 0) = false AND (coalesce(is_partial_payment,0) <> 0) = false), 0) as full_usd,
+            COALESCE(SUM(amount_pkr)  FILTER (WHERE (coalesce(is_loan,0) <> 0) = false AND (coalesce(is_partial_payment,0) <> 0) = false), 0) as full_pkr,
+            COALESCE(SUM(amount_usd)  FILTER (WHERE (coalesce(is_partial_payment,0) <> 0) = true), 0) as partial_usd,
+            COALESCE(SUM(amount_pkr)  FILTER (WHERE (coalesce(is_partial_payment,0) <> 0) = true), 0) as partial_pkr,
+            COALESCE(SUM(amount_usd)  FILTER (WHERE (coalesce(is_loan,0) <> 0) = true), 0) as loan_usd,
+            COALESCE(SUM(amount_pkr)  FILTER (WHERE (coalesce(is_loan,0) <> 0) = true), 0) as loan_pkr,
             COALESCE(SUM(amount_pkr)  FILTER (WHERE entry_type = 'Recovery'), 0) as cash_rec,
             COALESCE(SUM(amount_usd)  FILTER (WHERE entry_type = 'Recovery'), 0) as dollar_rec
           FROM drm.gm_entries
@@ -5620,6 +6463,7 @@ export function registerAccountRoutes(app: Express) {
             COALESCE(SUM(dollar_amount), 0) as buy_usd,
             COALESCE(SUM(pkr_amount),    0) as buy_pkr
           FROM drm.dollar_buying
+          WHERE ${DB_NOT_LEGACY("dollar_buying.id")}
         ),
         refund_stats AS (
           SELECT COALESCE(SUM(amount), 0) as refund_pkr
@@ -5636,7 +6480,7 @@ export function registerAccountRoutes(app: Express) {
           SELECT COALESCE(SUM(amount_usd), 0) as partial_rec_usd
           FROM drm.gm_entries
           WHERE coalesce(is_deleted, false) = false
-            AND coalesce(is_partial_payment, false) = true
+            AND (coalesce(is_partial_payment,0) <> 0) = true
             AND status = 'Approved'
         )
         SELECT
@@ -5665,49 +6509,36 @@ export function registerAccountRoutes(app: Express) {
           ab_paid_pkr                                       AS "abPaidPkr"
         FROM gm_approved, gm_pending, buy_stats, refund_stats, ab_paid, partial_recovery
       `);
-      const walletStats = statsRes.rows[0];
+      let walletStats = statsRes.rows[0];
 
-      // 2. Full Payments — columns matching PHP: #, Drm id, Created Date, Company, Sale Person, Dollar, Cus Dollar, Pkr, Dollar Rate, Ex-Disc, Ex-Disc Pkr, Package, Type, Expire, Dropout, Status, Action
-      const fullPayments = await pool.query(`
-        SELECT id, drm_id as "drmId", created_at as "date",
-               company_name as "company", sales_person_name as "salePerson",
-               amount_usd as "dollar",
-               COALESCE(customer_dollar, amount_usd) as "customerDollar",
-               amount_pkr as "pkr",
-               dollar_rate as "rate",
-               COALESCE(extra_discount_usd, 0) as "exDisc",
-               COALESCE(extra_discount_pkr, 0) as "exDiscPkr",
-               member_id as "memberId", order_id as "orderId",
-               package_type as "package",
-               CASE
-                  WHEN renwal::text = '1' OR entry_type = '1' OR entry_type ILIKE 'New%' OR gm_type = '1' OR gm_type ILIKE 'New%' THEN 'New'
-                  WHEN renwal::text = '0' OR entry_type = '0' OR entry_type ILIKE 'Rc%' OR gm_type = '0' OR gm_type ILIKE 'Rc%' THEN 'Rc'
-                  WHEN renwal::text = '2' OR entry_type = '2' OR entry_type ILIKE 'Ec%' OR gm_type = '2' OR gm_type ILIKE 'Ec%' THEN 'Ec'
-                  WHEN renwal::text = '3' OR entry_type = '3' OR entry_type ILIKE 'Rc-Up%' OR gm_type = '3' OR gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
-                  ELSE 'New'
-                END as "type",
-               expiry_date as "expireDate",
-               dropout as "dropout",
-               status,
-               proof_url as "proofUrl", notes
-        FROM drm.gm_entries
-        WHERE coalesce(is_deleted, false) = false
-          AND (entry_type IN ('Full', 'Standard', 'Service', 'GM')
-               OR (coalesce(is_loan,false) = false AND coalesce(is_partial_payment,false) = false))
-          AND NOT EXISTS (
-            SELECT 1 FROM drm.ab_payments ap
-            WHERE ap.gm_entry_id = drm.gm_entries.id AND coalesce(ap.is_deleted, false) = false
-          )
-          ${dateWhere}
-        ORDER BY created_at DESC LIMIT 50
-      `, params);
+      // 2. Full tab rows load via GET /full-payments; badge uses legacy page_dollar_gm count.
+      const useLegacyFull = await legacyVerifyGmAvailable(pool);
+      const quarterFilter = String(req.query.quarter || "CQ").toUpperCase();
+      if (useLegacyFull) {
+        const period = resolveWalletPeriod(quarterFilter);
+        const legacyWallet = await computeLegacyWalletStats(pool, period);
+        walletStats = { ...statsRes.rows[0], ...legacyWallet };
+      }
+      const fullTabCount = useLegacyFull
+        ? await countLegacyDollarFullPayments(pool)
+        : (await pool.query(`
+            SELECT count(*)::int AS c FROM drm.gm_entries g
+            WHERE ${modernDollarFullPaymentsWhere([], {}).join(" AND ")}
+          `)).rows[0]?.c ?? 0;
+      const fullPayments = { rows: [] as any[] };
 
-      // 3. Partial Payments — columns matching PHP datatable
-      // "fullyPaid": whether this Partial GM's installment collection (tracked via
-      // gm_partial_receipts) has reached its target — still-collecting rows stay in
-      // the standalone "Partial Payment Received" section; only once cleared do
-      // they move up into this PARTIAL tab (ready to proceed like a Full GM).
-      const partialPayments = await pool.query(`
+      // 3. Partial — legacy Installment rules (cleared PARTIAL tab + pending collection).
+      let partialTabCount = 0;
+      let partialPayments: { rows: any[] };
+      if (useLegacyFull) {
+        const [clearedPack, pendingPack] = await Promise.all([
+          fetchLegacyDollarPartialPayments(pool, { page: 1, pageSize: 500, mode: "cleared" }),
+          fetchLegacyDollarPartialPayments(pool, { page: 1, pageSize: 500, mode: "pending" }),
+        ]);
+        partialTabCount = Number(clearedPack.total || 0);
+        partialPayments = { rows: [...clearedPack.data, ...pendingPack.data] };
+      } else {
+        const partialRes = await pool.query(`
         SELECT g.id, g.drm_id as "drmId", g.created_at as "date",
                g.company_name as "company", g.sales_person_name as "salePerson",
                g.amount_usd as "dollar",
@@ -5720,10 +6551,10 @@ export function registerAccountRoutes(app: Express) {
                g.member_id as "memberId", g.order_id as "orderId",
                g.package_type as "package",
                CASE
-                  WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type = '1' OR g.gm_type ILIKE 'New%' THEN 'New'
-                  WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type = '0' OR g.gm_type ILIKE 'Rc%' THEN 'Rc'
-                  WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type = '2' OR g.gm_type ILIKE 'Ec%' THEN 'Ec'
-                  WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type = '3' OR g.gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type::text = '1' OR g.gm_type::text ILIKE 'New%' THEN 'New'
+                  WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type::text = '0' OR g.gm_type::text ILIKE 'Rc%' THEN 'Rc'
+                  WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type::text = '2' OR g.gm_type::text ILIKE 'Ec%' THEN 'Ec'
+                  WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type::text = '3' OR g.gm_type::text ILIKE 'Rc-Up%' THEN 'Rc-Up'
                   ELSE 'New'
                 END as "type",
                g.expiry_date as "expireDate",
@@ -5732,11 +6563,9 @@ export function registerAccountRoutes(app: Express) {
                g.payment_status as "paymentStatus",
                g.hod_status as "hodStatus",
                g.accountant_status as "accountantStatus",
-               g.proof_url as "proofUrl", g.notes,
+               g.payment_proof_url as "proofUrl", g.notes,
                g.installments,
                abp.paid_date as "payDate",
-               -- Target is GREATEST(customer_dollar/amount_usd, scheduled installment
-               -- total) — see the matching comment in gm-pool-routes.ts's GET /gm-pool.
                (
                  GREATEST(
                    COALESCE(g.customer_dollar, g.amount_usd, 0),
@@ -5762,15 +6591,9 @@ export function registerAccountRoutes(app: Express) {
           GROUP BY gm_entry_id
         ) abpaid ON abpaid.gm_entry_id = g.id
         WHERE coalesce(g.is_deleted, false) = false
-          AND (g.entry_type = 'Partial' OR coalesce(g.is_partial_payment,false) = true)
-          -- A Partial GM pays Alibaba per-installment (see the "Pay Alibaba —
-          -- for this installment only" actions in the Partial Payment
-          -- Installment modal), so it can take several separate ab_payments
-          -- rows to clear one GM. Checking "any ab_payment exists" dropped the
-          -- whole GM out of this list the moment the FIRST installment was
-          -- allocated, even with others still outstanding. Compare the total
-          -- already allocated against the same target used for "fullyPaid"
-          -- instead, so it only drops out once every installment is covered.
+          AND (g.entry_type = 'Partial' OR (coalesce(g.is_partial_payment,0) <> 0) = true)
+          AND lower(coalesce(g.hod_status, '')) IN ('approved', 'approve')
+          AND lower(coalesce(g.accountant_status, '')) IN ('approved', 'approve')
           AND COALESCE((
             SELECT SUM(ap.amount_usd) FROM drm.ab_payments ap
             WHERE ap.gm_entry_id = g.id AND coalesce(ap.is_deleted, false) = false
@@ -5781,8 +6604,11 @@ export function registerAccountRoutes(app: Express) {
             ) - 0.009
           )
           ${dateWhere}
-        ORDER BY g.created_at DESC LIMIT 50
+        ORDER BY g.created_at DESC
       `, params);
+        partialPayments = partialRes;
+        partialTabCount = partialRes.rows.filter((r: any) => r.fullyPaid).length;
+      }
 
       // 4. Loan Payments — columns matching PHP: #, Drm id, Joining Date, Company, Sale Person, Dollar, Pkr, Dollar Rate, Ex-Disc, Ex-Disc Pkr, loan Amount, Package, Type, Expire, Dropout, Status, Action
       const loans = await pool.query(`
@@ -5798,10 +6624,10 @@ export function registerAccountRoutes(app: Express) {
                member_id as "memberId", order_id as "orderId",
                package_type as "package",
                CASE
-                  WHEN renwal::text = '1' OR entry_type = '1' OR entry_type ILIKE 'New%' OR gm_type = '1' OR gm_type ILIKE 'New%' THEN 'New'
-                  WHEN renwal::text = '0' OR entry_type = '0' OR entry_type ILIKE 'Rc%' OR gm_type = '0' OR gm_type ILIKE 'Rc%' THEN 'Rc'
-                  WHEN renwal::text = '2' OR entry_type = '2' OR entry_type ILIKE 'Ec%' OR gm_type = '2' OR gm_type ILIKE 'Ec%' THEN 'Ec'
-                  WHEN renwal::text = '3' OR entry_type = '3' OR entry_type ILIKE 'Rc-Up%' OR gm_type = '3' OR gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  WHEN renwal::text = '1' OR entry_type = '1' OR entry_type ILIKE 'New%' OR gm_type::text = '1' OR gm_type::text ILIKE 'New%' THEN 'New'
+                  WHEN renwal::text = '0' OR entry_type = '0' OR entry_type ILIKE 'Rc%' OR gm_type::text = '0' OR gm_type::text ILIKE 'Rc%' THEN 'Rc'
+                  WHEN renwal::text = '2' OR entry_type = '2' OR entry_type ILIKE 'Ec%' OR gm_type::text = '2' OR gm_type::text ILIKE 'Ec%' THEN 'Ec'
+                  WHEN renwal::text = '3' OR entry_type = '3' OR entry_type ILIKE 'Rc-Up%' OR gm_type::text = '3' OR gm_type::text ILIKE 'Rc-Up%' THEN 'Rc-Up'
                   ELSE 'New'
                 END as "type",
                expiry_date as "expireDate",
@@ -5810,10 +6636,10 @@ export function registerAccountRoutes(app: Express) {
                payment_status as "paymentStatus",
                hod_status as "hodStatus",
                added_by_name as "accountant",
-               proof_url as "proofUrl", notes
+               payment_proof_url as "proofUrl", notes
         FROM drm.gm_entries
-        WHERE coalesce(is_deleted, false) = false AND coalesce(is_loan,false) = true ${dateWhere}
-        ORDER BY created_at DESC LIMIT 50
+        WHERE coalesce(is_deleted, false) = false AND (coalesce(is_loan,0) <> 0) = true ${dateWhere}
+        ORDER BY created_at DESC
       `, params);
 
       // 5. Daily Transactions pipeline (Martini -> Buy -> Sell, plus Balance
@@ -5836,6 +6662,7 @@ export function registerAccountRoutes(app: Express) {
                screenshot_url as "screenshotUrl"
         FROM drm.dollar_buying
         WHERE is_confirmed = true
+          AND COALESCE(balance_status, 'Show') = 'Show'   -- old: show_ab='Show' AND dollars != 0
           AND COALESCE(remaining_usd, dollar_amount) > 0.009
         ORDER BY date DESC LIMIT 20
       `);
@@ -5846,6 +6673,7 @@ export function registerAccountRoutes(app: Express) {
                dollar_amount as "amount", dollar_rate as "rate", 'buy' as "txType"
         FROM drm.dollar_buying
         WHERE is_confirmed = true
+          AND COALESCE(balance_status, 'Show') = 'Show'
           AND confirmed_at >= $1 AND confirmed_at < $2
         ORDER BY confirmed_at DESC
       `, [today, tomorrow]);
@@ -5879,20 +6707,19 @@ export function registerAccountRoutes(app: Express) {
                screenshot_url as "screenshotUrl"
         FROM drm.dollar_buying
         WHERE is_confirmed = false
+          AND COALESCE(balance_status, 'Show') NOT IN ('Refund', 'Canceled', 'Not Used')
         ORDER BY date DESC LIMIT 20
       `);
 
-      // Not Used tab: confirmed buys that have never had a single dollar
-      // allocated against them yet (no row in dollar_allocations at all) —
-      // completely untouched, as opposed to Balance which includes buys
-      // that are only partially spent down.
+      // Not Used tab: old DRM listed buys whose status (show_ab) is 'Not Used'
+      // — a status account sets, not "never allocated".
       const txNotUsed = await pool.query(`
         SELECT db.id, db.buyer_name as "name", db.date, db.paypal_email as "email",
-               db.dollar_amount as "amount", db.dollar_rate as "rate", 'notUsed' as "txType"
+               COALESCE(db.remaining_usd, db.dollar_amount) as "amount", db.dollar_rate as "rate", 'notUsed' as "txType",
+               db.balance_status as "balanceStatus", db.balance_status_date as "balanceStatusDate",
+               db.screenshot_url as "screenshotUrl"
         FROM drm.dollar_buying db
-        WHERE db.is_confirmed = true
-          AND COALESCE(db.remaining_usd, db.dollar_amount) > 0.009
-          AND NOT EXISTS (SELECT 1 FROM drm.dollar_allocations da WHERE da.dollar_buying_id = db.id)
+        WHERE db.balance_status = 'Not Used'
         ORDER BY db.date DESC LIMIT 20
       `);
 
@@ -5911,7 +6738,7 @@ export function registerAccountRoutes(app: Express) {
                accountant_status as "accountantStatus", hod_status as "hodStatus"
         FROM drm.gm_entries
         WHERE coalesce(is_deleted, false) = false AND status = 'Pending' ${dateWhere}
-        ORDER BY created_at DESC LIMIT 50
+        ORDER BY created_at DESC
       `, params);
 
       // 7. Paid Alibaba — JOIN against real ab_payments
@@ -5938,58 +6765,61 @@ export function registerAccountRoutes(app: Express) {
         WHERE coalesce(g.is_deleted, false) = false
           AND g.status = 'Approved'
           ${dateWhere.replace(/created_at/g, "g.created_at")}
-        ORDER BY g.created_at DESC LIMIT 50
+        ORDER BY g.created_at DESC
       `, params);
 
-      // 8. AB Liabilities — aggregate by payment category from real ab_payments
-      const abLiabilitiesRes = await pool.query(`
+      let abLiabilities: Record<string, unknown>;
+      if (useLegacyFull) {
+        abLiabilities = await computeLegacyDollarAbLiabilities(pool);
+      } else {
+        const abLiabilitiesRes = await pool.query(`
         SELECT
           COALESCE(SUM(ap.amount_usd) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = false
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = false
               AND ap.status IN ('paid','processing')
           ), 0) AS "fullOnlinePaidUsd",
           COALESCE(SUM(ap.amount_pkr) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = false
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = false
               AND ap.status IN ('paid','processing')
           ), 0) AS "fullOnlinePaidPkr",
           COALESCE(SUM(g.amount_usd) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = false
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = false
               AND g.status = 'Approved'
           ), 0) AS "fullCashReceivedUsd",
           COALESCE(SUM(g.amount_pkr) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = false
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = false
               AND g.status = 'Approved'
           ), 0) AS "fullCashReceivedPkr",
           COALESCE(SUM(ap.amount_usd) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = true
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = true
               AND ap.status IN ('paid','processing')
           ), 0) AS "partialOnlinePaidUsd",
           COALESCE(SUM(ap.amount_pkr) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = true
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = true
               AND ap.status IN ('paid','processing')
           ), 0) AS "partialOnlinePaidPkr",
           COALESCE(SUM(g.amount_usd) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = true
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = true
               AND g.status = 'Approved'
           ), 0) AS "partialCashReceivedUsd",
           COALESCE(SUM(g.amount_pkr) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = true
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = true
               AND g.status = 'Approved'
           ), 0) AS "partialCashReceivedPkr",
           COUNT(DISTINCT ap.id) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = false
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = false
               AND ap.status IN ('paid','processing')
           ) AS "fullOnlinePaidCount",
           COUNT(DISTINCT g.id) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = false
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = false
               AND g.status = 'Approved'
           ) AS "fullCashReceivedCount",
           COUNT(DISTINCT ap.id) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = true
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = true
               AND ap.status IN ('paid','processing')
           ) AS "partialOnlinePaidCount",
           COUNT(DISTINCT g.id) FILTER (
-            WHERE coalesce(g.is_partial_payment,false) = true
+            WHERE (coalesce(g.is_partial_payment,0) <> 0) = true
               AND g.status = 'Approved'
           ) AS "partialCashReceivedCount"
         FROM drm.gm_entries g
@@ -5998,50 +6828,73 @@ export function registerAccountRoutes(app: Express) {
           AND coalesce(ap.is_deleted,false) = false
         WHERE coalesce(g.is_deleted, false) = false
       `);
-      const abLiabilities = abLiabilitiesRes.rows[0] || {};
-      // "Uncompleted GM Partials" — reuse the partial-payments list already
-      // queried above (#3), which is already filtered to partial GMs not yet
-      // fully paid to Alibaba. Split the same way as Full/Partial Payment:
-      // "Online Paid" = already forwarded to Alibaba (ab_payments), "Cash
-      // Received" = collected from the customer so far (gm_partial_receipts).
-      abLiabilities.uncompletedPartialsCount = partialPayments.rows.length;
-      abLiabilities.uncompletedOnlinePaidCount = partialPayments.rows.filter((r: any) => Number(r.abPaidAmount || 0) > 0).length;
-      abLiabilities.uncompletedCashReceivedCount = partialPayments.rows.filter((r: any) => Number(r.partialPaidAmount || 0) > 0).length;
-      abLiabilities.uncompletedOnlinePaidUsd = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.abPaidAmount || 0), 0);
-      abLiabilities.uncompletedOnlinePaidPkr = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.abPaidAmountPkr || 0), 0);
-      abLiabilities.uncompletedCashReceivedUsd = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.partialPaidAmount || 0), 0);
-      abLiabilities.uncompletedCashReceivedPkr = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.partialPaidAmountPkr || 0), 0);
+        abLiabilities = abLiabilitiesRes.rows[0] || {};
+        const partialPendingRows = partialPayments.rows.filter((r: any) => !r.fullyPaid);
+        abLiabilities.uncompletedPartialsCount = partialPendingRows.length;
+        abLiabilities.uncompletedOnlinePaidUsd = partialPendingRows.reduce((sum: number, r: any) => sum + Number(r.abPaidAmount || 0), 0);
+        abLiabilities.uncompletedOnlinePaidPkr = partialPendingRows.reduce((sum: number, r: any) => sum + Number(r.abPaidAmountPkr || 0), 0);
+        abLiabilities.uncompletedCashReceivedUsd = partialPendingRows.reduce((sum: number, r: any) => sum + Number(r.partialPaidAmount || 0), 0);
+        abLiabilities.uncompletedCashReceivedPkr = partialPendingRows.reduce((sum: number, r: any) => sum + Number(r.partialPaidAmountPkr || 0), 0);
+        abLiabilities.uncompletedExtraDiscountUsd = 0;
+        abLiabilities.uncompletedExtraDiscountPkr = 0;
+        abLiabilities.fullExtraDiscountUsd = 0;
+        abLiabilities.fullExtraDiscountPkr = 0;
+        abLiabilities.partialInstallmentExtraDiscountUsd = 0;
+        abLiabilities.partialInstallmentExtraDiscountPkr = 0;
+        abLiabilities.vendorOutstandingUsd = 0;
+        abLiabilities.vendorOutstandingPkr = 0;
+        abLiabilities.vendorOutstandingCount = 0;
+      }
 
-      // 9. Monthly Totals
+      // 9. Monthly Totals — "In this month usage", old dollarsystem.php formulas
+      // (current Pakistan month), old archive + new-app rows (old buys/pays were
+      // never copied into drm.*, so nothing is counted twice):
+      //   Dollar Buying  = received_history show_ab='Show' created this month
+      //                  + new buys confirmed as Show, created this month
+      //   Dollar Paid    = webxl_dollar_pay created this month + new dollar_allocations
+      //   Dollar Balance = Buying - Paid
+      //   Advance Pay    = SUM(remain) of advance pays with remain > 0, status not
+      //                    deleted/clear, pay_date in this month
+      const LNUM = (c: string) =>
+        `COALESCE(substring(regexp_replace(replace(${c}, ',', ''), '[.]{2,}', '.', 'g') from '-?[0-9]+(?:[.][0-9]+)?')::numeric, 0)`;
       const monthlyStatsRes = await pool.query(`
+        WITH m AS (SELECT to_char(now() AT TIME ZONE 'Asia/Karachi', 'YYYY-MM') AS ym)
         SELECT
-          COALESCE(SUM(dollar_amount), 0) as "monthBuying",
-          COALESCE(SUM(pkr_amount), 0)    as "monthBuyingPkr"
-        FROM drm.dollar_buying
-        WHERE date_trunc('month', date) = date_trunc('month', now())
+          (SELECT COALESCE(SUM(dollar_amount), 0) FROM drm.dollar_buying, m
+            WHERE ${DB_NOT_LEGACY("dollar_buying.id")} AND is_confirmed AND COALESCE(balance_status, 'Show') = 'Show'
+              AND to_char(created_at, 'YYYY-MM') = m.ym)
+          + (SELECT COALESCE(SUM(${LNUM("h.dollars")}), 0) FROM legacy_archive.webxl_dollars_received_history h, m
+              WHERE btrim(h.show_ab) = 'Show' AND left(h.create_at, 7) = m.ym) AS "monthBuying",
+          (SELECT COALESCE(SUM(pkr_amount), 0) FROM drm.dollar_buying, m
+            WHERE ${DB_NOT_LEGACY("dollar_buying.id")} AND is_confirmed AND COALESCE(balance_status, 'Show') = 'Show'
+              AND to_char(created_at, 'YYYY-MM') = m.ym)
+          + (SELECT COALESCE(SUM(${LNUM("h.pkr_amount")}), 0) FROM legacy_archive.webxl_dollars_received_history h, m
+              WHERE btrim(h.show_ab) = 'Show' AND left(h.create_at, 7) = m.ym) AS "monthBuyingPkr",
+          (SELECT COALESCE(SUM(amount_usd), 0) FROM drm.dollar_allocations, m
+            WHERE to_char(created_at AT TIME ZONE 'Asia/Karachi', 'YYYY-MM') = m.ym)
+          + (SELECT COALESCE(SUM(${LNUM("p.dollars")}), 0) FROM legacy_archive.webxl_dollar_pay p, m
+              WHERE left(p.create_at, 7) = m.ym) AS "monthPaidUsd",
+          (SELECT COALESCE(SUM(${LNUM("p.pkr_amount")}), 0) FROM legacy_archive.webxl_dollar_pay p, m
+              WHERE left(p.create_at, 7) = m.ym) AS "monthPaidPkr",
+          (SELECT COALESCE(SUM(remaining_amount), 0) FROM drm.dollar_advance_payments, m
+            WHERE remaining_amount > 0 AND lower(COALESCE(status, '')) NOT IN ('deleted', 'clear')
+              AND to_char(pay_date, 'YYYY-MM') = m.ym)
+          + (SELECT COALESCE(SUM(${LNUM("a.remain_amount")}), 0) FROM legacy_archive.webxl_dollar_advance_pay a, m
+              WHERE ${LNUM("a.remain_amount")} > 0 AND lower(btrim(a.status)) NOT IN ('deleted', 'clear')
+                AND left(a.pay_date, 7) = m.ym) AS "monthAdvancePkr"
       `);
-      const { monthBuying, monthBuyingPkr } = monthlyStatsRes.rows[0];
-
-      const monthPaidRes = await pool.query(`
-        SELECT
-          COALESCE(SUM(amount_usd), 0) as "monthPaidUsd",
-          COALESCE(SUM(amount_pkr), 0) as "monthPaidPkr"
-        FROM drm.gm_entries
-        WHERE coalesce(is_deleted, false) = false
-          AND status = 'Approved'
-          AND date_trunc('month', created_at) = date_trunc('month', now())
-      `);
-      const { monthPaidUsd, monthPaidPkr } = monthPaidRes.rows[0];
+      const { monthBuying, monthBuyingPkr, monthPaidUsd, monthPaidPkr, monthAdvancePkr } = monthlyStatsRes.rows[0];
 
       const dollarBuys = await pool.query(`
         SELECT id, date, paypal_email as "paypalEmail",
                dollar_amount as "dollar", dollar_rate as "rate", pkr_amount as "received"
         FROM drm.dollar_buying
-        WHERE 1=1 ${buyingDateWhere}
+        WHERE ${DB_NOT_LEGACY("dollar_buying.id")} ${buyingDateWhere}
         ORDER BY date DESC LIMIT 50
       `, params);
 
       let fullReportSummary: ReturnType<typeof buildLegacyFullReportSummary> | null = null;
+      let abDollarLegacy: Awaited<ReturnType<typeof fetchLegacyAbDollarSystem>> | null = null;
       if (startDate && endDate) {
         const fullReportRes = await pool.query(`
           WITH client_gm AS (
@@ -6051,9 +6904,10 @@ export function registerAccountRoutes(app: Express) {
             FROM drm.gm_entries g
             WHERE coalesce(g.is_deleted, false) = false
               AND g.status = 'Approved'
-              AND coalesce(g.is_partial_payment, false) = false
+              AND (coalesce(g.is_partial_payment,0) <> 0) = false
               AND g.payment_status IS DISTINCT FROM 'Customer Paid'
               AND g.created_at >= $1 AND g.created_at <= $2
+              AND NOT EXISTS (SELECT 1 FROM migration_meta.migration_legacy_ids lm WHERE lm.modern_table = 'gm_entries' AND lm.modern_id = g.id::text)
           ),
           client_partial AS (
             SELECT
@@ -6061,13 +6915,14 @@ export function registerAccountRoutes(app: Express) {
               COALESCE(SUM(r.amount_usd), 0) AS usd
             FROM drm.gm_partial_receipts r
             WHERE r.receipt_date >= $1 AND r.receipt_date <= $2
+              AND NOT EXISTS (SELECT 1 FROM migration_meta.migration_legacy_ids lm WHERE lm.modern_table = 'gm_partial_receipts' AND lm.modern_id = r.id::text)
           ),
           buy_main AS (
             SELECT
               COALESCE(SUM(pkr_amount), 0) AS pkr,
               COALESCE(SUM(dollar_amount), 0) AS usd
             FROM drm.dollar_buying
-            WHERE coalesce(martini, 'Show') = 'Show'
+            WHERE ${DB_NOT_LEGACY("dollar_buying.id")} AND coalesce(martini, 'Show') = 'Show'
               AND (cheque_id IS NULL OR btrim(cheque_id) = '')
               AND date >= $1 AND date <= $2
           ),
@@ -6076,7 +6931,7 @@ export function registerAccountRoutes(app: Express) {
               COALESCE(SUM(pkr_amount), 0) AS pkr,
               COALESCE(SUM(dollar_amount), 0) AS usd
             FROM drm.dollar_buying
-            WHERE coalesce(martini, 'Show') = 'Show'
+            WHERE ${DB_NOT_LEGACY("dollar_buying.id")} AND coalesce(martini, 'Show') = 'Show'
               AND cheque_id IS NOT NULL AND btrim(cheque_id) <> ''
               AND lower(cheque_id) LIKE '%cheque%'
               AND date >= $1 AND date <= $2
@@ -6086,7 +6941,7 @@ export function registerAccountRoutes(app: Express) {
               COALESCE(SUM(pkr_amount), 0) AS pkr,
               COALESCE(SUM(dollar_amount), 0) AS usd
             FROM drm.dollar_buying
-            WHERE coalesce(martini, 'Show') = 'Show'
+            WHERE ${DB_NOT_LEGACY("dollar_buying.id")} AND coalesce(martini, 'Show') = 'Show'
               AND cheque_id IS NOT NULL AND btrim(cheque_id) <> ''
               AND lower(cheque_id) LIKE '%recovery%'
               AND date >= $1 AND date <= $2
@@ -6121,28 +6976,55 @@ export function registerAccountRoutes(app: Express) {
             (SELECT usd FROM ab_paid) AS ab_usd
         `, params);
         const fr = fullReportRes.rows[0] || {};
+        // Old-DRM part of the AB Report "Dollar System" section (same formulas, archive data).
+        const ymdS = String(startDate).slice(0, 10), ymdE = String(endDate).slice(0, 10);
+        abDollarLegacy = /^\d{4}-\d{2}-\d{2}$/.test(ymdS) && /^\d{4}-\d{2}-\d{2}$/.test(ymdE)
+          ? await fetchLegacyAbDollarSystem(pool, ymdS, ymdE) : null;
+        const lt = abDollarLegacy?.totals;
         fullReportSummary = buildLegacyFullReportSummary({
-          clientPkr: Number(fr.client_pkr || 0),
-          clientUsd: Number(fr.client_usd || 0),
-          buyPkr: Number(fr.buy_pkr || 0),
-          buyUsd: Number(fr.buy_usd || 0),
-          buyChequePkr: Number(fr.buy_cheque_pkr || 0),
-          buyChequeUsd: Number(fr.buy_cheque_usd || 0),
-          buyRecoveryPkr: Number(fr.buy_recovery_pkr || 0),
-          buyRecoveryUsd: Number(fr.buy_recovery_usd || 0),
-          abPkr: Number(fr.ab_pkr || 0),
-          abUsd: Number(fr.ab_usd || 0),
+          clientPkr: Number(fr.client_pkr || 0) + (lt?.clientPkr ?? 0),
+          clientUsd: Number(fr.client_usd || 0) + (lt?.clientUsd ?? 0),
+          buyPkr: Number(fr.buy_pkr || 0) + (lt?.buyPkr ?? 0),
+          buyUsd: Number(fr.buy_usd || 0) + (lt?.buyUsd ?? 0),
+          buyChequePkr: Number(fr.buy_cheque_pkr || 0) + (lt?.buyChequePkr ?? 0),
+          buyChequeUsd: Number(fr.buy_cheque_usd || 0) + (lt?.buyChequeUsd ?? 0),
+          buyRecoveryPkr: Number(fr.buy_recovery_pkr || 0) + (lt?.buyRecoveryPkr ?? 0),
+          buyRecoveryUsd: Number(fr.buy_recovery_usd || 0) + (lt?.buyRecoveryUsd ?? 0),
+          abPkr: Number(fr.ab_pkr || 0) + (lt?.abPkr ?? 0),
+          abUsd: Number(fr.ab_usd || 0) + (lt?.abUsd ?? 0),
         });
       }
 
+      const packTx = (items: any[]) => ({
+        count: items.length,
+        sum: items.reduce((s: number, r: any) => s + Number(r.amount || 0), 0),
+        items,
+      });
+
       // Compile daily transaction counts and sums by type
-      const dailyTxSummary = {
-        balance: { count: txBalance.rows.length, sum: txBalance.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0), items: txBalance.rows },
-        buy:     { count: txBuy.rows.length,     sum: txBuy.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0),     items: txBuy.rows },
-        sell:    { count: txSell.rows.length,    sum: txSell.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0),    items: txSell.rows },
-        martini: { count: txMartini.rows.length, sum: txMartini.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0), items: txMartini.rows },
-        notUsed: { count: txNotUsed.rows.length, sum: txNotUsed.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0), items: txNotUsed.rows },
+      let dailyTxSummary = {
+        balance: packTx(txBalance.rows),
+        buy: packTx(txBuy.rows),
+        sell: packTx(txSell.rows),
+        martini: packTx(txMartini.rows),
+        notUsed: packTx(txNotUsed.rows),
       };
+
+      let legacyDollarTx = false;
+      let monthBuyingOut = Number(monthBuying || 0);
+      // Old DRM rows (same tab rules as dollarsystem.php) are always listed after
+      // the new-app rows — old buys were never copied into drm.dollar_buying.
+      if (await legacyDollarHistoryAvailable(pool)) {
+        legacyDollarTx = true;
+        const legacyTx = await fetchLegacyDollarDailyTx(pool);
+        dailyTxSummary = {
+          balance: packTx([...txBalance.rows, ...legacyTx.balance]),
+          buy: packTx([...txBuy.rows, ...legacyTx.buy]),
+          sell: packTx([...txSell.rows, ...legacyTx.sell]),
+          martini: packTx([...txMartini.rows, ...legacyTx.martini]),
+          notUsed: packTx([...txNotUsed.rows, ...legacyTx.notUsed]),
+        };
+      }
 
       // Installments collected/total per Partial GM — same waterfall-allocation
       // used for the Installments tab, kept consistent across both views.
@@ -6159,41 +7041,75 @@ export function registerAccountRoutes(app: Express) {
             break;
           }
         }
+        if (!instArr.length && row.installmentsTotal != null) return row; // legacy pack already counted
         return { ...row, installmentsTotal: instArr.length, installmentsCollected };
       });
+      // Old-DRM GMs: (collected/total) from webxl_verify_gm_delay_amount 'Installment'
+      // rows, collected = acc_status Paid/Recoverd (old dollarsystem.php cot01/cot0).
+      {
+        const ids = partialPaymentsWithInstallments.map((r: any) => String(r.id));
+        if (ids.length) {
+          const { rows: cnt } = await pool.query(
+            `SELECT m.modern_id AS id,
+                    count(*)::int AS total,
+                    count(*) FILTER (WHERE btrim(COALESCE(d.acc_status, '')) IN ('Paid', 'Recoverd'))::int AS paid
+               FROM migration_meta.migration_legacy_ids m
+               JOIN legacy_archive.webxl_verify_gm_delay_amount d ON btrim(d.gmid) = m.legacy_id
+              WHERE m.modern_table = 'gm_entries' AND m.legacy_table = 'webxl_verify_gm'
+                AND m.modern_id = ANY($1::text[])
+                AND btrim(COALESCE(d.delay_dollar_status, '')) = 'Installment'
+              GROUP BY m.modern_id`,
+            [ids],
+          );
+          const byId = new Map(cnt.map((c: any) => [String(c.id), c]));
+          for (const r of partialPaymentsWithInstallments as any[]) {
+            const c: any = byId.get(String(r.id));
+            if (c && !r.installmentsTotal) {
+              r.installmentsTotal = c.total + Number(r.installmentsTotal || 0);
+              r.installmentsCollected = c.paid + Number(r.installmentsCollected || 0);
+            }
+          }
+        }
+      }
 
       res.json({
         walletStats,
         fullPayments: fullPayments.rows,
-        clientPayments: fullPayments.rows.map((row: any) => ({
+        clientPayments: [...(abDollarLegacy?.clientRows ?? []), ...fullPayments.rows.map((row: any) => ({
           date: row.date,
           company: row.company,
           dollar: row.dollar,
           rate: row.rate || 0,
           received: row.pkr
-        })),
-        dollarBuys: dollarBuys.rows,
+        }))],
+        dollarBuys: [...(abDollarLegacy?.buyRows ?? []), ...dollarBuys.rows],
+        abPaidLegacy: abDollarLegacy?.abRows ?? [],
         partialPayments: partialPaymentsWithInstallments,
         loans: loans.rows,
         pendingApprovals: pendingApprovals.rows,
         alibabaPayments: alibabaPayments.rows,
         abLiabilities,
-        transactions: txBalance.rows, // legacy fallback: balance tab items
+        transactions: dailyTxSummary.balance.items,
         dailyTxSummary,
+        legacyDollarTx,
         counts: {
-          full: fullPayments.rows.length,
-          partial: partialPayments.rows.length,
+          full: Number(fullTabCount),
+          partial: Number(partialTabCount),
           pending: pendingApprovals.rows.length,
           temp: 0,
-          liabilities: alibabaPayments.rows.length
+          liabilities: useLegacyFull
+            ? Number((abLiabilities as { vendorOutstandingCount?: number }).vendorOutstandingCount || 0)
+              + Number((abLiabilities as { fullOnlinePaidCount?: number }).fullOnlinePaidCount || 0)
+              + Number((abLiabilities as { uncompletedPartialsCount?: number }).uncompletedPartialsCount || 0)
+            : alibabaPayments.rows.length
         },
         monthlySummary: {
-          buyingUsd: monthBuying,
-          buyingPkr: monthBuyingPkr,
-          paidUsd: monthPaidUsd,
-          paidPkr: monthPaidPkr,
-          balanceUsd: Number(walletStats.dollarBalance || 0),
-          advancePkr: 0
+          buyingUsd: monthBuyingOut,
+          buyingPkr: Number(monthBuyingPkr || 0),
+          paidUsd: Number(monthPaidUsd || 0),
+          paidPkr: Number(monthPaidPkr || 0),
+          balanceUsd: Number(monthBuyingOut || 0) - Number(monthPaidUsd || 0),
+          advancePkr: Number(monthAdvancePkr || 0)
         },
         fullReportSummary,
       });
@@ -6362,7 +7278,7 @@ export function registerAccountRoutes(app: Express) {
         SELECT b.*, db.name as buyer_name_full
         FROM drm.dollar_buying b
         LEFT JOIN drm.dollar_buyers db ON b.buyer_id = db.id
-        WHERE 1=1
+        WHERE ${DB_NOT_LEGACY("b.id")}
       `;
       const params: any[] = [];
 
@@ -6382,10 +7298,74 @@ export function registerAccountRoutes(app: Express) {
       query += ` ORDER BY b.date DESC`;
 
       const result = await pool.query(query, params);
-      res.json(result.rows);
+
+      // Old DRM buys (Add Buyer -> webxl_dollars_received_history keeps the original
+      // amounts; webxl_dollar_buyer_dollars is the running balance and holds `type`).
+      // Buyer = webxl_user name of buyer_main, Reference = webxl_dollar_buyer.buyer_from,
+      // Martini = show_ab. Rows the old system marked 'delete' are left out.
+      // Only when no specific new-app buyer id is requested (old buyers have none).
+      let legacyRows: any[] = [];
+      if (!buyerId || buyerId === "all") {
+        const ymd = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+        const legacy = await pool.query(
+          `SELECT 'legacy-' || h._legacy_pk AS id, NULL::text AS buyer_id,
+                  u.name AS buyer_name, u.name AS buyer_name_full,
+                  COALESCE(NULLIF(btrim(db.buyer_from), ''), h.buyer_reference) AS buyer_reference,
+                  NULLIF(h.buyer_reference_paypal_email, '') AS paypal_email,
+                  NULLIF(h.buyer_account_no, '') AS account_no,
+                  NULLIF(h.cheque_id, '') AS cheque_id,
+                  NULLIF(h.payment_method, '') AS payment_method,
+                  NULLIF(bd.type, '') AS type,
+                  COALESCE(substring(regexp_replace(replace(h.dollars, ',', ''), '[.]{2,}', '.', 'g') from '-?[0-9]+(?:[.][0-9]+)?')::numeric, 0) AS dollar_amount,
+                  COALESCE(substring(regexp_replace(replace(h.dollar_rate, ',', ''), '[.]{2,}', '.', 'g') from '-?[0-9]+(?:[.][0-9]+)?')::numeric, 0) AS dollar_rate,
+                  COALESCE(substring(regexp_replace(replace(h.pkr_amount, ',', ''), '[.]{2,}', '.', 'g') from '-?[0-9]+(?:[.][0-9]+)?')::numeric, 0) AS pkr_amount,
+                  left(h.buy_date, 10) AS date,
+                  NULLIF(h.detail, '') AS detail,
+                  h.show_ab AS martini,
+                  'legacy' AS source
+             FROM legacy_archive.webxl_dollars_received_history h
+             LEFT JOIN legacy_archive.webxl_user u
+               ON u._source_table = 'webxl_user' AND u._legacy_pk = h.buyer_main
+             LEFT JOIN legacy_archive.webxl_dollar_buyer db
+               ON db._source_table = 'webxl_dollar_buyer' AND db._legacy_pk = h.buyer_reference
+             LEFT JOIN legacy_archive.webxl_dollar_buyer_dollars bd
+               ON bd._source_table = 'webxl_dollar_buyer_dollars' AND bd._legacy_pk = h.dollar_slot_id
+            WHERE COALESCE(h.show_ab, '') <> 'delete'
+              AND ($1::text IS NULL OR left(h.buy_date, 10) >= $1)
+              AND ($2::text IS NULL OR left(h.buy_date, 10) <= $2)
+            ORDER BY left(h.buy_date, 10) DESC, h._legacy_pk::bigint DESC`,
+          [ymd(startDate), ymd(endDate)],
+        );
+        legacyRows = legacy.rows;
+      }
+      res.json([...result.rows, ...legacyRows]);
     } catch (err) {
       console.error("Failed to fetch buying records:", err);
       res.status(500).json({ error: "Failed to fetch records" });
+    }
+  });
+
+  // GET /api/account/buying/unused-cheques — Cheque List on Add Buyer (old DRM showed
+  // webxl_cheque_system rows with cheque_status 'un-used'). Sources: drm.cheques with
+  // status Pending (migrated 'un-used') and drm.cheque_pool with status 'un-used'.
+  // Value is "<source>:<id>" so the POST can mark the chosen cheque used.
+  app.get("/api/account/buying/unused-cheques", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingView, { roles: FINANCIAL_VIEW_ROLES }), async (_req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT 'cheque:' || c.id AS value, c.cheque_number, c.bank_name, c.amount::float8 AS amount,
+               c.company_name AS pay_to, to_char(c.cheque_date, 'YYYY-MM-DD') AS cheque_date, c.cheque_type AS type
+          FROM drm.cheques c
+         WHERE c.status = 'Pending'
+        UNION ALL
+        SELECT 'pool:' || p.id, p.cheque_number, p.bank_name, p.amount::float8, p.company_name,
+               to_char(p.cheque_date, 'YYYY-MM-DD'), p.type
+          FROM drm.cheque_pool p
+         WHERE p.status = 'un-used'
+         ORDER BY cheque_date DESC, cheque_number`);
+      res.json(rows);
+    } catch (err) {
+      console.error("Failed to fetch unused cheques:", err);
+      res.status(500).json({ error: "Failed to fetch cheques" });
     }
   });
 
@@ -6395,21 +7375,52 @@ export function registerAccountRoutes(app: Express) {
       const user = req.user as any;
       const userId = user?.id || user?.userId;
 
-      const result = await pool.query(`
-        INSERT INTO drm.dollar_buying (
-          buyer_id, buyer_name, buyer_reference, paypal_email, account_no,
-          cheque_id, payment_method, type, dollar_amount, dollar_rate,
-          pkr_amount, date, screenshot_url, detail, remaining_usd, created_by_user_id
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $9, $15)
-        RETURNING *
-      `, [
-        data.buyerId, data.buyerName, data.buyerReference, data.paypalEmail, data.accountNo,
-        data.chequeId, data.paymentMethod, data.type, data.dollarAmount, data.dollarRate,
-        data.pkrAmount, data.date || new Date(), data.screenshotUrl, data.detail, userId
-      ]);
+      // Optional cheque from the Cheque List ("cheque:<id>" / "pool:<id>"): it must still
+      // be un-used; it is stored by its number and marked used (old un_used_cheque_id).
+      const chequeRef = typeof data.chequeId === "string" ? data.chequeId.trim() : "";
+      const m = /^(cheque|pool):(.+)$/.exec(chequeRef);
+      const client = await pool.connect();
+      let row: any;
+      try {
+        await client.query("BEGIN");
+        let chequeValue: string | null = chequeRef || null;
+        if (m) {
+          const upd = m[1] === "cheque"
+            ? await client.query(
+                `UPDATE drm.cheques SET status = 'Cleared', updated_at = now()
+                  WHERE id = $1 AND status = 'Pending' RETURNING cheque_number`, [m[2]])
+            : await client.query(
+                `UPDATE drm.cheque_pool SET status = 'used', used_at = now(), updated_at = now()
+                  WHERE id = $1 AND status = 'un-used' RETURNING cheque_number`, [m[2]]);
+          if (!upd.rowCount) {
+            await client.query("ROLLBACK");
+            return res.status(409).json({ error: "This cheque is no longer un-used. Pick another one." });
+          }
+          chequeValue = upd.rows[0].cheque_number;
+        }
+        const result = await client.query(`
+          INSERT INTO drm.dollar_buying (
+            buyer_id, buyer_name, buyer_reference, paypal_email, account_no,
+            cheque_id, payment_method, type, dollar_amount, dollar_rate,
+            pkr_amount, date, screenshot_url, detail, remaining_usd, created_by_user_id
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $9, $15)
+          RETURNING *
+        `, [
+          data.buyerId, data.buyerName, data.buyerReference, data.paypalEmail, data.accountNo,
+          chequeValue, data.paymentMethod, data.type, data.dollarAmount, data.dollarRate,
+          data.pkrAmount, data.date || new Date(), data.screenshotUrl, data.detail, userId
+        ]);
+        await client.query("COMMIT");
+        row = result.rows[0];
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
 
-      res.json(result.rows[0]);
+      res.json(row);
     } catch (err) {
       console.error("Failed to record buying:", err);
       res.status(400).json({ error: "Invalid data" });
@@ -6454,7 +7465,7 @@ export function registerAccountRoutes(app: Express) {
   // Show/Not Show/Refund label on a Balance tab row ("Ab Payment Status").
   // "Refund" also flips the existing martini liability flag (and reverting
   // back to "Show" un-flips it); "Not Show" only touches this label.
-  const BALANCE_STATUSES = ["Show", "Not Show", "Refund", "Canceled"] as const;
+  const BALANCE_STATUSES = ["Show", "Not Show", "Refund", "Canceled", "Not Used"] as const;
   const balanceStatusSchema = z.object({
     status: z.enum(BALANCE_STATUSES),
     statusDate: z.string().trim().min(1).optional().nullable(),
@@ -6470,13 +7481,21 @@ export function registerAccountRoutes(app: Express) {
       }
 
       const martiniVal =
-        status === "Refund" ? "Refund" : status === "Canceled" || status === "Not Show" ? "Not Show" : "Show";
+        status === "Refund" ? "Refund"
+          : status === "Canceled" || status === "Not Show" || status === "Not Used" ? "Not Show"
+          : "Show";
+      // Old DRM: choosing "Show" on a Martini / Not Used row moves it into Buy & Balance,
+      // so an unconfirmed buy is confirmed at the same time.
+      const userId = (req.user as any)?.id || (req.user as any)?.userId || null;
       const result = await pool.query(
         `UPDATE drm.dollar_buying
-         SET balance_status = $2, balance_status_date = $3, martini = $4, updated_at = now()
+         SET balance_status = $2, balance_status_date = $3, martini = $4, updated_at = now(),
+             is_confirmed = CASE WHEN $2 = 'Show' THEN true ELSE is_confirmed END,
+             confirmed_at = CASE WHEN $2 = 'Show' AND NOT is_confirmed THEN now() ELSE confirmed_at END,
+             confirmed_by_user_id = CASE WHEN $2 = 'Show' AND NOT is_confirmed THEN $5 ELSE confirmed_by_user_id END
          WHERE id = $1
          RETURNING *`,
-        [id, status, statusDate || null, martiniVal]
+        [id, status, statusDate || null, martiniVal, userId]
       );
       res.json(result.rows[0]);
     } catch (err) {
@@ -6534,21 +7553,61 @@ export function registerAccountRoutes(app: Express) {
     }
   });
 
+  // Old-DRM installments for a GM copied from webxl_verify_gm (gm_entries mapped via
+  // migration_legacy_ids). webxl_verify_gm_delay_amount rows: 'Installment' = partial
+  // payment installments, 'Delay' = loan (delay) repayments. Read-only.
+  const LEGACY_DELAY_NUM = (c: string) =>
+    `COALESCE(substring(replace(${c}, ',', '') from '-?[0-9]+(?:[.][0-9]+)?')::numeric, 0)::float8`;
+  // The Partial/Loan tabs list old GMs by their webxl_verify_gm id (numeric) and
+  // new ones by gm_entries id; resolve both ways through migration_legacy_ids.
+  async function resolveGmIds(id: string): Promise<{ modernId: string | null; legacyId: string | null }> {
+    const isLegacy = /^\d+$/.test(id);
+    const { rows } = await pool.query(
+      `SELECT modern_id, legacy_id FROM migration_meta.migration_legacy_ids
+        WHERE modern_table = 'gm_entries' AND legacy_table = 'webxl_verify_gm'
+          AND ${isLegacy ? "legacy_id" : "modern_id"} = $1 LIMIT 1`,
+      [id],
+    );
+    return isLegacy
+      ? { modernId: rows[0]?.modern_id ?? null, legacyId: id }
+      : { modernId: id, legacyId: rows[0]?.legacy_id ?? null };
+  }
+  async function legacyDelayRows(legacyGmId: string | null, kind: "Installment" | "Delay") {
+    if (!legacyGmId) return [];
+    const { rows } = await pool.query(
+      `SELECT 'legacy-' || d._legacy_pk AS id,
+              NULLIF(COALESCE(NULLIF(d.current_pay_date, ''), NULLIF(d.pay_date, ''), left(d.create_at, 10)), '0000-00-00') AS pay_date,
+              CASE WHEN ${LEGACY_DELAY_NUM("d.current_dollar_pay")} > 0
+                   THEN ${LEGACY_DELAY_NUM("d.current_dollar_pay")} ELSE ${LEGACY_DELAY_NUM("d.delay_dollars")} END AS dollar,
+              NULLIF(${LEGACY_DELAY_NUM("d.current_dollar_rate")}, 0) AS rate,
+              NULLIF(${LEGACY_DELAY_NUM("d.current_pkr")}, 0) AS pkr,
+              concat_ws(' · ', NULLIF(d.acc_status, ''), NULLIF(d.cash_status, '')) AS status
+         FROM legacy_archive.webxl_verify_gm_delay_amount d
+        WHERE btrim(d.gmid) = $1
+          AND btrim(COALESCE(d.delay_dollar_status, '')) = $2
+        ORDER BY d._legacy_pk::bigint ASC`,
+      [legacyGmId, kind],
+    );
+    return rows;
+  }
+
   // GET /api/account/dollar-system/partial-payment/:gmId/receipts — the "Partial
   // Payment Installment" view: this Partial GM's own totals alongside every real
   // gm_partial_receipts row recorded against it (the actual partial payments made).
   app.get("/api/account/dollar-system/partial-payment/:gmId/receipts", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
     try {
-      const { gmId } = req.params;
+      const { gmId: rawGmId } = req.params;
+      const gmIds = await resolveGmIds(rawGmId);
+      const gmId = gmIds.modernId ?? rawGmId;
       const gm = await pool.query(`
         SELECT g.drm_id as "drmId", g.company_name as "company", g.sales_person_name as "salePerson",
                g.amount_usd as "dollar", g.amount_pkr as "pkr", g.dollar_rate as "rate",
                g.package_type as "package", g.dropout, g.payment_status as "status",
                CASE
-                  WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type = '1' OR g.gm_type ILIKE 'New%' THEN 'New'
-                  WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type = '0' OR g.gm_type ILIKE 'Rc%' THEN 'Rc'
-                  WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type = '2' OR g.gm_type ILIKE 'Ec%' THEN 'Ec'
-                  WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type = '3' OR g.gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type::text = '1' OR g.gm_type::text ILIKE 'New%' THEN 'New'
+                  WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type::text = '0' OR g.gm_type::text ILIKE 'Rc%' THEN 'Rc'
+                  WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type::text = '2' OR g.gm_type::text ILIKE 'Ec%' THEN 'Ec'
+                  WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type::text = '3' OR g.gm_type::text ILIKE 'Rc-Up%' THEN 'Rc-Up'
                   ELSE 'New'
                 END as "type"
         FROM drm.gm_entries g WHERE g.id = $1 AND coalesce(g.is_deleted, false) = false
@@ -6575,7 +7634,13 @@ export function registerAccountRoutes(app: Express) {
         ORDER BY r.receipt_date ASC, r.created_at ASC
       `, [gmId]);
 
-      res.json({ gm: gm.rows[0], receipts: receipts.rows });
+      // Old 'Installment' rows were already copied into gm_partial_receipts (mapped in
+      // migration_legacy_ids), so only fall back to the archive if none were copied.
+      const legacyInst = receipts.rows.length ? [] : (await legacyDelayRows(gmIds.legacyId, "Installment")).map((r: any) => ({
+        id: r.id, partialDate: r.pay_date, partialDollar: r.dollar, partialDollarRate: r.rate,
+        partialPkr: r.pkr, partialStatus: r.status, source: "legacy",
+      }));
+      res.json({ gm: gm.rows[0], receipts: [...legacyInst, ...receipts.rows] });
     } catch (err) {
       console.error("Failed to fetch partial payment receipts:", err);
       res.status(500).json({ error: "Failed to fetch partial payment receipts" });
@@ -6587,16 +7652,18 @@ export function registerAccountRoutes(app: Express) {
   // alongside every real gm_loan_repayments row (customer paying the company back).
   app.get("/api/account/dollar-system/loan-payment/:gmId/repayments", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
     try {
-      const { gmId } = req.params;
+      const { gmId: rawGmId } = req.params;
+      const gmIds = await resolveGmIds(rawGmId);
+      const gmId = gmIds.modernId ?? rawGmId;
       const gm = await pool.query(`
         SELECT g.drm_id as "drmId", g.company_name as "company", g.sales_person_name as "salePerson",
                g.amount_usd as "dollar", g.amount_pkr as "pkr", g.dollar_rate as "rate",
                g.package_type as "package", g.dropout, g.payment_status as "status",
                CASE
-                  WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type = '1' OR g.gm_type ILIKE 'New%' THEN 'New'
-                  WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type = '0' OR g.gm_type ILIKE 'Rc%' THEN 'Rc'
-                  WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type = '2' OR g.gm_type ILIKE 'Ec%' THEN 'Ec'
-                  WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type = '3' OR g.gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type::text = '1' OR g.gm_type::text ILIKE 'New%' THEN 'New'
+                  WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type::text = '0' OR g.gm_type::text ILIKE 'Rc%' THEN 'Rc'
+                  WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type::text = '2' OR g.gm_type::text ILIKE 'Ec%' THEN 'Ec'
+                  WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type::text = '3' OR g.gm_type::text ILIKE 'Rc-Up%' THEN 'Rc-Up'
                   ELSE 'New'
                 END as "type",
                lr.loan_amount as "loanAmount", lr.amount_returned as "amountReturned",
@@ -6616,7 +7683,11 @@ export function registerAccountRoutes(app: Express) {
         ORDER BY r.repay_date ASC, r.created_at ASC
       `, [gmId]);
 
-      res.json({ gm: gm.rows[0], repayments: repayments.rows });
+      const legacyRepay = (await legacyDelayRows(gmIds.legacyId, "Delay")).map((r: any) => ({
+        id: r.id, repayDate: r.pay_date, repayDollar: r.dollar, repayDollarRate: r.rate,
+        repayPkr: r.pkr, repayStatus: r.status, source: "legacy",
+      }));
+      res.json({ gm: gm.rows[0], repayments: [...legacyRepay, ...repayments.rows] });
     } catch (err) {
       console.error("Failed to fetch loan repayments:", err);
       res.status(500).json({ error: "Failed to fetch loan repayments" });
@@ -7039,10 +8110,10 @@ export function registerAccountRoutes(app: Express) {
           -- Alibaba build — fall back to the linked GM entry's own entry type for
           -- payments submitted before that.
           COALESCE(ap.type, CASE
-            WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type = '1' OR g.gm_type ILIKE 'New%' THEN 'New'
-            WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type = '0' OR g.gm_type ILIKE 'Rc%' THEN 'Rc'
-            WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type = '2' OR g.gm_type ILIKE 'Ec%' THEN 'Ec'
-            WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type = '3' OR g.gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+            WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type::text = '1' OR g.gm_type::text ILIKE 'New%' THEN 'New'
+            WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type::text = '0' OR g.gm_type::text ILIKE 'Rc%' THEN 'Rc'
+            WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type::text = '2' OR g.gm_type::text ILIKE 'Ec%' THEN 'Ec'
+            WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type::text = '3' OR g.gm_type::text ILIKE 'Rc-Up%' THEN 'Rc-Up'
             ELSE NULL
           END)                          AS "type",
           COALESCE(g.extra_discount_usd, 0) AS "exDisc",
@@ -7080,14 +8151,100 @@ export function registerAccountRoutes(app: Express) {
         LIMIT 200
       `, params);
 
+      // Old DRM "Paid Alibaba" card (dollarsystem.php -> func.php page_dollar_gm2):
+      // webxl_dollar_pay rows whose GM is paid + Account/HOD approved, newest GM first.
+      // Bv Date = webxl_gmaccount.bvDate. Never copied into ab_payments, so no overlap.
+      {
+        const N = (c: string) =>
+          `COALESCE(substring(regexp_replace(replace(${c}, ',', ''), '[.]{2,}', '.', 'g') from '-?[0-9]+(?:[.][0-9]+)?')::numeric, 0)::float8`;
+        const lp: any[] = [];
+        const lw: string[] = [
+          `lower(btrim(COALESCE(v.webxl_pay_status, ''))) = 'yes'`,
+          `lower(btrim(COALESCE(v.acc_disc_status, ''))) = 'approved'`,
+          `lower(btrim(COALESCE(v.ceo_disc_status, ''))) = 'approved'`,
+        ];
+        if (search) {
+          lp.push(`%${String(search)}%`);
+          lw.push(`(c.cname ILIKE $${lp.length} OR c.com_id ILIKE $${lp.length} OR dp.order_id ILIKE $${lp.length} OR dp.member_id ILIKE $${lp.length})`);
+        }
+        const ymd = (v: unknown) => (/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(String(v ?? "")) ? String(v).slice(0, 10) : null);
+        if (ymd(fromDate)) { lp.push(ymd(fromDate)); lw.push(`left(btrim(dp.create_at), 10) >= $${lp.length}`); }
+        if (ymd(toDate)) { lp.push(ymd(toDate)); lw.push(`left(btrim(dp.create_at), 10) <= $${lp.length}`); }
+        if (status && status !== "all") { lp.push(String(status).toLowerCase()); lw.push(`lower(btrim(dp.pay_status)) = $${lp.length}`); }
+        const legacy = await pool.query(`
+          SELECT 'legacy-' || dp._legacy_pk AS id,
+                 NULLIF(left(btrim(dp.pay_date), 10), '') AS "payDate",
+                 NULLIF(NULLIF(COALESCE(o.bv_date::text, left(ga."bvDate", 10)), ''), '0000-00-00') AS "gmBvDate",
+                 NULLIF(NULLIF(left(ga.user_bv_date, 10), ''), '0000-00-00') AS "userBvDate",
+                 ga.id AS "gmBvId", btrim(dp.gmid) AS "legacyGmId",
+                 c.com_id AS "drmId", dp.member_id AS "memberId", dp.order_id AS "orderId",
+                 c.cname AS company, u.name AS person,
+                 ${N("dp.dollars")} AS dollar, NULLIF(${N("dp.dollar_rate")}, 0) AS "tdRate",
+                 v.package, NULLIF(dp.type, '') AS type,
+                 ${N("v.extra_discount")} AS "exDisc",
+                 lower(btrim(dp.pay_status)) AS "payStatus",
+                 CASE WHEN ${N("dp.dollar_rate")} > 0
+                      THEN (${N("v.price")} * ${N("v.dollar_rate")} - ${N("dp.dollars")} * ${N("dp.dollar_rate")}) / ${N("dp.dollar_rate")}
+                 END AS "reportProfitLoss",
+                 NULLIF(${N("dp.cus_dollar_rate")}, 0) AS "cusRate",
+                 ${N("dp.cus_profit")} AS "cusProfit",
+                 ${N("dp.pkr_amount")} AS pkr, NULLIF(dp.detail, '') AS detail,
+                 'legacy' AS source
+            FROM legacy_archive.webxl_dollar_pay dp
+            LEFT JOIN legacy_archive.webxl_verify_gm v
+              ON v._source_table = 'webxl_verify_gm' AND v._legacy_pk = btrim(dp.gmid) AND btrim(v.com_id) = btrim(dp.com_id)
+            LEFT JOIN legacy_archive.webxl_company c ON c._source_table = 'webxl_company' AND c._legacy_pk = btrim(dp.com_id)
+            LEFT JOIN legacy_archive.webxl_user u ON u._source_table = 'webxl_user' AND u._legacy_pk = btrim(dp.user_id)
+            LEFT JOIN (
+              SELECT DISTINCT ON (g.com_id) g.com_id, g._legacy_pk AS id, g."bvDate", g.user_bv_date
+                FROM legacy_archive.webxl_gmaccount g
+               ORDER BY g.com_id, g._legacy_pk::bigint DESC
+            ) ga ON ga.com_id = btrim(dp.com_id)
+            LEFT JOIN drm.legacy_gmaccount_bv_overrides o ON o.gmaccount_id = ga.id
+           WHERE ${lw.join(" AND ")}
+           ORDER BY ${N("v.id")} DESC, dp._legacy_pk::bigint DESC`, lp);
+        rows.push(...legacy.rows);
+      }
+
       const totals = rows.reduce((acc: any, r: any) => {
+        const rpl = Number(r.reportProfitLoss || 0);
+        if (rpl > 0) acc.currentProfit += rpl; else if (rpl < 0) acc.currentLoss += rpl;
         acc.totalDollar += Number(r.dollar || 0);
         acc.totalExDisc += Number(r.exDisc || 0);
         const cusProfit = Number(r.cusProfit || 0);
         if (cusProfit > 0) acc.cusProfit += cusProfit;
         else if (cusProfit < 0) acc.cusLoss += cusProfit;
         return acc;
-      }, { totalDollar: 0, totalExDisc: 0, cusProfit: 0, cusLoss: 0 });
+      }, { totalDollar: 0, totalExDisc: 0, cusProfit: 0, cusLoss: 0, currentProfit: 0, currentLoss: 0 });
+
+      // Header chips (old getDollarPayByStatusStartEnd*): current quarter (Pakistan date),
+      // by webxl_dollar_pay.pay_date — In Processing / Paid = SUM(dollars) by status,
+      // Extra Disc = SUM(verify_gm.extra_discount); new-app ab_payments added on top.
+      const QN = (c: string) =>
+        `COALESCE(substring(regexp_replace(replace(${c}, ',', ''), '[.]{2,}', '.', 'g') from '-?[0-9]+(?:[.][0-9]+)?')::numeric, 0)`;
+      const quarter = await pool.query(`
+        WITH q AS (
+          SELECT to_char(date_trunc('quarter', now() AT TIME ZONE 'Asia/Karachi'), 'YYYY-MM-DD') AS qs,
+                 to_char(date_trunc('quarter', now() AT TIME ZONE 'Asia/Karachi') + interval '3 months' - interval '1 day', 'YYYY-MM-DD') AS qe
+        ), lp AS (
+          SELECT lower(btrim(dp.pay_status)) AS st, ${QN("dp.dollars")} AS usd, ${QN("v.extra_discount")} AS exd
+            FROM legacy_archive.webxl_dollar_pay dp CROSS JOIN q
+            LEFT JOIN legacy_archive.webxl_verify_gm v
+              ON v._source_table = 'webxl_verify_gm' AND v._legacy_pk = btrim(dp.gmid) AND btrim(v.com_id) = btrim(dp.com_id)
+           WHERE left(btrim(dp.pay_date), 10) BETWEEN q.qs AND q.qe
+        ), mp AS (
+          SELECT ap.status AS st, ap.amount_usd AS usd, COALESCE(g.extra_discount_usd, 0) AS exd
+            FROM drm.ab_payments ap
+            LEFT JOIN drm.gm_entries g ON g.id = ap.gm_entry_id CROSS JOIN q
+           WHERE coalesce(ap.is_deleted, false) = false
+             AND to_char(COALESCE(ap.paid_date, (ap.created_at AT TIME ZONE 'Asia/Karachi')::date), 'YYYY-MM-DD') BETWEEN q.qs AND q.qe
+        ), a AS (SELECT * FROM lp UNION ALL SELECT * FROM mp)
+        SELECT (SELECT qs FROM q) AS start, (SELECT qe FROM q) AS "end",
+               COALESCE(SUM(usd) FILTER (WHERE st = 'processing'), 0)::float8 AS processing,
+               COALESCE(SUM(usd) FILTER (WHERE st = 'paid'), 0)::float8 AS paid,
+               COALESCE(SUM(exd), 0)::float8 AS "extraDisc"
+          FROM a`);
+      const quarterChips = quarter.rows[0];
 
       return res.json({
         records: rows,
@@ -7097,10 +8254,40 @@ export function registerAccountRoutes(app: Express) {
           all: rows.length,
         },
         totals,
+        quarterChips,
       });
     } catch (err) {
       console.error("Failed to fetch Paid Alibaba ledger:", err);
       res.status(500).json({ error: "Failed to fetch Paid Alibaba ledger" });
+    }
+  });
+
+  // PATCH /api/account/dollar-system/legacy-gmaccount/:id/bv-date — Update on the
+  // "Company & BV Date Details" modal for an old-DRM row (old update_gm_bv_date):
+  // bvDate -> start = bvDate, end = bvDate + 1 year, stored as an override.
+  app.patch("/api/account/dollar-system/legacy-gmaccount/:id/bv-date", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const id = String(req.params.id || "").trim();
+      const bvDate = String(req.body?.bvDate || "").slice(0, 10);
+      if (!/^[0-9]+$/.test(id) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(bvDate)) {
+        return res.status(400).json({ error: "Valid gmaccount id and bvDate (YYYY-MM-DD) are required" });
+      }
+      const ga = await pool.query(
+        `SELECT com_id FROM legacy_archive.webxl_gmaccount WHERE _source_table = 'webxl_gmaccount' AND _legacy_pk = $1`, [id]);
+      if (!ga.rowCount) return res.status(404).json({ error: "GM account not found" });
+      const userId = (req.user as any)?.userId ?? (req.user as any)?.id ?? null;
+      const { rows } = await pool.query(
+        `INSERT INTO drm.legacy_gmaccount_bv_overrides (gmaccount_id, com_id, bv_date, start_date, end_date, updated_by, updated_at)
+         VALUES ($1, $2, $3::date, $3::date, ($3::date + interval '1 year')::date, $4, now())
+         ON CONFLICT (gmaccount_id) DO UPDATE SET bv_date = EXCLUDED.bv_date, start_date = EXCLUDED.start_date,
+           end_date = EXCLUDED.end_date, updated_by = EXCLUDED.updated_by, updated_at = now()
+         RETURNING to_char(bv_date, 'YYYY-MM-DD') AS "bvDate", to_char(end_date, 'YYYY-MM-DD') AS "endDate"`,
+        [id, ga.rows[0].com_id, bvDate, userId],
+      );
+      res.json({ success: true, ...rows[0] });
+    } catch (err) {
+      console.error("Failed to update legacy BV date:", err);
+      res.status(500).json({ error: "Failed to update BV date" });
     }
   });
 
@@ -7144,6 +8331,28 @@ export function registerAccountRoutes(app: Express) {
   // each was used, and that buy's current remaining balance.
   app.get("/api/account/dollar-system/paid-alibaba/:id/buyer-detail", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
     try {
+      // Old-DRM rows ("legacy-<webxl_dollar_pay id>"): the buyer breakdown is the
+      // buyer_detail JSON saved on the old payment (func.php payId_buyerDetail).
+      const legacyMatch = /^legacy-(\d+)$/.exec(String(req.params.id));
+      if (legacyMatch) {
+        const lr = await pool.query(
+          `SELECT buyer_detail FROM legacy_archive.webxl_dollar_pay WHERE _source_table = 'webxl_dollar_pay' AND _legacy_pk = $1`,
+          [legacyMatch[1]],
+        );
+        let list: any[] = [];
+        try { const parsed = JSON.parse(lr.rows[0]?.buyer_detail || "[]"); list = Array.isArray(parsed) ? parsed : []; } catch { list = []; }
+        const n = (v: unknown) => { const x = Number(String(v ?? "").replace(/[^0-9.-]/g, "")); return Number.isFinite(x) ? x : 0; };
+        return res.json({
+          records: list.map((b: any) => ({
+            buyerName: b.buyer_main_name ?? null,
+            email: b.buyer_paypal_email ?? null,
+            totalShort: n(b.dollarTotal),
+            rate: n(b.buyer_dollar_rate),
+            use: n(b.dollarUse),
+            balance: n(b.dollarTotal) - n(b.dollarUse),
+          })),
+        });
+      }
       const { rows } = await pool.query(`
         SELECT
           db.buyer_name    AS "buyerName",
@@ -7184,7 +8393,28 @@ export function registerAccountRoutes(app: Express) {
         FROM drm.dollar_advance_payments
         ORDER BY created_at DESC
       `);
-      res.json(result.rows);
+      // Old DRM advance pays (webxl_dollar_advance_pay, never copied into drm.*):
+      // company = webxl_company.cname, buyer = webxl_user name of buyer_main,
+      // reference = webxl_dollar_buyer.buyer_from. 'deleted' rows are left out,
+      // as in the old wallet's Advance Pay total. Read-only (source: 'legacy').
+      const legacy = await pool.query(`
+        SELECT 'legacy-' || a._legacy_pk AS id,
+               COALESCE(c.cname, a.com_id) AS company_name,
+               u.name AS buyer_name,
+               COALESCE(NULLIF(btrim(db.buyer_from), ''), a.buyer_reference) AS buyer_reference,
+               COALESCE(substring(replace(a.amount, ',', '') from '-?[0-9]+(?:[.][0-9]+)?')::numeric, 0) AS amount,
+               COALESCE(substring(replace(a.remain_amount, ',', '') from '-?[0-9]+(?:[.][0-9]+)?')::numeric, 0) AS remaining_amount,
+               NULLIF(left(a.pay_date, 10), '') AS pay_date,
+               NULLIF(a.comm, '') AS comment,
+               a.status, NULLIF(replace(a.create_at, ' ', 'T'), '') AS created_at, NULL AS updated_at,
+               a.com_id, 'legacy' AS source
+          FROM legacy_archive.webxl_dollar_advance_pay a
+          LEFT JOIN legacy_archive.webxl_company c ON c._source_table = 'webxl_company' AND c._legacy_pk = a.com_id
+          LEFT JOIN legacy_archive.webxl_user u ON u._source_table = 'webxl_user' AND u._legacy_pk = a.buyer_main
+          LEFT JOIN legacy_archive.webxl_dollar_buyer db ON db._source_table = 'webxl_dollar_buyer' AND db._legacy_pk = a.buyer_reference
+         WHERE lower(btrim(COALESCE(a.status, ''))) <> 'deleted'
+         ORDER BY a.create_at DESC`);
+      res.json([...result.rows, ...legacy.rows]);
     } catch (err) {
       console.error("Failed to fetch advance payments:", err);
       res.status(500).json({ error: "Failed to fetch advance payments" });

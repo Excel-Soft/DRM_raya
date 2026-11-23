@@ -11,7 +11,15 @@ import { pool } from "../db";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SELECT_SQL = `
-  SELECT d.id, d.create_date, c.company_name, u.full_name AS person_name,
+  SELECT d.id,
+         -- Pakistan-time text: old-DRM rows already hold Pakistan local time; rows
+         -- saved by this app hold server-local time and are converted.
+         to_char(CASE WHEN EXISTS (SELECT 1 FROM migration_meta.migration_legacy_ids lm
+                                    WHERE lm.modern_table = 'diagnose_followups' AND lm.modern_id = d.id::text)
+                      THEN d.create_date
+                      ELSE (d.create_date AT TIME ZONE current_setting('TimeZone')) AT TIME ZONE 'Asia/Karachi' END,
+                 'YYYY-MM-DD HH24:MI:SS') AS create_date,
+         c.company_name, u.full_name AS person_name,
          d.start_rating, d.up_salling, d.rfq, d.products, d.follow_rate,
          d.sample, d.order_info, d.revenue, d.happy_alibaba, d.happy_webxl, d.report
   FROM drm.diagnose_followups d
@@ -83,11 +91,18 @@ export function registerDiagnoseFollowupRoutes(app: Express) {
       const built = buildFilters(req);
       if (!built.ok) return res.status(built.status).json({ error: built.message });
 
-      const result = await pool.query(
-        `${SELECT_SQL} ${built.where} ORDER BY d.create_date DESC`,
-        built.params,
-      );
-      res.json({ rows: result.rows.map(mapRow) });
+      // Server-side pages (a month for all users is ~4k rows).
+      const page = Math.max(1, parseInt(String((req.query as any).page ?? "1"), 10) || 1);
+      const pageSize = Math.min(200, Math.max(1, parseInt(String((req.query as any).pageSize ?? "50"), 10) || 50));
+      const n = built.params.length;
+      const [result, countRes] = await Promise.all([
+        pool.query(
+          `${SELECT_SQL} ${built.where} ORDER BY d.create_date DESC LIMIT $${n + 1} OFFSET $${n + 2}`,
+          [...built.params, pageSize, (page - 1) * pageSize],
+        ),
+        pool.query(`SELECT count(*)::int AS total FROM drm.diagnose_followups d ${built.where}`, built.params),
+      ]);
+      res.json({ rows: result.rows.map(mapRow), total: countRes.rows[0]?.total ?? 0, page, pageSize });
     } catch (err) {
       console.error("[diagnose-followup] list failed", err);
       res.status(500).json({ error: "Failed to load the diagnose report." });
@@ -113,6 +128,7 @@ export function registerDiagnoseFollowupRoutes(app: Express) {
       };
       const fmtDate = (v: any): string => {
         if (!v) return "";
+        if (typeof v === "string") return v; // already Pakistan-time text
         const d = v instanceof Date ? v : new Date(v);
         return Number.isNaN(d.getTime()) ? String(v) : d.toISOString().replace("T", " ").slice(0, 19);
       };

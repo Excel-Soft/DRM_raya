@@ -10,6 +10,8 @@ import { PlusCircle, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 export default function AddKwa() {
   const { toast } = useToast();
@@ -19,6 +21,29 @@ export default function AddKwa() {
   const { data: kwaData = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/target-system/kwa-records"],
   });
+
+  // Table: search + client-side pagination (newest first, as the API returns).
+  const [tableSearch, setTableSearch] = useState("");
+  const [tablePageSize, setTablePageSize] = useState("10");
+  const [tablePage, setTablePage] = useState(1);
+  const filteredKwa = kwaData.filter((row: any) => {
+    const q = tableSearch.trim().toLowerCase();
+    if (!q) return true;
+    return [row.comId, row.company, row.employee, row.detail, row.type, row.kwa, row.remaining]
+      .some((v) => String(v ?? "").toLowerCase().includes(q));
+  });
+  const tableLimit = Number(tablePageSize) || 10;
+  const tableTotalPages = Math.max(1, Math.ceil(filteredKwa.length / tableLimit));
+  const tableCurrentPage = Math.min(tablePage, tableTotalPages);
+  const pagedKwa = filteredKwa.slice((tableCurrentPage - 1) * tableLimit, tableCurrentPage * tableLimit);
+  const tableFirstRow = filteredKwa.length === 0 ? 0 : (tableCurrentPage - 1) * tableLimit + 1;
+  const tableLastRow = (tableCurrentPage - 1) * tableLimit + pagedKwa.length;
+  // Page buttons: 1 … (current-1, current, current+1) … last
+  const tablePageButtons: (number | "gap")[] = [];
+  for (let p = 1; p <= tableTotalPages; p++) {
+    if (p === 1 || p === tableTotalPages || Math.abs(p - tableCurrentPage) <= 1) tablePageButtons.push(p);
+    else if (tablePageButtons[tablePageButtons.length - 1] !== "gap") tablePageButtons.push("gap");
+  }
 
   // Real customers for the Company Name autocomplete — same
   // /api/account/customers-list endpoint and search-dropdown convention used
@@ -47,29 +72,11 @@ export default function AddKwa() {
     },
   });
 
-  const groupedUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    users.forEach((u: any) => {
-      const role = u.role || "Unassigned Role";
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(u);
-    });
-    return Object.entries(grouped)
-      .map(([role, users]) => ({ role, users }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [users]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedUsers = useMemo(() => groupUsersByRoleTitle(users), [users]);
 
-  const groupedAllUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    allUsers.forEach((u: any) => {
-      const role = u.role || "Unassigned Role";
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(u);
-    });
-    return Object.entries(grouped)
-      .map(([role, roleUsers]) => ({ role, users: roleUsers }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [allUsers]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedAllUsers = useMemo(() => groupUsersByRoleTitle(allUsers), [allUsers]);
 
   // Form State
   const [company, setCompany] = useState("");
@@ -288,24 +295,15 @@ export default function AddKwa() {
 
               <div>
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Person:</label>
-                <Select value={person} onValueChange={setPerson}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Choose..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Choose...</SelectItem>
-                    {groupedUsers.map(({ role, users }) => (
-                      <SelectGroup key={role}>
-                        <SelectLabel>{role}</SelectLabel>
-                        {users.filter((u) => u.fullName || u.username).map((u) => (
-                          <SelectItem key={u.id} value={u.fullName || u.username}>
-                            {u.fullName || u.username}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  users={users}
+                  value={person}
+                  onChange={setPerson}
+                  getValue={(u) => String(u.fullName || u.username || "")}
+                  extraOptions={[{ value: "none", label: "Choose..." }]}
+                  placeholder="Choose..."
+                  className="h-9"
+                />
               </div>
             </div>
 
@@ -348,32 +346,15 @@ export default function AddKwa() {
                 </div>
                 <div>
                   <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Used By:</label>
-                  <Select
+                  <RoleGroupedUserSelect
+                    users={allUsers}
                     value={usedBySelectValue}
-                    onValueChange={(v) => setUsedByInput(v === "none" ? "" : v)}
-                  >
-                    <SelectTrigger className="h-10">
-                      <SelectValue placeholder="Choose..." />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[min(320px,60vh)]">
-                      <SelectItem value="none">Choose...</SelectItem>
-                      {groupedAllUsers.map(({ role, users: roleUsers }) => (
-                        <SelectGroup key={role}>
-                          <SelectLabel>{role}</SelectLabel>
-                          {roleUsers
-                            .filter((u) => u.fullName || u.username)
-                            .map((u) => {
-                              const label = u.fullName || u.username;
-                              return (
-                                <SelectItem key={u.id} value={label}>
-                                  {label}
-                                </SelectItem>
-                              );
-                            })}
-                        </SelectGroup>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    onChange={(v) => setUsedByInput(v === "none" ? "" : v)}
+                    getValue={(u) => String(u.fullName || u.username || "")}
+                    extraOptions={[{ value: "none", label: "Choose..." }]}
+                    placeholder="Choose..."
+                    className="h-10"
+                  />
                 </div>
 
                 <div>
@@ -417,7 +398,7 @@ export default function AddKwa() {
             <div className="flex flex-col space-y-2">
               <span className="text-sm text-gray-600 dark:text-zinc-300">Show</span>
               <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-zinc-300">
-                <Select defaultValue="10">
+                <Select value={tablePageSize} onValueChange={(v) => { setTablePageSize(v); setTablePage(1); }}>
                   <SelectTrigger className="w-[70px] h-8">
                     <SelectValue />
                   </SelectTrigger>
@@ -432,7 +413,11 @@ export default function AddKwa() {
             </div>
             <div className="flex flex-col space-y-2 text-right">
               <span className="text-sm text-gray-600 dark:text-zinc-300">Search:</span>
-              <Input className="h-8 w-48" />
+              <Input
+                className="h-8 w-48"
+                value={tableSearch}
+                onChange={(e) => { setTableSearch(e.target.value); setTablePage(1); }}
+              />
             </div>
           </div>
           
@@ -459,15 +444,15 @@ export default function AddKwa() {
                   </TableRow>
                 ) : (
                   <>
-                    {kwaData.map((row, index) => (
+                    {pagedKwa.map((row: any, index: number) => (
                       <TableRow key={row.id}>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{index + 1}</TableCell>
+                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{tableFirstRow + index}</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.comId || "—"}</TableCell>
                         <TableCell className="text-sm text-gray-700 uppercase dark:text-zinc-400">{row.company}</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.employee}</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.kwa}$</TableCell>
+                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{Number(row.kwa) || 0}$</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.detail}</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.remaining}$</TableCell>
+                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{Number(row.remaining) || 0}$</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.type}</TableCell>
                         <TableCell className="text-sm text-gray-700 whitespace-nowrap dark:text-zinc-400">{new Date(row.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(/,/g, '')}</TableCell>
                         <TableCell className="text-center">
@@ -478,9 +463,11 @@ export default function AddKwa() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {kwaData.length === 0 && (
+                    {pagedKwa.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={10} className="text-center py-6 text-gray-500 dark:text-zinc-400">No KWA records found.</TableCell>
+                        <TableCell colSpan={10} className="text-center py-6 text-gray-500 dark:text-zinc-400">
+                          {tableSearch ? "No KWA records match your search." : "No KWA records found."}
+                        </TableCell>
                       </TableRow>
                     )}
                   </>
@@ -490,17 +477,38 @@ export default function AddKwa() {
           </div>
           
           <div className="p-4 flex items-center justify-between border-t text-sm text-gray-600 dark:text-zinc-300">
-            <div>Showing 1 to {Math.min(10, kwaData.length)} of {kwaData.length} entries</div>
-            <div className="flex space-x-1">
-              <Button variant="outline" className="h-8 px-3 text-gray-500 bg-gray-50 dark:bg-zinc-900 dark:text-zinc-400">Previous</Button>
-              <Button variant="default" className="h-8 w-8 p-0 bg-[#00a65a] hover:bg-[#008d4c]">1</Button>
-              <Button variant="outline" className="h-8 w-8 p-0">2</Button>
-              <Button variant="outline" className="h-8 w-8 p-0">3</Button>
-              <Button variant="outline" className="h-8 w-8 p-0">4</Button>
-              <Button variant="outline" className="h-8 w-8 p-0">5</Button>
-              <span className="px-2 flex items-end">...</span>
-              <Button variant="outline" className="h-8 w-8 p-0">27</Button>
-              <Button variant="outline" className="h-8 px-3">Next</Button>
+            <div>Showing {tableFirstRow} to {tableLastRow} of {filteredKwa.length} entries</div>
+            <div className="flex flex-wrap gap-1">
+              <Button
+                variant="outline"
+                className="h-8 px-3"
+                disabled={tableCurrentPage <= 1}
+                onClick={() => setTablePage(Math.max(1, tableCurrentPage - 1))}
+              >
+                Previous
+              </Button>
+              {tablePageButtons.map((p, i) =>
+                p === "gap" ? (
+                  <span key={`gap-${i}`} className="h-8 px-2 flex items-center">…</span>
+                ) : (
+                  <Button
+                    key={p}
+                    variant={p === tableCurrentPage ? "default" : "outline"}
+                    className={p === tableCurrentPage ? "h-8 min-w-8 px-2 bg-[#00a65a] hover:bg-[#008d4c]" : "h-8 min-w-8 px-2"}
+                    onClick={() => setTablePage(p)}
+                  >
+                    {p}
+                  </Button>
+                ),
+              )}
+              <Button
+                variant="outline"
+                className="h-8 px-3"
+                disabled={tableCurrentPage >= tableTotalPages}
+                onClick={() => setTablePage(Math.min(tableTotalPages, tableCurrentPage + 1))}
+              >
+                Next
+              </Button>
             </div>
           </div>
         </CardContent>

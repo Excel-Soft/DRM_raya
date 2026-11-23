@@ -53,7 +53,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProductPostingExecutiveWidget } from "@/components/product-posting-executive-widget";
 import { ProductPostingManagerWidget } from "@/components/product-posting-manager-widget";
-import { MyQuotationsWidget } from "@/components/my-quotations-widget";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
+import { departmentTypeMatchesFamily } from "@/lib/project-department-variants";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -774,7 +775,9 @@ export default function ProductPostingDashboard() {
                 });
             } else {
                 // product_posting_manager: ensure only their department projects show
-                queueItems = queueItems.filter((item: any) => item.project?.departmentType === 'PRODUCT_POSTING');
+                queueItems = queueItems.filter((item: any) =>
+                    departmentTypeMatchesFamily(item.project?.departmentType, "product_posting"),
+                );
             }
         }
 
@@ -953,47 +956,22 @@ export default function ProductPostingDashboard() {
                         <div className="grid grid-cols-2 gap-6">
                             <div className="space-y-1.5">
                                 <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Person</label>
-                                <Select 
-                                    value={taskDetails.assigneeId} 
-                                    onValueChange={(v) => setTaskDetails(prev => ({ ...prev, assigneeId: v }))}
-                                >
-                                    <SelectTrigger className="h-10 border-gray-200 text-[13px] text-gray-700 dark:border-zinc-800 dark:text-zinc-400">
-                                        <SelectValue placeholder="Choose..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {isLoadingUsers ? (
-                                            <div className="p-2 text-center text-gray-400 text-[12px]">Loading users...</div>
-                                        ) : usersError ? (
-                                            <div className="p-2 text-center text-rose-500 text-[12px]">Error: {(usersError as any).message}</div>
-                                        ) : usersData?.users ? (
-                                            usersData.users
-                                            .filter((u: any) => {
-                                                const uRole = (u.role || "").toLowerCase();
-                                                const rs = (u.roles || []).map((r: any) => String(r).toLowerCase());
-                                                
-                                                return uRole === "posting_executive" || 
-                                                       uRole === "product_posting_executive" ||
-                                                       rs.includes("posting_executive") || 
-                                                       rs.includes("product_posting_executive");
-                                            })
-                                            .map((user: any) => (
-                                                <SelectItem key={user.id} value={user.id}>
-                                                    {user.fullName || user.username}
-                                                </SelectItem>
-                                            ))
-                                        ) : (
-                                            <div className="p-2 text-center text-gray-400 text-[12px]">No data</div>
-                                        )}
-                                        {usersData?.users && usersData.users.length > 0 && usersData.users.filter((u: any) => {
-                                            const r = (u.role || "").toLowerCase();
-                                            const uName = (u.fullName || u.username || "").toLowerCase();
-                                            const rs = (u.roles || []).map((role: any) => String(role).toLowerCase());
-                                            return uName.includes("nouman") || r.includes("posting") || r.includes("executive") || r.includes("dd") || rs.some((role: string) => role.includes("posting") || role.includes("executive"));
-                                        }).length === 0 && (
-                                            <SelectItem value="none" disabled>No executives found</SelectItem>
-                                        )}
-                                    </SelectContent>
-                                </Select>
+                                <RoleGroupedUserSelect
+                                    grouped={false}
+                                    users={(usersData?.users || []).filter((u: any) => {
+                                        const uRole = (u.role || "").toLowerCase();
+                                        const rs = (u.roles || []).map((r: any) => String(r).toLowerCase());
+                                        return uRole === "posting_executive" ||
+                                               uRole === "product_posting_executive" ||
+                                               rs.includes("posting_executive") ||
+                                               rs.includes("product_posting_executive");
+                                    })}
+                                    value={taskDetails.assigneeId}
+                                    onChange={(v) => setTaskDetails(prev => ({ ...prev, assigneeId: v }))}
+                                    getLabel={(u: any) => u.fullName || u.username || ""}
+                                    placeholder={isLoadingUsers ? "Loading users..." : usersError ? "Error loading users" : "Choose..."}
+                                    className="h-10 border-gray-200 text-[13px] text-gray-700 dark:border-zinc-800 dark:text-zinc-400"
+                                />
                             </div>
                             <div className="space-y-1.5">
                                         <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Task</label>
@@ -1429,10 +1407,7 @@ export default function ProductPostingDashboard() {
                 />
 
                 {isExecutiveView ? (
-                    <div className="grid gap-4">
-                        <ProductPostingExecutiveWidget />
-                        <MyQuotationsWidget />
-                    </div>
+                    <ProductPostingExecutiveWidget />
                 ) : (
                     /* Two-column layout (Original Design) */
                     <div className="grid gap-2 lg:grid-cols-[2fr,1fr] min-w-0" style={{ maxWidth: "100%" }}>

@@ -6,6 +6,7 @@ const router = Router();
 // Specific/static paths first — Express would otherwise let the generic
 // "/:id" routes below swallow these (e.g. GET /groups matching GET /:id
 // with id="groups").
+router.get("/groups/roles", UsersController.getRoleGroups); // old-DRM Group List (roles)
 router.get("/groups", UsersController.getGroups);
 router.post("/groups", UsersController.createGroup);
 router.patch("/groups/:id", UsersController.updateGroup);
@@ -18,6 +19,7 @@ router.delete("/:id/team-members/:memberId", UsersController.removeTeamMember);
 router.post("/:id/impersonate", UsersController.impersonateUser);
 router.patch("/:id/status", UsersController.updateStatus);
 
+router.get("/stats/summary", UsersController.statsSummary);
 router.get("/", UsersController.listUsers);
 router.post("/", UsersController.createUser);
 router.get("/:id", UsersController.getUser);

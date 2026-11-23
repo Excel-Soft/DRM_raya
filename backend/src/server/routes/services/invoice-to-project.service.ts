@@ -75,6 +75,21 @@ export const createOrLinkProjectForGm = async ({
   }
 };
 
+async function resolveLegacySourceKind(
+  sourceId: string,
+): Promise<"product_posting" | "standard_invoice" | "quotation" | null> {
+  const ppi = await pool.query(
+    `SELECT id FROM drm.product_posting_invoices WHERE id = $1 LIMIT 1`,
+    [sourceId],
+  );
+  if (ppi.rows[0]) return "product_posting";
+  const inv = await pool.query(`SELECT id FROM drm.invoices WHERE id = $1 LIMIT 1`, [sourceId]);
+  if (inv.rows[0]) return "standard_invoice";
+  const q = await pool.query(`SELECT id FROM drm.quotations WHERE id = $1 LIMIT 1`, [sourceId]);
+  if (q.rows[0]) return "quotation";
+  return null;
+}
+
 export async function createOrLinkProjectForLegacySource({
   sourceId,
   customerId,
@@ -86,8 +101,11 @@ export async function createOrLinkProjectForLegacySource({
 }: any) {
   try {
     const existing = await pool.query(
-      `SELECT id FROM drm.projects WHERE invoice_id = $1 AND COALESCE(is_deleted, false) = false LIMIT 1`,
-      [sourceId]
+      `SELECT id FROM drm.projects
+         WHERE COALESCE(is_deleted, false) = false
+           AND (legacy_source_id = $1::text OR invoice_id = $1::uuid)
+         LIMIT 1`,
+      [sourceId],
     );
     if (existing.rows[0]) {
       return { ok: true, created: false, linked: true, projectId: existing.rows[0].id, reason: "Already exists" };
@@ -175,11 +193,24 @@ export async function createOrLinkProjectForLegacySource({
         }
     }
 
-    const ins = await pool.query(
+    const sourceKind = await resolveLegacySourceKind(sourceId);
+    const useProductPostingFk = sourceKind === "product_posting";
+
+  const ins = await pool.query(
       `INSERT INTO drm.projects (
-          invoice_id, name, customer_id, owner_user_id, status, department_type, service_type, description, created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, 'Active', $5, $6, $7, now(), now()) RETURNING id`,
-      [sourceId, name || 'Standard Project', customerId, ownerUserId, deptType, serviceType || null, description || '']
+          invoice_id, legacy_source_id, project_type,
+          name, customer_id, owner_user_id, status, department_type, service_type, description, created_at, updated_at
+       ) VALUES ($1, $2, 'INVOICE_ROOT', $3, $4, $5, 'Active', $6, $7, $8, now(), now()) RETURNING id`,
+      [
+        useProductPostingFk ? sourceId : null,
+        useProductPostingFk ? null : sourceId,
+        name || "Standard Project",
+        customerId,
+        ownerUserId,
+        deptType,
+        serviceType || null,
+        description || "",
+      ],
     );
 
     return { ok: true, created: true, linked: false, projectId: ins.rows[0].id };

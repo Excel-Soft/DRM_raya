@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { apiRequestJson, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 interface ApiUser {
     id: string;
@@ -144,18 +145,15 @@ export default function LateComingPage() {
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-4">
                             <div className="space-y-1.5 flex flex-col">
                                 <Label className="text-[13px] font-medium text-[#495057] dark:text-zinc-400">Person</Label>
-                                <Select value={form.userId} onValueChange={(v) => setForm((f) => ({ ...f, userId: v }))}>
-                                    <SelectTrigger className="h-9 w-full bg-white text-[13px] text-gray-500 shadow-sm border-gray-200 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800">
-                                        <SelectValue placeholder="Choose..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {users.map((u) => (
-                                            <SelectItem key={u.id} value={u.id}>
-                                                {u.fullName || u.email || "Unnamed"}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                <RoleGroupedUserSelect
+                                    grouped={false}
+                                    users={users}
+                                    value={form.userId}
+                                    onChange={(v) => setForm((f) => ({ ...f, userId: v }))}
+                                    getLabel={(u) => String(u.fullName || u.email || "Unnamed")}
+                                    placeholder="Choose..."
+                                    className="h-9 w-full bg-white text-[13px] text-gray-500 shadow-sm border-gray-200 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800"
+                                />
                             </div>
 
                             <div className="space-y-1.5 flex flex-col">
@@ -229,19 +227,16 @@ export default function LateComingPage() {
                         </div>
                         <div className="flex flex-col gap-1">
                             <span className="text-[12px] text-[#495057] dark:text-zinc-400">Person</span>
-                            <Select value={userFilter} onValueChange={(v) => { setUserFilter(v); setPage(1); }}>
-                                <SelectTrigger className="h-8 w-[170px] bg-white text-[13px] text-gray-600 border-gray-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                                    <SelectValue placeholder="All persons" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All persons</SelectItem>
-                                    {users.map((u) => (
-                                        <SelectItem key={u.id} value={u.id}>
-                                            {u.fullName || u.email || "Unnamed"}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                            <RoleGroupedUserSelect
+                                grouped={false}
+                                users={users}
+                                value={userFilter}
+                                onChange={(v) => { setUserFilter(v); setPage(1); }}
+                                getLabel={(u) => String(u.fullName || u.email || "Unnamed")}
+                                extraOptions={[{ value: "all", label: "All persons" }]}
+                                placeholder="All persons"
+                                className="h-8 w-[170px] bg-white text-[13px] text-gray-600 border-gray-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800"
+                            />
                         </div>
                         <div className="flex flex-col gap-1">
                             <span className="text-[12px] text-[#495057] dark:text-zinc-400">Department</span>

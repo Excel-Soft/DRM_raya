@@ -17,6 +17,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 import { useToast } from "@/hooks/use-toast";
 import { Eye, Pencil, Trash2, UserRoundPlus, CircleCheck, CircleX } from "lucide-react";
 
@@ -86,6 +87,7 @@ interface MetaResult {
   statuses: string[];
   permissions: {
     canCreate: boolean; canEditOrDelete: boolean; canReviewEmployeeRejection: boolean;
+    canEdit?: boolean; canDelete?: boolean;
     canDecide: boolean; canVoid: boolean; canViewReports: boolean;
     isFullAccess: boolean; role: string;
   };
@@ -457,6 +459,16 @@ export default function AddPenaltyPage() {
   const canVoid = !!perms?.canVoid;
   const canCreate = !!perms?.canCreate;
   const canEditOrDelete = !!perms?.canEditOrDelete;
+  // Edit -> admin (any status) / account manager (pending only); Delete -> admin only.
+  const canEditPerm = !!perms?.canEdit;
+  const canDeletePerm = !!perms?.canDelete;
+  const isAdminRole = perms?.role === "admin";
+  const userLabel = (u: any) => String(u?.fullName || u?.name || u?.email || u?.id || "");
+  // Keep the current person selectable in Edit / Re-assign even if that profile is now disabled.
+  const currentPersonOption = (employeeId: string) => {
+    const u = allUsers.find((x: any) => x.id === employeeId) as any;
+    return u && u.isDeactive ? [{ value: u.id, label: `${userLabel(u)} (disabled)` }] : [];
+  };
   const canReviewRejection = !!perms?.canReviewEmployeeRejection;
   const editApproved = editOpen && editForm.approvalStatus === "APPROVED" && !perms?.isFullAccess;
 
@@ -485,16 +497,15 @@ export default function AddPenaltyPage() {
             <div className="flex flex-col md:flex-row items-end gap-6">
               <div className="flex-1 w-full space-y-1.5">
                 <Label className="text-[13px] font-semibold text-[#495057] dark:text-zinc-300">Person</Label>
-                <Select value={inlineEmployeeId} onValueChange={setInlineEmployeeId}>
-                  <SelectTrigger className="w-full h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
-                  <SelectContent>
-                    {allUsers.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>
-                        {u.fullName || u.name || u.email || u.id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  users={allUsers}
+                  value={inlineEmployeeId}
+                  onChange={(v) => setInlineEmployeeId(v)}
+                  getLabel={userLabel}
+                  placeholder="Choose..."
+                  searchPlaceholder="Search person..."
+                  className="w-full h-10 text-[13px]"
+                />
               </div>
               <div className="flex-1 w-full space-y-1.5">
                 <Label className="text-[13px] font-semibold text-[#495057] dark:text-zinc-300">Head</Label>
@@ -611,7 +622,8 @@ export default function AddPenaltyPage() {
                   const employeeRejected = row.disputeStatus === "PENDING";
                   const awaitingEmployee = isPending && !employeeRejected && !row.employeeAcknowledgedAt;
                   const hodCanDecide = canDecide && isPending && !awaitingEmployee && !employeeRejected;
-                  const canEditRow = canEditOrDelete && isPending && !employeeRejected;
+                  const canEditRow = canEditPerm && !isVoided && !employeeRejected && (isAdminRole || isPending);
+                  const canDeleteRow = canDeletePerm && !isVoided;
                   return (
                     <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{no}</td>
@@ -667,7 +679,7 @@ export default function AddPenaltyPage() {
                               >Reject</button>
                             </>
                           )}
-                          {canEditRow && (
+                          {canDeleteRow && (
                             <button
                               type="button"
                               title="Delete"
@@ -775,19 +787,16 @@ export default function AddPenaltyPage() {
           <div className="flex flex-col gap-4">
             <div className="space-y-1.5">
               <Label className="text-[13px]">Person</Label>
-              <Select
+              <RoleGroupedUserSelect
+                users={allUsers}
                 value={editForm.employeeId}
-                onValueChange={(v) => setEditForm((f) => ({ ...f, employeeId: v }))}
-              >
-                <SelectTrigger className="h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
-                <SelectContent>
-                  {allUsers.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.fullName || u.name || u.email || u.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(v) => setEditForm((f) => ({ ...f, employeeId: v }))}
+                getLabel={userLabel}
+                extraOptions={currentPersonOption(editForm.employeeId)}
+                placeholder="Choose..."
+                searchPlaceholder="Search person..."
+                className="w-full h-10 text-[13px]"
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-[13px]">Head</Label>
@@ -844,19 +853,16 @@ export default function AddPenaltyPage() {
           <div className="flex flex-col gap-4">
             <div className="space-y-1.5">
               <Label className="text-[13px]">Person</Label>
-              <Select
+              <RoleGroupedUserSelect
+                users={allUsers}
                 value={reassignForm.employeeId}
-                onValueChange={(v) => setReassignForm((f) => ({ ...f, employeeId: v }))}
-              >
-                <SelectTrigger className="h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
-                <SelectContent>
-                  {allUsers.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.fullName || u.name || u.email || u.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(v) => setReassignForm((f) => ({ ...f, employeeId: v }))}
+                getLabel={userLabel}
+                extraOptions={currentPersonOption(reassignForm.employeeId)}
+                placeholder="Choose..."
+                searchPlaceholder="Search person..."
+                className="w-full h-10 text-[13px]"
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-[13px]">Head</Label>

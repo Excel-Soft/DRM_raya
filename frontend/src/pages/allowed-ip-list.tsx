@@ -32,11 +32,21 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Plus, Trash2, Save, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type AllowedIp = {
   id: string;
   ip_cidr: string;
   description: string | null;
+  user_id?: string | null;
+  user_name?: string | null;
   is_active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -44,11 +54,21 @@ type AllowedIp = {
 
 type FormState = {
   ip_cidr: string;
+  user_id: string;
+  user_name: string;
   description: string;
   is_active: boolean;
 };
 
-const emptyForm: FormState = { ip_cidr: "", description: "", is_active: true };
+const emptyForm: FormState = {
+  ip_cidr: "",
+  user_id: "",
+  user_name: "",
+  description: "",
+  is_active: true,
+};
+
+type UserOption = { id: string; fullName: string; email?: string };
 
 async function readError(res: Response, fallback: string): Promise<string> {
   try {
@@ -74,11 +94,30 @@ export default function AllowedIpList() {
     },
   });
 
+  const usersQuery = useQuery<UserOption[]>({
+    queryKey: ["/api/users", "allowed-ip-picklist"],
+    queryFn: async () => {
+      // No limit param: the API caps limit at 100, so "limit=500" silently returned only 100 users.
+      const res = await apiRequest("GET", "/api/users");
+      const body = await res.json();
+      const rows = body.users ?? body;
+      return (Array.isArray(rows) ? rows : []).map((u: any) => ({
+        id: String(u.id),
+        fullName: String(u.fullName || u.name || u.email || u.id),
+        email: u.email,
+        isDeactive: !!u.isDeactive,
+      }));
+    },
+  });
+
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["/api/settings/allowed-ips"] });
 
   const saveMutation = useMutation({
-    mutationFn: async (payload: { id: string | null; data: FormState }) => {
+    mutationFn: async (payload: {
+      id: string | null;
+      data: FormState & { user_id: string | null; user_name: string | null };
+    }) => {
       const { id, data } = payload;
       const res = id
         ? await apiRequest("PATCH", `/api/settings/allowed-ips/${id}`, data)
@@ -142,6 +181,8 @@ export default function AllowedIpList() {
     setEditingId(item.id);
     setFormData({
       ip_cidr: item.ip_cidr,
+      user_id: item.user_id ?? "",
+      user_name: item.user_name ?? "",
       description: item.description ?? "",
       is_active: item.is_active,
     });
@@ -157,6 +198,8 @@ export default function AllowedIpList() {
       id: editingId,
       data: {
         ip_cidr: formData.ip_cidr.trim(),
+        user_id: formData.user_id.trim() || null,
+        user_name: formData.user_name.trim() || null,
         description: formData.description.trim(),
         is_active: formData.is_active,
       },
@@ -185,6 +228,7 @@ export default function AllowedIpList() {
             <TableHeader>
               <TableRow className="border-b-0 bg-[#f8f9fa] dark:bg-zinc-900 hover:bg-[#f8f9fa] dark:hover:bg-zinc-900">
                 <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Allowed IP / CIDR</TableHead>
+                <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">User</TableHead>
                 <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Description</TableHead>
                 <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Active</TableHead>
                 <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Created At</TableHead>
@@ -194,17 +238,17 @@ export default function AllowedIpList() {
             <TableBody className="bg-white dark:bg-zinc-900">
               {listQuery.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-slate-500">Loading...</TableCell>
+                  <TableCell colSpan={6} className="py-8 text-center text-slate-500">Loading...</TableCell>
                 </TableRow>
               ) : listQuery.isError ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-[#d9534f] dark:text-red-400">
+                  <TableCell colSpan={6} className="py-8 text-center text-[#d9534f] dark:text-red-400">
                     Could not load allowed IPs. Please try again.
                   </TableCell>
                 </TableRow>
               ) : items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-slate-500">
+                  <TableCell colSpan={6} className="py-8 text-center text-slate-500">
                     No allowed IPs configured yet.
                   </TableCell>
                 </TableRow>
@@ -215,6 +259,9 @@ export default function AllowedIpList() {
                       <span className="bg-[#00a65a] text-white px-2 py-0.5 rounded-[4px] text-xs font-medium">
                         {item.ip_cidr}
                       </span>
+                    </TableCell>
+                    <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">
+                      {item.user_name || "—"}
                     </TableCell>
                     <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300 max-w-[400px] truncate" title={item.description ?? ""}>
                       {item.description || "—"}
@@ -288,6 +335,38 @@ export default function AllowedIpList() {
               <p className="text-[11px] text-slate-400 pt-1">
                 Enter an IP address or CIDR block allowed for DRM access
               </p>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">User</Label>
+              <RoleGroupedUserSelect
+                grouped={false}
+                users={usersQuery.data ?? []}
+                value={formData.user_id || "none"}
+                getLabel={(u: any) => `${u.fullName}${u.email ? ` (${u.email})` : ""}`}
+                extraOptions={[{ value: "none", label: "— No user linked —" }]}
+                placeholder="Select user..."
+                className="h-10 text-[13px] rounded-[4px]"
+                onChange={(v) => {
+                  if (v === "none") {
+                    setFormData({ ...formData, user_id: "" });
+                    return;
+                  }
+                  const picked = usersQuery.data?.find((u) => u.id === v);
+                  setFormData({
+                    ...formData,
+                    user_id: v,
+                    user_name: picked?.fullName ?? formData.user_name,
+                  });
+                }}
+              />
+              <Input
+                placeholder="Or enter user name manually"
+                value={formData.user_name}
+                onChange={(e) => setFormData({ ...formData, user_name: e.target.value })}
+                className="h-10 text-[13px] border-slate-300 focus-visible:ring-0 rounded-[4px] mt-2"
+                data-testid="input-user-name"
+              />
             </div>
 
             <div className="space-y-1">

@@ -92,7 +92,7 @@ export default function SoftwareExecutiveDashboard() {
 
   const [topSellingFilter, setTopSellingFilter] = useState("LD");
   const [dailyReportFilter, setDailyReportFilter] = useState("daily");
-  const [monthlyCompleteFilter, setMonthlyCompleteFilter] = useState("WK");
+  const [monthlyCompleteFilter, setMonthlyCompleteFilter] = useState("MO");
   const [activitiesFilter, setActivitiesFilter] = useState("TD");
 
   // Fetch summary stats using the same executive endpoint to guarantee data parity.

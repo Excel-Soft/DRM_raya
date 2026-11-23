@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { loanRepository } from "../repositories/loan.repository";
 import { insertLoanRequestSchema, insertLoanRequestAdminSchema } from "@shared/schema";
-import { db } from "../db";
+import { db, pool } from "../db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { isManagerialRole, isHodAllowed, normalizeRole, ROLES } from "../utils/role-utils";
@@ -10,7 +10,12 @@ import { ActivityLogService } from "./services/activity-service";
 import { z } from "zod";
 
 const loanRejectSchema = z.object({ reason: z.string().trim().max(2000).optional() }).strict();
-const loanPayInstallmentSchema = z.object({ amount: z.coerce.number().positive("Valid payment amount is required") }).strict();
+// Old DRM "Pay Loan" form: Remaning (editable), Pay, Status (Pending/Complete).
+const loanPayInstallmentSchema = z.object({
+  amount: z.coerce.number().min(0, "Valid payment amount is required"),
+  remaining: z.coerce.number().min(0).optional(),
+  status: z.enum(["Pending", "Complete"]).optional(),
+}).strict();
 
 // Resolve the caller's effective (active) role from the auth payload.
 function callerRole(req: any): string {
@@ -123,6 +128,53 @@ export function registerLoanRoutes(app: Express) {
     } catch (error) {
       console.error("Error fetching active loan:", error);
       res.status(500).json({ error: "Failed to fetch active loan" });
+    }
+  });
+
+  // GET /api/loans/history?userId=&start=&end= — old DRM "Loan History":
+  // pay-loan rows (webxl_pay_loan copy + new payments) for one person in a date range.
+  // Old rows' paid_at holds Pakistan wall-clock stored as Berlin; new rows are real instants.
+  app.get("/api/loans/history", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const role = normalizeRole(callerRole(req));
+      const requested = String(req.query.userId || "");
+      const userId = isManagerialRole(role) && requested ? requested : req.user.userId;
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+      const start = dateRe.test(String(req.query.start || "")) ? String(req.query.start) : "1970-01-01";
+      const end = dateRe.test(String(req.query.end || "")) ? String(req.query.end) : "2999-12-31";
+      const { rows } = await pool.query(
+        `WITH p AS (
+           SELECT lp.id, lp.amount, lp.legacy_loan_id,
+                  CASE WHEN lp.legacy_loan_id ~ '^[0-9a-f-]{36}$'
+                       THEN lp.paid_at AT TIME ZONE 'Asia/Karachi'
+                       ELSE lp.paid_at AT TIME ZONE 'Europe/Berlin' END AS pk_time
+             FROM drm.legacy_loan_payments lp
+            WHERE lp.user_id = $1
+         ),
+         first_loan AS (
+           SELECT detail FROM drm.loan_requests WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1
+         )
+         SELECT p.id, p.amount::float8 AS pay,
+                COALESCE(lr.detail, (SELECT detail FROM first_loan)) AS detail,
+                to_char(p.pk_time, 'DD Mon YYYY HH12:MI AM') AS date
+           FROM p
+           LEFT JOIN drm.loan_requests lr ON lr.id = p.legacy_loan_id
+          WHERE p.pk_time::date BETWEEN $2::date AND $3::date
+          ORDER BY p.pk_time DESC`,
+        [userId, start, end],
+      );
+      const meta = await pool.query(
+        `SELECT (SELECT name FROM drm.users WHERE id = $1) AS person,
+                COALESCE((SELECT SUM(remaining_amount) FROM drm.loan_requests
+                           WHERE user_id = $1 AND status = 'HODApproved'), 0)::float8 AS remaining`,
+        [userId],
+      );
+      const totalPay = rows.reduce((s: number, r: any) => s + Number(r.pay || 0), 0);
+      res.json({ person: meta.rows[0]?.person ?? "", remaining: meta.rows[0]?.remaining ?? 0, totalPay, rows });
+    } catch (error) {
+      console.error("Error fetching loan history:", error);
+      res.status(500).json({ error: "Failed to fetch loan history" });
     }
   });
 
@@ -468,7 +520,7 @@ export function registerLoanRoutes(app: Express) {
       if (!_payParsed.success) {
         return res.status(400).json({ error: "Valid payment amount is required", issues: _payParsed.error.issues });
       }
-      const { amount } = _payParsed.data;
+      const { amount, remaining, status } = _payParsed.data;
 
       const loan = await loanRepository.findById(req.params.id);
       if (!loan) {
@@ -478,15 +530,46 @@ export function registerLoanRoutes(app: Express) {
       if (loan.status !== "HODApproved") {
         return res.status(400).json({ error: "Loan is not active" });
       }
+      if (!(amount > 0) && status !== "Complete") {
+        return res.status(400).json({ error: "Valid payment amount is required" });
+      }
 
-      const currentRemaining = parseFloat(loan.remainingAmount as string) || 0;
+      // Same as old func.php (user_id_loan): remaining = posted Remaning - Pay,
+      // status as chosen; a payment row is written to the pay-loan history.
+      const currentRemaining = remaining ?? (parseFloat(loan.remainingAmount as string) || 0);
       const paymentAmount = Number(amount);
-      const newRemaining = currentRemaining - paymentAmount;
+      const newRemaining = Math.max(0, currentRemaining - paymentAmount);
+      const newStatus = status === "Complete" || newRemaining <= 0 ? "Completed" : "HODApproved";
 
-      const record = await loanRepository.updateRemainingAmount(req.params.id, newRemaining);
-
-      if (!record) {
-        return res.status(400).json({ error: "Failed to update loan" });
+      const client = await pool.connect();
+      let record: any;
+      try {
+        await client.query("BEGIN");
+        const upd = await client.query(
+          `UPDATE drm.loan_requests SET remaining_amount = $2, status = $3::drm.loan_status, updated_at = now()
+            WHERE id = $1 AND status = 'HODApproved'
+            RETURNING id, user_id AS "userId", amount, installment_amount AS "installmentAmount",
+                      remaining_amount AS "remainingAmount", detail, status`,
+          [req.params.id, String(newRemaining), newStatus],
+        );
+        record = upd.rows[0];
+        if (!record) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({ error: "Failed to update loan" });
+        }
+        if (paymentAmount > 0) {
+          await client.query(
+            `INSERT INTO drm.legacy_loan_payments (user_id, legacy_loan_id, amount, paid_at)
+             VALUES ($1, $2, $3, now())`,
+            [loan.userId, req.params.id, paymentAmount],
+          );
+        }
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
       }
 
       await ActivityLogService.log({
@@ -494,7 +577,7 @@ export function registerLoanRoutes(app: Express) {
         action: "LOAN_INSTALLMENT_PAID",
         resourceType: "loan_request",
         resourceId: req.params.id,
-        details: `Installment amount: ${paymentAmount}, new remaining: ${newRemaining}`,
+        details: `Installment amount: ${paymentAmount}, new remaining: ${newRemaining}, status: ${newStatus}`,
       });
 
       res.json(record);

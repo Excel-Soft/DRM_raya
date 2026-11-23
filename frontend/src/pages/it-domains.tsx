@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
+import { planDomainRenewal, renewalQuotationUrl, customerDetailUrl } from "@/lib/domain-renewal";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequestJson } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -114,6 +116,10 @@ function customerLabel(c: any): string {
 
 export default function ItDomains() {
   const [searchTerm, setSearchTerm] = useState("");
+  const [pageSize, setPageSize] = useState(10);
+  const [, setLocation] = useLocation();
+  const [renewingId, setRenewingId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
   const { toast } = useToast();
 
   const { data: domains = [], isLoading } = useQuery<any[]>({
@@ -235,9 +241,72 @@ export default function ItDomains() {
   };
 
   const domainsList = Array.isArray(domains) ? domains : [];
+  const searchLc = searchTerm.trim().toLowerCase();
   const filteredDomains = domainsList.filter((d) =>
-    (d.domainName || d.domain || "").toLowerCase().includes(searchTerm.toLowerCase())
+    !searchLc ||
+    `${d.domainName || d.domain || ""} ${d.company || ""} ${d.registryName || ""} ${d.serverName || ""}`
+      .toLowerCase()
+      .includes(searchLc)
   );
+  const totalPages = Math.max(1, Math.ceil(filteredDomains.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pagedDomains = filteredDomains.slice(pageStart, pageStart + pageSize);
+  const pageButtons: (number | "gap")[] = [];
+  for (let n = 1; n <= totalPages; n++) {
+    if (n === 1 || n === totalPages || Math.abs(n - currentPage) <= 1) pageButtons.push(n);
+    else if (pageButtons[pageButtons.length - 1] !== "gap") pageButtons.push("gap");
+  }
+  // "Register" = registration / activation date (old DRM reg_date); falls back to when the row was added.
+  const registerDate = (d: any) => d.activationDate || d.createdAt;
+  // Edit dialog: keep the current company visible even if it is not in the first 200 customers.
+  const editingCompanyLabel =
+    domainForm.customerId && !customersList.some((c: any) => c?.id === domainForm.customerId)
+      ? domainsList.find((d: any) => d.customerId === domainForm.customerId)?.company || "Current company"
+      : null;
+
+  // Old DRM: the person icon opens the company's detail (attribute) page.
+  const openCompanyDetail = (item: any) => {
+    if (!item.customerId) {
+      toast({ title: "No company linked", description: "Edit this domain and select its company first.", variant: "destructive" });
+      return;
+    }
+    setLocation(customerDetailUrl(item.customerId));
+  };
+
+  // Old DRM renew button: follow-up exists -> quotation with the domain's services selected;
+  // no follow-up -> open the company page to add one first.
+  const startRenewal = async (item: any) => {
+    if (renewingId) return;
+    setRenewingId(item.id);
+    try {
+      const plan = await planDomainRenewal(item);
+      if (plan.kind === "no-company") {
+        toast({ title: "No company linked", description: "Edit this domain and select its company first.", variant: "destructive" });
+        return;
+      }
+      if (plan.kind === "need-followup") {
+        toast({
+          title: "Add a follow-up first",
+          description: `No follow-up in the last 60 days for ${plan.services.join(", ")}. Opening the company page to add it.`,
+          variant: "destructive",
+        });
+        setLocation(customerDetailUrl(plan.customerId));
+        return;
+      }
+      if (plan.skipped.length > 0) {
+        toast({
+          title: "Some services need a follow-up",
+          description: `Added: ${plan.services.join(", ")}. Not added (no follow-up): ${plan.skipped.join(", ")}.`,
+        });
+      }
+      setLocation(renewalQuotationUrl(plan));
+    } catch (err) {
+      toast({ title: extractErrorMessage(err, "Could not start the renewal"), variant: "destructive" });
+    } finally {
+      setRenewingId(null);
+    }
+  };
 
   const exportRows = () =>
     filteredDomains.map((d, i) => ({
@@ -248,7 +317,7 @@ export default function ItDomains() {
       "Hosting Expiry": fmtDate(d.hostingExpiryDate),
       "SSL Expiry": fmtDate(d.sslExpiryDate),
       Status: d.status || "N/A",
-      Registered: fmtDate(d.createdAt),
+      Registered: fmtDate(registerDate(d)),
     }));
 
   const exportToCSV = () => {
@@ -364,7 +433,7 @@ export default function ItDomains() {
               <Input
                 className="h-9 w-48 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
               />
             </div>
           </div>
@@ -383,14 +452,19 @@ export default function ItDomains() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredDomains.map((item: any, idx: number) => {
+              {pagedDomains.map((item: any, idx: number) => {
                 const domainExp = expiryStatus(item.expiryDate);
                 const hostingExp = expiryStatus(item.hostingExpiryDate);
                 const sslExp = expiryStatus(item.sslExpiryDate);
                 return (
                   <TableRow key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800">
-                    <TableCell className="text-slate-500 font-medium dark:text-zinc-400">{idx + 1}</TableCell>
-                    <TableCell className="font-semibold text-slate-700 dark:text-zinc-400">{item.company || "N/A"}</TableCell>
+                    <TableCell className="text-slate-500 font-medium dark:text-zinc-400">{pageStart + idx + 1}</TableCell>
+                    <TableCell className="font-semibold text-slate-700 dark:text-zinc-400">
+                      {item.company || "N/A"}
+                      {String(item.status || "").toLowerCase() === "inactive" && (
+                        <Badge variant="outline" className="ml-2 text-[10px] bg-slate-100 text-slate-500 border-slate-200">Inactive</Badge>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100 transition-colors">
                         {item.domainName || item.domain}
@@ -408,167 +482,30 @@ export default function ItDomains() {
                       <div className="text-xs font-semibold text-slate-600 dark:text-zinc-300">{fmtDate(item.sslExpiryDate)}</div>
                       <Badge variant="secondary" className={`text-[10px] leading-none px-1.5 py-0.5 ${sslExp.cls}`}>{sslExp.label}</Badge>
                     </TableCell>
-                    <TableCell className="text-slate-600 text-sm dark:text-zinc-300">{fmtDate(item.createdAt)}</TableCell>
+                    <TableCell className="text-slate-600 text-sm dark:text-zinc-300">{fmtDate(registerDate(item))}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2 no-print">
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button size="icon" variant="ghost" className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full">
-                              <User className="h-4 w-4" />
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent className="max-w-[95vw] w-[1200px] p-0 gap-0 overflow-hidden border-none shadow-2xl bg-[#f8f9fa] dark:bg-zinc-900">
-                            <DialogHeader className="p-4 bg-white dark:bg-zinc-900 border-b flex flex-row items-center justify-between space-y-0">
-                              <DialogTitle className="text-sm font-bold text-slate-700 uppercase tracking-wider dark:text-zinc-400">Attribute</DialogTitle>
-                            </DialogHeader>
-                            <div className="p-6 overflow-y-auto max-h-[85vh]">
-                              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-                                {/* Left Column: Client Info */}
-                                <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden">
-                                  <CardContent className="p-6 flex flex-col items-center text-center">
-                                    <h3 className="font-bold text-slate-800 text-lg mb-2 dark:text-zinc-100">{item.company || "N/A"}</h3>
-                                    <div className="h-12 w-12 rounded-full bg-blue-100/50 flex items-center justify-center text-blue-600 font-bold text-xl mb-4">
-                                      {(item.company || "N").charAt(0)}
-                                    </div>
-                                    <h4 className="font-bold text-slate-700 dark:text-zinc-400">Client Contact</h4>
-                                    <p className="text-xs text-slate-400 mb-4">{item.email || "N/A"}</p>
-
-                                    <div className="flex gap-2 mb-6">
-                                      <Badge className="bg-emerald-600 hover:bg-emerald-600 px-3 py-1 text-[10px] font-bold">{item.contactNo || "N/A"}</Badge>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 w-full gap-4 mb-6">
-                                      <div className="flex flex-col items-center">
-                                        <span className="text-[10px] text-slate-400 uppercase font-bold mb-1">Grade:</span>
-                                        <div className="h-10 w-10 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 font-bold text-xs">N/A</div>
-                                      </div>
-                                      <div className="flex flex-col items-center">
-                                        <span className="text-[10px] text-slate-400 uppercase font-bold mb-1">Contact:</span>
-                                        <div className="h-10 w-10 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 font-bold text-xs">N/A</div>
-                                      </div>
-                                    </div>
-                                  </CardContent>
-                                </Card>
-
-                                {/* Middle Column: Expiry History */}
-                                <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden">
-                                  <CardContent className="p-6">
-                                    <h3 className="font-bold text-slate-700 text-sm mb-6 flex items-center gap-2 dark:text-zinc-400">
-                                      Expiry Date
-                                    </h3>
-                                    <div className="space-y-8 relative before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-100">
-                                      <div className="flex gap-4 relative">
-                                        <div className="h-6 w-6 rounded-full bg-white dark:bg-zinc-900 border border-slate-200 flex items-center justify-center z-10 shrink-0 mt-1 dark:border-zinc-800">
-                                          <div className="h-1.5 w-1.5 rounded-full bg-slate-300" />
-                                        </div>
-                                        <div className="flex flex-col gap-2">
-                                          <div className="flex items-center gap-2">
-                                            <div className="h-8 w-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                                              <Globe className="h-4 w-4" />
-                                            </div>
-                                            <div>
-                                              <p className="text-[11px] font-bold text-slate-700 dark:text-zinc-400">Domain</p>
-                                              <p className="text-[10px] text-slate-400 italic font-mono">{item.domainName || item.domain}</p>
-                                            </div>
-                                          </div>
-                                          <Badge className="bg-slate-800 text-white font-mono text-[9px] w-fit">Exp: {fmtDate(item.expiryDate)}</Badge>
-                                        </div>
-                                      </div>
-
-                                      <div className="flex gap-4 relative">
-                                        <div className="h-6 w-6 rounded-full bg-white dark:bg-zinc-900 border border-slate-200 flex items-center justify-center z-10 shrink-0 mt-1 dark:border-zinc-800">
-                                          <div className="h-1.5 w-1.5 rounded-full bg-slate-300" />
-                                        </div>
-                                        <div className="flex flex-col gap-2">
-                                          <div className="flex items-center gap-2">
-                                            <div className="h-8 w-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                                              <ShieldCheck className="h-4 w-4" />
-                                            </div>
-                                            <div>
-                                              <p className="text-[11px] font-bold text-slate-700 dark:text-zinc-400">SSL</p>
-                                              <p className="text-[10px] text-slate-400 italic font-mono">{item.domainName || item.domain}</p>
-                                            </div>
-                                          </div>
-                                          <Badge className="bg-slate-800 text-white font-mono text-[9px] w-fit">Exp: {fmtDate(item.sslExpiryDate)}</Badge>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </CardContent>
-                                </Card>
-
-                                {/* Right Column: Message composer (copy-to-clipboard only; no provider) */}
-                                <div className="space-y-6">
-                                  <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden">
-                                    <CardContent className="p-6">
-                                      <h3 className="font-bold text-slate-700 text-sm mb-4 dark:text-zinc-400">Renewal Message</h3>
-                                      <MessageComposer
-                                        item={item}
-                                        onCopied={() => toast({ title: "Copied!", description: "Message copied to clipboard" })}
-                                      />
-                                    </CardContent>
-                                  </Card>
-                                </div>
-                              </div>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button size="icon" variant="ghost" className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full">
-                              <RefreshCw className="h-4 w-4" />
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent className="max-w-[95vw] w-[1200px] p-0 gap-0 overflow-hidden border-none shadow-2xl bg-[#f8f9fa] dark:bg-zinc-900">
-                            <DialogHeader className="p-4 bg-white dark:bg-zinc-900 border-b">
-                              <div className="flex items-center gap-2">
-                                <DialogTitle className="text-sm font-bold text-slate-700 uppercase tracking-wider dark:text-zinc-400">Quotation</DialogTitle>
-                                <span className="text-xs font-bold text-emerald-500">{new Date().toLocaleString()}</span>
-                              </div>
-                            </DialogHeader>
-                            <div className="p-6 overflow-y-auto max-h-[85vh]">
-                              <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden p-6 mb-6 text-slate-800 dark:text-zinc-100">
-                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                                  <div className="space-y-1">
-                                    <label className="text-[11px] font-bold text-slate-500 uppercase dark:text-zinc-400">Company</label>
-                                    <Input value={item.company || "N/A"} readOnly className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800" />
-                                  </div>
-                                </div>
-                                <Table>
-                                  <TableHeader className="bg-slate-50/80 dark:bg-zinc-900/80">
-                                    <TableRow>
-                                      <TableHead className="text-xs font-bold">Product</TableHead>
-                                      <TableHead className="text-xs font-bold">Detail</TableHead>
-                                      <TableHead className="text-xs font-bold text-right">Total</TableHead>
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    <TableRow>
-                                      <TableCell className="text-xs">Domain Renewal</TableCell>
-                                      <TableCell className="text-xs">{item.domainName || item.domain}</TableCell>
-                                      <TableCell className="text-xs text-right font-mono">$15.00</TableCell>
-                                    </TableRow>
-                                    {item.hostingPackageName && (
-                                      <TableRow>
-                                        <TableCell className="text-xs">Hosting Package ({item.hostingPackageName})</TableCell>
-                                        <TableCell className="text-xs">Capacity: {item.capacity || item.hostingPackageCapacity || "N/A"}</TableCell>
-                                        <TableCell className="text-xs text-right font-mono">
-                                          ${item.hostingPackagePrice ? parseFloat(item.hostingPackagePrice).toFixed(2) : "0.00"}
-                                        </TableCell>
-                                      </TableRow>
-                                    )}
-                                    <TableRow className="border-t font-bold">
-                                      <TableCell className="text-xs">Total Renewal Amount</TableCell>
-                                      <TableCell className="text-xs"></TableCell>
-                                      <TableCell className="text-xs text-right font-mono">
-                                        ${(15.00 + (item.hostingPackagePrice ? parseFloat(item.hostingPackagePrice) : 0)).toFixed(2)}
-                                      </TableCell>
-                                    </TableRow>
-                                  </TableBody>
-                                </Table>
-                              </Card>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full"
+                          onClick={() => openCompanyDetail(item)}
+                          title="Company detail"
+                          aria-label="Company detail"
+                        >
+                          <User className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full"
+                          onClick={() => startRenewal(item)}
+                          disabled={renewingId === item.id}
+                          title="Renew (quotation)"
+                          aria-label="Renew domain"
+                        >
+                          {renewingId === item.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -600,6 +537,42 @@ export default function ItDomains() {
               )}
             </TableBody>
           </Table>
+          <div className="p-4 border-t flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-zinc-900 dark:border-zinc-800 no-print">
+            <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-zinc-400">
+              Show
+              <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                <SelectTrigger className="w-20 h-8"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[10, 25, 50, 100].map((n) => (<SelectItem key={n} value={String(n)}>{n}</SelectItem>))}
+                </SelectContent>
+              </Select>
+              entries
+              <span className="ml-3">
+                {filteredDomains.length === 0
+                  ? "Showing 0 entries"
+                  : `Showing ${pageStart + 1} to ${pageStart + pagedDomains.length} of ${filteredDomains.length.toLocaleString()} entries`}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Previous</Button>
+              {pageButtons.map((n, i) =>
+                n === "gap" ? (
+                  <span key={`gap-${i}`} className="px-2 self-center text-slate-400">…</span>
+                ) : (
+                  <Button
+                    key={n}
+                    size="sm"
+                    variant={n === currentPage ? "default" : "outline"}
+                    className={n === currentPage ? "bg-emerald-600 hover:bg-emerald-700 min-w-8" : "min-w-8"}
+                    onClick={() => setPage(n)}
+                  >
+                    {n}
+                  </Button>
+                ),
+              )}
+              <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>Next</Button>
+            </div>
+          </div>
         </CardContent>
       {/* Add / Edit Domain Dialog */}
       <Dialog open={domainDialogOpen} onOpenChange={(open) => { setDomainDialogOpen(open); if (!open) setDomainFormError(null); }}>
@@ -620,6 +593,9 @@ export default function ItDomains() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">— None —</SelectItem>
+                  {editingCompanyLabel && (
+                    <SelectItem value={domainForm.customerId}>{editingCompanyLabel}</SelectItem>
+                  )}
                   {customersList.map((c: any) => c && (
                     <SelectItem key={c.id} value={c.id}>{customerLabel(c)}</SelectItem>
                   ))}

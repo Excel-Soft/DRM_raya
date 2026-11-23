@@ -2,11 +2,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, Tag, Target, ArrowLeftRight, Download, Play, CheckCircle2, ChevronRight, Plus } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Link } from "wouter";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { LeadImportDialog } from "@/components/lead-import-dialog";
-import { getAuthHeader } from "@/lib/queryClient";
+import { apiRequestJson, getAuthHeader } from "@/lib/queryClient";
 import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 
 const OVERRIDE_ROLES = ["admin", "super_admin", "superadmin", "sales_manager"];
@@ -43,41 +43,33 @@ export default function MarketingManagerDashboard() {
     }
   }
 
-  const { data: fetchedLeads, isLoading: leadsLoading } = useQuery<any[]>({
-    queryKey: ["/api/customers"],
-  });
-
-  // Show only real leads returned by the API. Never fall back to fabricated
-  // leads — empty results render the dedicated "No leads found" state below.
-  const leads = Array.isArray(fetchedLeads) ? fetchedLeads : [];
-
   const [topSellingPeriod, setTopSellingPeriod] = useState("ld");
-  const { data: eventsRes } = useQuery<{ data: any[]; total: number }>({
-    queryKey: ["/api/events?pageSize=200"],
+  const [leadsPage, setLeadsPage] = useState(1);
+  const LEADS_PAGE_SIZE = 10;
+
+  const { data: dashboardRes, isLoading: dashboardLoading } = useQuery({
+    queryKey: ["/api/marketing-manager/dashboard", topSellingPeriod, leadsPage, LEADS_PAGE_SIZE],
+    queryFn: () =>
+      apiRequestJson<any>(
+        "GET",
+        `/api/marketing-manager/dashboard?period=${encodeURIComponent(topSellingPeriod)}&page=${leadsPage}&limit=${LEADS_PAGE_SIZE}&leadScope=org`,
+      ),
   });
-  const allEvents = Array.isArray(eventsRes?.data) ? eventsRes!.data : [];
 
-  const periodStart = (() => {
-    const d = new Date();
-    if (topSellingPeriod === "ld") d.setHours(0, 0, 0, 0);
-    else if (topSellingPeriod === "wc") d.setDate(d.getDate() - 6);
-    else if (topSellingPeriod === "mc") d.setDate(d.getDate() - 29);
-    else if (topSellingPeriod === "qc") d.setDate(d.getDate() - 89);
-    else if (topSellingPeriod === "yc") d.setDate(d.getDate() - 364);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  })();
+  const allEvents = Array.isArray(dashboardRes?.events) ? dashboardRes.events : [];
+  const leads = Array.isArray(dashboardRes?.leads) ? dashboardRes.leads : [];
+  const leadsTotal = dashboardRes?.leadsMeta?.total ?? 0;
+  const leadsTotalPages = Math.max(1, Math.ceil(leadsTotal / LEADS_PAGE_SIZE));
+  const stats = dashboardRes?.stats;
 
-  const eventsInPeriod = allEvents.filter((e) => e.eventDate && new Date(e.eventDate) >= periodStart);
-  const totalEventsCount = eventsInPeriod.length;
-  const seminarCount = eventsInPeriod.filter((e) => e.eventType === "Seminar").length;
-  const webinarCount = eventsInPeriod.filter((e) => e.eventType === "Webinar").length;
-  const attendingCount = eventsInPeriod.reduce((sum, e) => sum + (Number(e.attendeeCount) || 0), 0);
-  const eventCostTotal = eventsInPeriod.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
-  const now = new Date();
-  const nextEvent = allEvents
-    .filter((e) => e.eventDate && new Date(e.eventDate) >= now)
-    .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime())[0];
+  const totalEventsCount = stats?.totalEvents ?? 0;
+  const seminarCount = stats?.seminar ?? 0;
+  const webinarCount = stats?.webinar ?? 0;
+  const attendingCount = stats?.attending ?? 0;
+  const eventCostTotal = stats?.eventCost ?? 0;
+  const nextEvent = stats?.nextEventDate
+    ? { eventDate: stats.nextEventDate, name: stats.nextEventName }
+    : undefined;
 
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
@@ -98,9 +90,19 @@ export default function MarketingManagerDashboard() {
   };
   const todayEvents = allEvents.filter((e) => inDateRange(e, startOfToday, endOfToday));
   const thisWeekEvents = allEvents.filter((e) => inDateRange(e, startOfToday, endOfThisWeek));
-  const monthlyEvents = allEvents
-    .filter((e) => inDateRange(e, monthStart, monthEnd))
-    .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
+  const monthStartRolling = new Date();
+  monthStartRolling.setDate(monthStartRolling.getDate() - 30);
+  monthStartRolling.setHours(0, 0, 0, 0);
+
+  const monthlyEvents = useMemo(() => {
+    const inMonth = allEvents.filter((e) => inDateRange(e, monthStart, monthEnd));
+    if (inMonth.length > 0) {
+      return inMonth.sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
+    }
+    return allEvents
+      .filter((e) => e.eventDate && new Date(e.eventDate) >= monthStartRolling)
+      .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
+  }, [allEvents, monthStart, monthEnd, monthStartRolling]);
 
   const [allEventsTypeFilter, setAllEventsTypeFilter] = useState("all");
   const filteredAllEvents = allEvents
@@ -188,12 +190,17 @@ export default function MarketingManagerDashboard() {
                 </thead>
                 <tbody>
                   {(() => {
-                    const rows = activeEventTab === "today" ? todayEvents : thisWeekEvents;
+                    let rows = activeEventTab === "today" ? todayEvents : thisWeekEvents;
+                    if (!rows.length) {
+                      rows = allEvents
+                        .filter((e) => e.eventDate && new Date(e.eventDate) >= monthStartRolling)
+                        .slice(0, 15);
+                    }
                     if (!rows.length) {
                       return (
                         <tr>
                           <td colSpan={7} className="px-4 py-8 text-center text-gray-500 dark:text-zinc-400">
-                            No events {activeEventTab === "today" ? "today" : "this week"}.
+                            No events found.
                           </td>
                         </tr>
                       );
@@ -237,16 +244,16 @@ export default function MarketingManagerDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {leadsLoading ? (
+                  {dashboardLoading ? (
                     <tr>
                       <td colSpan={7} className="px-4 py-8 text-center text-gray-500 dark:text-zinc-400">Loading leads...</td>
                     </tr>
                   ) : leads && leads.length > 0 ? (
-                    leads.slice(0, 5).map((lead, i) => (
+                    leads.map((lead: any, i: number) => (
                       <tr key={lead.id} className="border-b last:border-b-0 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{i + 1}</td>
+                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{(leadsPage - 1) * LEADS_PAGE_SIZE + i + 1}</td>
                         <td className="px-4 py-3 font-medium text-gray-700 dark:text-zinc-400">{lead.companyName || lead.name}</td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{lead.contactPerson || "N/A"}</td>
+                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{lead.createdBy || "N/A"}</td>
                         <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{lead.createdAt ? format(new Date(lead.createdAt), "hh:mm a") : "N/A"}</td>
                         <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{lead.createdAt ? format(new Date(lead.createdAt), "dd/MM/yyyy") : "N/A"}</td>
                         <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{lead.country || "N/A"}</td>
@@ -271,6 +278,31 @@ export default function MarketingManagerDashboard() {
                 </tbody>
               </table>
             </CardContent>
+            {leadsTotal > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 dark:border-zinc-800">
+                <p className="text-[12px] text-gray-500 dark:text-zinc-400">
+                  Showing {(leadsPage - 1) * LEADS_PAGE_SIZE + 1} to {Math.min(leadsPage * LEADS_PAGE_SIZE, leadsTotal)} of {leadsTotal} entries
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={leadsPage <= 1}
+                    onClick={() => setLeadsPage((p) => Math.max(1, p - 1))}
+                    className="px-4 py-1.5 border rounded text-[12px] font-bold disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    disabled={leadsPage >= leadsTotalPages}
+                    onClick={() => setLeadsPage((p) => Math.min(leadsTotalPages, p + 1))}
+                    className="px-4 py-1.5 border rounded text-[12px] font-bold disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </Card>
         </div>
 
@@ -451,7 +483,10 @@ export default function MarketingManagerDashboard() {
 
       <LeadImportDialog
         open={importOpen}
-        onOpenChange={setImportOpen}
+        onOpenChange={(open) => {
+          setImportOpen(open);
+          if (!open) setLeadsPage(1);
+        }}
         canOverride={canOverride}
       />
     </div>

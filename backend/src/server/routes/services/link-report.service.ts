@@ -28,6 +28,23 @@ import { eq, and, inArray } from "drizzle-orm";
  * care which table those ids came from.
  */
 
+/**
+ * drm.task_files is not present in every database (it is missing on the
+ * legacy-stage DB, which made every Link Report call 500). Only touch it —
+ * including the additive ALTERs — when the table exists.
+ */
+async function taskFilesTableExists(): Promise<boolean> {
+  const { rows } = await pool.query(`SELECT to_regclass('drm.task_files') IS NOT NULL AS ok`);
+  return rows[0]?.ok === true;
+}
+
+async function ensureTaskFileVerifyColumns() {
+  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_status text`);
+  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_note text`);
+  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_by_user_id uuid REFERENCES drm.users(id)`);
+  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_at timestamptz`);
+}
+
 export interface LinkReportUser {
   id: string;
   name: string;
@@ -58,14 +75,10 @@ export interface LinkReportRow {
 }
 
 export async function listLinkReport(userId: string, startDate: string, endDate: string): Promise<LinkReportRow[]> {
-  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_status text`);
-  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_note text`);
-  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_by_user_id uuid REFERENCES drm.users(id)`);
-  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_at timestamptz`);
+  const hasTaskFiles = await taskFilesTableExists();
+  if (hasTaskFiles) await ensureTaskFileVerifyColumns();
 
-  const { rows } = await pool.query(
-    `
-    WITH combined AS (
+  const taskFilesBranch = !hasTaskFiles ? "" : `
       SELECT
         'taskfile:' || f.id::text AS id,
         NULL::text AS display_id,
@@ -93,17 +106,22 @@ export async function listLinkReport(userId: string, startDate: string, endDate:
         AND f.description IS NOT NULL AND btrim(f.description) <> ''
 
       UNION ALL
+  `;
 
+  const { rows } = await pool.query(
+    `
+    WITH combined AS (
+      ${taskFilesBranch}
       SELECT
-        'evidence:' || el.id::text,
-        el.display_id::text,
-        COALESCE(c.company_name, '-'),
-        el.url,
-        el.created_at,
-        'product_posting',
-        el.task_id::text,
-        el.verify_status,
-        el.verify_note
+        'evidence:' || el.id::text AS id,
+        el.display_id::text AS display_id,
+        COALESCE(c.company_name, '-') AS company,
+        el.url AS links,
+        el.created_at AS link_date,
+        'product_posting' AS source_module,
+        el.task_id::text AS source_record_id,
+        el.verify_status AS verify_status,
+        el.verify_note AS verify_note
       FROM drm.product_posting_evidence_links el
       LEFT JOIN drm.projects p ON p.id = el.project_id
       LEFT JOIN drm.customers c ON c.id = p.customer_id
@@ -116,14 +134,33 @@ export async function listLinkReport(userId: string, startDate: string, endDate:
       SELECT
         'linkreport:' || lr.id::text,
         lr.display_id::text,
-        COALESCE(lr.company_name, '-'),
+        COALESCE(NULLIF(NULLIF(btrim(lr.company_name), ''), '-'), lc.company_name, '-'),
         lr.link_url,
         lr.submitted_at,
         lr.source_module,
         lr.source_record_id::text,
-        'Pending',
-        NULL::text
+        -- Migrated legacy links (webxl_task_links) keep their verdict in legacy_metadata.
+        CASE lower(coalesce(lr.legacy_metadata->>'verify', ''))
+          WHEN 'yes' THEN 'Verified'
+          WHEN 'verified' THEN 'Verified'
+          WHEN 'reject' THEN 'Rejected'
+          WHEN 'rejected' THEN 'Rejected'
+          ELSE 'Pending'
+        END,
+        NULLIF(btrim(lr.legacy_metadata->>'note'), '')
       FROM drm.link_reports lr
+      -- Legacy project (pro_id) -> modern project -> customer, for the Company column.
+      LEFT JOIN LATERAL (
+        SELECT c.company_name
+        FROM migration_meta.migration_legacy_ids m
+        JOIN drm.projects p ON p.id = m.modern_id::uuid
+        JOIN drm.customers c ON c.id = p.customer_id
+        WHERE lr.legacy_metadata ? 'legacy_pro_id'
+          AND m.entity_type = 'create_project_row'
+          AND m.legacy_table = 'webxl_create_project'
+          AND m.legacy_id = lr.legacy_metadata->>'legacy_pro_id'
+        LIMIT 1
+      ) lc ON true
       WHERE lr.submitted_by_user_id::text = $1
         AND lr.deleted_at IS NULL
         AND lr.submitted_at::date >= $2::date
@@ -228,11 +265,35 @@ export async function verifyLink(params: {
   const evidenceId = rawId.startsWith("evidence:") ? rawId.slice("evidence:".length) : null;
   const legacyEvidenceId = !taskFileId && !evidenceId && !rawId.startsWith("linkreport:") ? rawId : null;
 
+  const linkReportId = rawId.startsWith("linkreport:") ? rawId.slice("linkreport:".length) : null;
+  if (linkReportId) {
+    // Migrated legacy links: store the verdict in the same legacy_metadata keys
+    // (verify Yes/Reject, note, verify_date) the old webxl_task_links row used.
+    const { rows } = await pool.query(
+      `UPDATE drm.link_reports
+          SET legacy_metadata = coalesce(legacy_metadata, '{}'::jsonb) || jsonb_build_object(
+                'verify', $1::text, 'note', $2::text, 'verify_date', to_char(now(), 'YYYY-MM-DD'),
+                'verified_by_user_id', $3::text),
+              updated_at = now()
+        WHERE id::text = $4 AND deleted_at IS NULL
+        RETURNING id`,
+      [params.status === "Verified" ? "Yes" : "Reject", params.note ?? null, params.verifiedByUserId, linkReportId],
+    );
+    if (!rows[0]) {
+      const err: any = new Error("Link not found.");
+      err.statusCode = 404;
+      throw err;
+    }
+    return { id: rawId, verifyStatus: params.status, verifyNote: params.note ?? null };
+  }
+
   if (taskFileId) {
-    await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_status text`);
-    await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_note text`);
-    await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_by_user_id uuid REFERENCES drm.users(id)`);
-    await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_at timestamptz`);
+    if (!(await taskFilesTableExists())) {
+      const err: any = new Error("Link not found.");
+      err.statusCode = 404;
+      throw err;
+    }
+    await ensureTaskFileVerifyColumns();
     const { rows } = await pool.query(
       `UPDATE drm.task_files
           SET verify_status = $1, verify_note = $2, verified_by_user_id = $3, verified_at = NOW()

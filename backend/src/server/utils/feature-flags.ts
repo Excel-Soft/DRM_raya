@@ -24,7 +24,7 @@ export function isSupportModuleEnabled(): boolean {
  * gets its own flag since each is a separate future integration decision.
  */
 export function isBotSystemEnabled(): boolean {
-  return process.env.BOT_SYSTEM_ENABLED === "true";
+  return process.env.BOT_SYSTEM_ENABLED !== "false";
 }
 
 export function isOnlineFormEnabled(): boolean {

@@ -22,22 +22,21 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
+// Old DRM "Raw Attendance": one row per biometric machine punch.
 type RawRow = {
   id: string;
-  employeeId: string;
+  employeeId: string | null;
   employeeName: string | null;
-  attendanceId: string;
-  branch: string | null;
-  department: string | null;
+  deviceUserId: string | null;
+  office: string | null;
+  deviceIp: string | null;
+  state: string | null;
+  type: string | null;
   date: string | null;
-  checkIn: string | null;
-  checkOut: string | null;
-  status: string | null;
-  workingMinutes: number | null;
-  isLate: boolean;
-  source: string;
-  remarks: string | null;
+  time: string | null;
+  receivedAt: string | null;
 };
 
 type RawResponse = {
@@ -45,12 +44,12 @@ type RawResponse = {
   total: number;
   page: number;
   limit: number;
+  offices?: string[];
   source: string;
 };
 
-type UserListItem = { id: string; name: string | null; branch: string | null };
+type UserListItem = { id: string; name?: string | null; fullName?: string | null; branch?: string | null };
 
-const STATUSES = ["Present", "Absent", "Late", "HalfDay", "Leave"];
 const PAGE_SIZES = [10, 25, 50, 100];
 const ALL = "__all__";
 
@@ -64,22 +63,15 @@ function defaultStart() {
 }
 function fmtDate(value: string | null) {
   if (!value) return "-";
-  const d = new Date(value);
-  return isNaN(d.getTime()) ? "-" : d.toLocaleDateString();
-}
-function fmtTime(value: string | null) {
-  if (!value) return "-";
-  const d = new Date(value);
-  return isNaN(d.getTime()) ? "-" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const [y, m, d] = value.split("-");
+  return d && m && y ? `${d}/${m}/${y}` : value;
 }
 
 type Applied = {
   startDate: string;
   endDate: string;
   branch: string;
-  department: string;
   userId: string;
-  attendanceStatus: string;
   page: number;
   limit: number;
 };
@@ -89,9 +81,7 @@ function buildQuery(a: Applied, includePaging: boolean): string {
   p.set("startDate", a.startDate);
   p.set("endDate", a.endDate);
   if (a.branch && a.branch !== ALL) p.set("branch", a.branch);
-  if (a.department.trim()) p.set("department", a.department.trim());
   if (a.userId && a.userId !== ALL) p.set("userId", a.userId);
-  if (a.attendanceStatus && a.attendanceStatus !== ALL) p.set("attendanceStatus", a.attendanceStatus);
   if (includePaging) {
     p.set("page", String(a.page));
     p.set("limit", String(a.limit));
@@ -104,9 +94,7 @@ export default function ReportsRawAttendance() {
   const [startDate, setStartDate] = useState(defaultStart());
   const [endDate, setEndDate] = useState(ymd(new Date()));
   const [branch, setBranch] = useState(ALL);
-  const [department, setDepartment] = useState("");
   const [userId, setUserId] = useState(ALL);
-  const [attendanceStatus, setAttendanceStatus] = useState(ALL);
   const [limit, setLimit] = useState(25);
   const [exporting, setExporting] = useState(false);
 
@@ -114,25 +102,21 @@ export default function ReportsRawAttendance() {
     startDate: defaultStart(),
     endDate: ymd(new Date()),
     branch: ALL,
-    department: "",
     userId: ALL,
-    attendanceStatus: ALL,
     page: 1,
     limit: 25,
   }));
 
-  // Optional employee filter. Privileged-only endpoint; degrade silently if 403.
+  // Employee filter: same user list the other report pages use.
   const usersQuery = useQuery<UserListItem[]>({
-    queryKey: ["/api/reports/users-list"],
-    queryFn: async () => apiRequestJson("GET", "/api/reports/users-list"),
+    queryKey: ["/api/users", "raw-attendance"],
+    queryFn: async () => {
+      const data: any = await apiRequestJson("GET", "/api/users");
+      return Array.isArray(data) ? data : data?.users ?? [];
+    },
     retry: false,
   });
   const users = usersQuery.data ?? [];
-  const branches = useMemo(() => {
-    const set = new Set<string>();
-    for (const u of users) if (u.branch) set.add(u.branch);
-    return Array.from(set).sort();
-  }, [users]);
 
   const reportQuery = useQuery<RawResponse>({
     queryKey: ["/api/reports/raw-attendance", applied],
@@ -142,6 +126,7 @@ export default function ReportsRawAttendance() {
   });
 
   const rows = reportQuery.data?.rows ?? [];
+  const branches = reportQuery.data?.offices ?? [];
   const total = reportQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / applied.limit));
 
@@ -154,7 +139,7 @@ export default function ReportsRawAttendance() {
       toast({ title: "Invalid range", description: "Start date must be on or before end date.", variant: "destructive" });
       return;
     }
-    setApplied({ startDate, endDate, branch, department, userId, attendanceStatus, page: 1, limit });
+    setApplied({ startDate, endDate, branch, userId, page: 1, limit });
   }
 
   function goToPage(next: number) {
@@ -197,7 +182,7 @@ export default function ReportsRawAttendance() {
 
         <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-4 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-500">Start date</label>
                 <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-8 text-xs" />
@@ -217,28 +202,16 @@ export default function ReportsRawAttendance() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500">Department</label>
-                <Input value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Any" className="h-8 text-xs" />
-              </div>
-              <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-500">Employee</label>
-                <Select value={userId} onValueChange={setUserId} disabled={users.length === 0}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All employees" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL}>All employees</SelectItem>
-                    {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.name || u.id}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500">Status</label>
-                <Select value={attendanceStatus} onValueChange={setAttendanceStatus}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All statuses" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL}>All statuses</SelectItem>
-                    {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  grouped={false}
+                  users={users}
+                  value={userId}
+                  onChange={setUserId}
+                  extraOptions={[{ value: ALL, label: "All employees" }]}
+                  placeholder="All employees"
+                  className="h-8 text-xs"
+                />
               </div>
             </div>
 
@@ -266,16 +239,16 @@ export default function ReportsRawAttendance() {
               <Table className="w-full text-[13px] whitespace-nowrap">
                 <TableHeader>
                   <TableRow className="border-b border-slate-200 dark:border-zinc-800 hover:bg-transparent bg-[#fdf3db] dark:bg-zinc-900">
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">#</TableHead>
                     <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Date</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Time</TableHead>
                     <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Employee</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Branch</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Department</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Status</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Check In</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Check Out</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Worked (min)</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Late</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Remarks</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Device User ID</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Office</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Device IP</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">State</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Type</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Received At</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="bg-white dark:bg-zinc-900">
@@ -293,26 +266,22 @@ export default function ReportsRawAttendance() {
                   ) : rows.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
-                        No attendance records match these filters.
+                        No machine punches match these filters.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    rows.map((r) => (
+                    rows.map((r, i) => (
                       <TableRow key={r.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800 transition-colors">
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{(applied.page - 1) * applied.limit + i + 1}</TableCell>
                         <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{fmtDate(r.date)}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 font-semibold">{r.employeeName || "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.branch || "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.department || "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.status || "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{fmtTime(r.checkIn)}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{fmtTime(r.checkOut)}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.workingMinutes ?? "-"}</TableCell>
-                        <TableCell className="py-3 px-3">
-                          {r.isLate
-                            ? <span className="px-2 py-0.5 rounded text-xs font-semibold bg-[#fdecea] text-[#d9534f] dark:bg-red-950 dark:text-red-400">Late</span>
-                            : <span className="text-xs text-slate-400">-</span>}
-                        </TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 max-w-[240px] truncate" title={r.remarks || ""}>{r.remarks || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.time || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 font-semibold">{r.employeeName || <span className="text-slate-400 font-normal">Unknown</span>}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.deviceUserId || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.office || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.deviceIp || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.state || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.type || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.receivedAt || "-"}</TableCell>
                       </TableRow>
                     ))
                   )}

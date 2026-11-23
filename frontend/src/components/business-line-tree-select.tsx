@@ -1,22 +1,25 @@
 import { Checkbox } from "@/components/ui/checkbox";
 
-// PLACEHOLDER: the real business-line-tree-select implementation was missing
-// from this checkout (imported by add-customer.tsx but absent from
-// src/components). This is a minimal flat multi-select standing in for it —
-// replace with the real tree-select implementation once restored.
+export type BusinessLineOption = { id: string; name: string };
+
 export function BusinessLineTreeSelect({
   options,
   value,
   onChange,
 }: {
-  options: string[];
+  options: BusinessLineOption[];
   value: string[];
   onChange: (values: string[]) => void;
 }) {
-  const toggle = (option: string) => {
-    onChange(
-      value.includes(option) ? value.filter((v) => v !== option) : [...value, option],
-    );
+  const selected = new Set(value);
+
+  const setSelected = (name: string, checked: boolean) => {
+    if (checked) {
+      if (selected.has(name)) return;
+      onChange([...value, name]);
+    } else {
+      onChange(value.filter((v) => v !== name));
+    }
   };
 
   return (
@@ -24,16 +27,19 @@ export function BusinessLineTreeSelect({
       {options.length === 0 ? (
         <p className="text-sm text-muted-foreground">No products available</p>
       ) : (
-        options.map((option) => (
-          <div key={option} className="flex items-center space-x-2">
+        options.map((opt) => (
+          <div
+            key={opt.id}
+            className="flex items-center gap-2 cursor-pointer select-none py-0.5"
+            onClick={() => setSelected(opt.name, !selected.has(opt.name))}
+          >
             <Checkbox
-              id={`business-line-${option}`}
-              checked={value.includes(option)}
-              onCheckedChange={() => toggle(option)}
+              checked={selected.has(opt.name)}
+              onCheckedChange={(checked) => setSelected(opt.name, checked === true)}
+              onClick={(e) => e.stopPropagation()}
+              aria-label={opt.name}
             />
-            <label htmlFor={`business-line-${option}`} className="text-sm cursor-pointer">
-              {option}
-            </label>
+            <span className="text-sm flex-1">{opt.name}</span>
           </div>
         ))
       )}

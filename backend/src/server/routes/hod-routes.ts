@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { Router } from "express";
 import { z } from "zod";
-import { hodRepository } from "../repositories/hod.repository";
+import { hodRepository, getDateFromForPeriod } from "../repositories/hod.repository";
 import { projectsRepository } from "../repositories/projects.repository";
 import { pool } from "../db";
 import { isHodAllowed, normalizeRole, isManagerialRole } from "../utils/role-utils";
@@ -11,6 +11,8 @@ import { generateInvoicesAfterFinalGmApproval } from "./services/gm-invoice-gene
 import { resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
 import { GM_INVOICE_GENERATION_TIMING } from "../../shared/gm-sales-constants";
 import { NotificationService } from "./services/notification-service";
+import { fetchTopSellingMetrics } from "../services/top-selling-metrics.service";
+import { fetchHodLegacyDailyReport } from "../services/hod-dashboard-legacy.service";
 
 
 const router = Router();
@@ -62,45 +64,71 @@ router.get("/daily-report", async (req, res) => {
       // Allow broader access for the Product Posting Dashboard
       const isManager = isManagerialRole(role) || isHodAllowed(role);
 
-      const period = String(req.query.period || 'daily').toLowerCase();
-      let dateFilter = '';
-      if (period === 'daily' || period === 'today') {
-        dateFilter = "AND t.created_at >= CURRENT_DATE";
-      } else if (period === 'yesterday') {
-        dateFilter = "AND t.created_at >= CURRENT_DATE - INTERVAL '1 day' AND t.created_at < CURRENT_DATE";
-      } else if (period === 'weekly') {
-        dateFilter = "AND t.created_at >= CURRENT_DATE - INTERVAL '7 days'";
-      } else if (period === 'monthly') {
-        dateFilter = "AND t.created_at >= CURRENT_DATE - INTERVAL '30 days'";
+      const period = String(req.query.period || "daily").toLowerCase();
+      let dateFilter = "";
+      if (period === "daily" || period === "today") {
+        dateFilter =
+          "AND GREATEST(t.updated_at, t.created_at) >= CURRENT_DATE - INTERVAL '7 days'";
+      } else if (period === "yesterday") {
+        dateFilter =
+          "AND GREATEST(t.updated_at, t.created_at) >= CURRENT_DATE - INTERVAL '1 day' AND GREATEST(t.updated_at, t.created_at) < CURRENT_DATE";
+      } else if (period === "weekly" || period === "wk") {
+        dateFilter =
+          "AND GREATEST(t.updated_at, t.created_at) >= CURRENT_DATE - INTERVAL '30 days'";
+      } else if (period === "monthly" || period === "mo") {
+        dateFilter =
+          "AND GREATEST(t.updated_at, t.created_at) >= CURRENT_DATE - INTERVAL '90 days'";
       }
 
       const queryText = `
         SELECT 
-          t.id,
-          u.username as "name",
-          p.name as "company",
-          p.workspace as "project",
-          '0' as "free",
+          t.id::text,
+          COALESCE(NULLIF(TRIM(u.full_name), ''), NULLIF(TRIM(u.name), ''), u.username) as "name",
+          COALESCE(c.company_name, i.company_name, 'Unknown') as "company",
+          COALESCE(NULLIF(TRIM(p.workspace), ''), p.name, '-') as "project",
+          CASE
+            WHEN COALESCE(i.amount, 0)::numeric = 0
+              OR lower(trim(coalesce(i.payment_method, ''))) = 'free' THEN '1'
+            ELSE '0'
+          END as "free",
           t.title as "task",
           t.status,
           '0' as "run",
-          COALESCE(SUM(ttl.duration_minutes), 0) || ' mins' as "spent",
-          t.created_at as "createdAt",
+          COALESCE(SUM(ttl.duration_minutes), 0)::int as "spent",
+          GREATEST(t.updated_at, t.created_at) as "createdAt",
           p.id as "projectId"
         FROM drm.tasks t
         LEFT JOIN drm.users u ON t.assigned_to_user_id = u.id
         LEFT JOIN drm.projects p ON t.project_id = p.id
+        LEFT JOIN drm.customers c ON p.customer_id = c.id
+        LEFT JOIN drm.product_posting_invoices i ON p.invoice_id = i.id
         LEFT JOIN drm.task_time_logs ttl ON t.id = ttl.task_id
-        WHERE 1=1
+        WHERE coalesce(t.is_deleted, false) = false
         ${isManager ? "" : "AND t.assigned_to_user_id = $1::uuid"}
         ${dateFilter}
-        GROUP BY t.id, u.username, p.name, p.workspace, p.id
-        ORDER BY t.created_at DESC
-        LIMIT 20
+        GROUP BY t.id, u.full_name, u.name, u.username, c.company_name,
+          i.company_name, i.amount, i.payment_method, p.workspace, p.name, t.title, t.status,
+          t.created_at, t.updated_at, p.id
+        ORDER BY GREATEST(t.updated_at, t.created_at) DESC
+        LIMIT 40
       `;
       const result = await client.query(queryText, isManager ? [] : [req.user!.userId]);
 
-      const response = { success: true, data: result.rows };
+      const modernRows = result.rows.map((row) => ({
+        ...row,
+        spent: `${Number(row.spent || 0)} mins`,
+      }));
+
+      const legacyRows = isManager ? await fetchHodLegacyDailyReport(period) : [];
+
+      const merged = [...modernRows, ...legacyRows]
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(),
+        )
+        .slice(0, 40);
+
+      const response = { success: true, data: merged };
       logApi(req, 200, response);
       return res.json(response);
     } finally {
@@ -114,10 +142,92 @@ router.get("/daily-report", async (req, res) => {
   }
 });
 
+async function fetchOrgLegacyActivityCounts(dateFrom: Date | null): Promise<{
+  distinctProjects: number;
+  completed: number;
+  upcoming: number;
+  inProgress: number;
+  delay: number;
+}> {
+  try {
+    const params: any[] = [];
+    let periodSql = "";
+    if (dateFrom) {
+      params.push(dateFrom);
+      periodSql = `
+        AND coalesce(
+          NULLIF(trim(a.last_update), '')::timestamptz,
+          NULLIF(trim(a.assign_date), '')::timestamptz,
+          now()
+        ) >= $1`;
+    }
+    const { rows } = await pool.query(
+      `
+        WITH latest_assign AS (
+          SELECT DISTINCT ON (trim(a.pro_id))
+            lower(trim(coalesce(a.stauts, ''))) AS status,
+            trim(coalesce(a.qa_date, '')) AS qa_date,
+            trim(coalesce(a.fy_date, '')) AS fy_date,
+            trim(coalesce(a.assign_date, '')) AS assign_date,
+            trim(coalesce(a.fy_status, '')) AS fy_status
+          FROM legacy_archive.webxl_task_assign a
+          WHERE trim(coalesce(a.pro_id, '')) <> ''
+            ${periodSql}
+          ORDER BY trim(a.pro_id),
+            coalesce(
+              NULLIF(trim(a.last_update), '')::timestamptz,
+              NULLIF(trim(a.assign_date), '')::timestamptz,
+              now()
+            ) DESC
+        )
+        SELECT
+          count(*)::int AS distinct_projects,
+          count(*) FILTER (
+            WHERE status IN ('end', 'completed', 'done', 'finish', 'finished', 'closed')
+          )::int AS completed,
+          count(*) FILTER (
+            WHERE status IN (
+              '', 'todo', 'blocked', 'wait', 'waiting', 'assign', 'pending', 'panding', 'new', 'stop'
+            )
+          )::int AS upcoming,
+          count(*) FILTER (
+            WHERE status LIKE '%run%'
+               OR status LIKE '%progress%'
+               OR status IN ('inprogress', 'in progress', 'start', 'started', 'working')
+          )::int AS in_progress,
+          count(*) FILTER (
+            WHERE status = 'task overdue'
+               OR (
+                 coalesce(fy_status, '') <> '1'
+                 AND assign_date <> ''
+                 AND status NOT IN ('end', 'completed', 'done', 'finish', 'finished', 'closed')
+               )
+          )::int AS delay_projects
+        FROM latest_assign
+      `,
+      params,
+    );
+    const row = rows[0] || {};
+    return {
+      distinctProjects: Number(row.distinct_projects || 0),
+      completed: Number(row.completed || 0),
+      upcoming: Number(row.upcoming || 0),
+      inProgress: Number(row.in_progress || 0),
+      delay: Number(row.delay_projects || 0),
+    };
+  } catch (err) {
+    console.error("HOD legacy activity counts failed (non-fatal):", err);
+    return { distinctProjects: 0, completed: 0, upcoming: 0, inProgress: 0, delay: 0 };
+  }
+}
+
 router.get("/dashboard/important-stats", async (req, res) => {
   try {
     const client = await pool.connect();
     try {
+      const period = typeof req.query.period === "string" ? req.query.period : undefined;
+      const dateFrom = getDateFromForPeriod(period);
+
       // This endpoint is shared by the real HOD/Super HOD dashboards (which
       // should see company-wide numbers) AND several department-manager
       // dashboards (SEO/SMM, Product Posting, Verification, QA) that were
@@ -136,23 +246,52 @@ router.get("/dashboard/important-stats", async (req, res) => {
         projectScopeSql = `AND (owner_user_id = ANY($1::uuid[]) OR (owner_user_id IS NULL AND created_by = ANY($1::uuid[])))`;
       }
 
-      // Real statistics queries
-      const statsQuery = await client.query(`
+      let periodSql = "";
+      if (dateFrom) {
+        projectScopeParams.push(dateFrom);
+        periodSql = ` AND coalesce(p.updated_at, p.created_at) >= $${projectScopeParams.length}`;
+      }
+
+      // Real statistics queries (modern drm.projects)
+      const statsQuery = await client.query(
+        `
         SELECT
-          COUNT(*) as "total",
-          COUNT(CASE WHEN LOWER(status) IN ('completed', 'success', 'approved') THEN 1 END) as "completed",
-          COUNT(CASE WHEN LOWER(status) IN ('in progress', 'active') THEN 1 END) as "in_progress",
-          COUNT(CASE WHEN LOWER(status) IN ('pending', 'waiting', 'ready_for_qa') THEN 1 END) as "pending",
-          COUNT(CASE WHEN (end_date < NOW()) AND LOWER(status) = 'active' THEN 1 END) as "delayed"
-        FROM drm.projects
-        WHERE 1=1 ${projectScopeSql}
-      `, projectScopeParams);
-      const upcomingQuery = await client.query(`
-        SELECT COUNT(*) as count
-        FROM drm.projects
-        WHERE end_date >= NOW() AND end_date <= NOW() + INTERVAL '7 days'
-        ${projectScopeSql}
-      `, projectScopeParams);
+          COUNT(*)::int as "total",
+          COUNT(*) FILTER (
+            WHERE LOWER(status::text) IN ('completed', 'success', 'approved')
+          )::int as "completed",
+          COUNT(*) FILTER (
+            WHERE LOWER(status::text) IN ('in progress', 'in_progress', 'active', 'running')
+          )::int as "in_progress",
+          COUNT(*) FILTER (
+            WHERE LOWER(status::text) IN (
+              'pending', 'waiting', 'ready_for_qa', 'todo', 'blocked', 'onhold'
+            )
+          )::int as "pending_queue",
+          COUNT(*) FILTER (
+            WHERE (end_date < NOW())
+              AND LOWER(status::text) IN ('active', 'in progress', 'in_progress', 'pending', 'running')
+          )::int as "delayed"
+        FROM drm.projects p
+        WHERE coalesce(p.is_deleted, false) = false
+          ${projectScopeSql}
+          ${periodSql}
+      `,
+        projectScopeParams,
+      );
+      const upcomingQuery = await client.query(
+        `
+        SELECT COUNT(*)::int as count
+        FROM drm.projects p
+        WHERE coalesce(p.is_deleted, false) = false
+          AND p.end_date >= NOW() AND p.end_date <= NOW() + INTERVAL '7 days'
+          ${projectScopeSql}
+          ${periodSql.replace(/\bp\./g, "p.")}
+      `,
+        projectScopeParams,
+      );
+
+      const legacy = await fetchOrgLegacyActivityCounts(dateFrom);
 
       // Get GM Verification Pending count
       const gmPendingQuery = await client.query(`
@@ -184,34 +323,42 @@ router.get("/dashboard/important-stats", async (req, res) => {
       `);
 
       const row = statsQuery.rows[0];
-      const total = parseInt(row.total || '0');
-      const completed = parseInt(row.completed || '0');
-      const pending = parseInt(row.pending || '0');
-      const delayed = parseInt(row.delayed || '0');
-      const inProgress = parseInt(row.in_progress || '0');
-      const upcoming = parseInt(upcomingQuery.rows[0]?.count || '0');
-      const gmPending = parseInt(gmPendingQuery.rows[0]?.count || '0');
-      const leaves = parseInt(leaveCount.rows[0]?.count || '0');
-      const activeUsers = parseInt(activeTeam.rows[0]?.count || '0');
-      const qaVerification = parseInt(qaVerificationQuery.rows[0]?.count || '0');
+      const total = parseInt(row.total || "0", 10);
+      const completed = parseInt(row.completed || "0", 10) + legacy.completed;
+      const pendingQueue = parseInt(row.pending_queue || "0", 10);
+      const delayed = parseInt(row.delayed || "0", 10) + legacy.delay;
+      const inProgress =
+        parseInt(row.in_progress || "0", 10) + legacy.inProgress;
+      const pendingOps = pendingQueue + inProgress + legacy.upcoming;
+      const activitiesTotal = dateFrom
+        ? Math.max(total, completed + pendingOps + delayed)
+        : Math.max(total, legacy.distinctProjects);
+      const upcoming =
+        parseInt(upcomingQuery.rows[0]?.count || "0", 10) + legacy.upcoming;
+      const gmPending = parseInt(gmPendingQuery.rows[0]?.count || "0");
+      const leaves = parseInt(leaveCount.rows[0]?.count || "0");
+      const activeUsers = parseInt(activeTeam.rows[0]?.count || "0");
+      const qaVerification = parseInt(qaVerificationQuery.rows[0]?.count || "0");
+      const topSelling = await fetchTopSellingMetrics(dateFrom);
 
       const stats = {
         delayProjects: delayed,
-        upcoming: upcoming,
-        completed: completed,
-        inProgress: inProgress,
-        pending: pending, // Project Pending
-        qaVerification: qaVerification, // Tasks actually in READY_FOR_QA, distinct from "Pending"
+        upcoming,
+        completed,
+        inProgress,
+        pending: pendingOps,
+        qaVerification,
         leaveApplication: leaves,
         activeTeam: activeUsers,
-        depVerification: gmPending, // GM Verification
+        depVerification: gmPending,
+        topSelling,
         activities: {
-          totalProjects: total,
+          totalProjects: activitiesTotal,
           complete: completed,
-          pending: pending,
+          pending: pendingOps,
           delay: delayed,
-          free: Math.max(0, total - inProgress - completed),
-        }
+          free: Math.max(0, activitiesTotal - completed - pendingOps - delayed),
+        },
       };
 
       const response = { success: true, data: stats };
@@ -230,8 +377,40 @@ router.get("/dashboard/important-stats", async (req, res) => {
 
 router.get("/projects/delayed", async (req, res) => {
   try {
+    const { fetchLegacyDelayProjectsDetailed } = await import("../utils/delay-project-legacy");
+    const section = typeof req.query.section === "string" ? req.query.section : "all";
+    const departmentId = typeof req.query.departmentId === "string" ? req.query.departmentId : undefined;
+    const userId = typeof req.query.userId === "string" ? req.query.userId : undefined;
+    const startDate = typeof req.query.startDate === "string" ? req.query.startDate : undefined;
+    const endDate = typeof req.query.endDate === "string" ? req.query.endDate : undefined;
+    const search = typeof req.query.search === "string" ? req.query.search : undefined;
+    const page = req.query.page ? Number(req.query.page) : 1;
+    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 50;
+
+    const legacy = await fetchLegacyDelayProjectsDetailed({
+      section: section as any,
+      departmentId,
+      userId,
+      startDate,
+      endDate,
+      search,
+      page: Number.isFinite(page) ? page : 1,
+      pageSize: Number.isFinite(pageSize) ? pageSize : 50,
+    });
+
+    if (legacy.total > 0) {
+      return res.json({
+        success: true,
+        data: legacy.rows,
+        total: legacy.total,
+        page: Number.isFinite(page) ? page : 1,
+        pageSize: Number.isFinite(pageSize) ? pageSize : 50,
+        source: "legacy",
+      });
+    }
+
     const data = await projectsRepository.getDetailedDelayedProjects();
-    return res.json({ success: true, data });
+    return res.json({ success: true, data, total: data.length, source: "modern" });
   } catch (error) {
     console.error("HOD detailed delayed projects error:", error);
     return res.status(500).json({ success: false, message: "Failed to load detailed delayed projects" });
@@ -690,17 +869,20 @@ router.get("/verification/leave-requests", async (req, res) => {
         SELECT 
           lr.id,
           lr.user_id as "userId",
-          u.username as "userName",
+          COALESCE(
+            NULLIF(TRIM(u.full_name), ''),
+            NULLIF(TRIM(u.name), ''),
+            NULLIF(TRIM(u.username), '')
+          ) as "userName",
           u.email as "userEmail",
           lr.from_date as "fromDate",
           lr.to_date as "toDate",
-          lr.type,
-          -- lr.purpose removed as column missing in DB
-          -- lr.leave_type also removed
-          -- lr.description also removed
-          lr.reason,
+          lr.leave_type as type,
+          lr.purpose,
+          lr.leave_type as "leaveType",
+          lr.description as reason,
           lr.status,
-          lr.approved_by as "approvedBy",
+          lr.approved_by_user_id as "approvedBy",
           lr.created_at as "createdAt"
         FROM drm.leave_requests lr
         LEFT JOIN drm.users u ON lr.user_id = u.id
@@ -1293,8 +1475,13 @@ router.post("/verification/update-requests/:id/action", async (req, res) => {
 // Get project deadlines
 router.get("/dashboard/project-deadlines", async (req, res) => {
   try {
-    const filter = (req.query.filter as string) || 'WK';
-    const data = await hodRepository.getProjectDeadlines(filter, req.user!.userId);
+    const filter = (req.query.filter as string) || "WK";
+    const role = req.user!.roleId;
+    const orgWide = isManagerialRole(role) || isHodAllowed(role);
+    const data = await hodRepository.getProjectDeadlines(
+      filter,
+      orgWide ? undefined : req.user!.userId,
+    );
     const response = { success: true, data };
     logApi(req, 200, response);
     return res.json(response);

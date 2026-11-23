@@ -1207,6 +1207,10 @@ async function ensureDepartmentTeamCommissionSchema(client: {
 }
 
 export async function ensureDbOnce(): Promise<void> {
+  if (process.env.SKIP_SCHEMA_ENSURE === "true") {
+    console.warn("[db] skipping ensureDbOnce (SKIP_SCHEMA_ENSURE=true)");
+    return;
+  }
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
     return;
@@ -1240,8 +1244,10 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureGmEntriesPatch5Schema(client);
         await ensureGmStage3Schema(client);
         await ensureInvoiceStage4Schema(client);
-        await ensureGlobalInvoiceNumberSchema(client);
+        // Add invoice_number to product_posting_invoices before any ALTER/DEFAULT
+        // that references that column (ensureGlobalInvoiceNumberSchema included).
         await ensureInvoiceNumberSchema(client);
+        await ensureGlobalInvoiceNumberSchema(client);
         await ensureProjectStage5Schema(client);
         await ensureProjectNumberSchema(client);
         await ensureWorkflowStatusHistorySchema(client);

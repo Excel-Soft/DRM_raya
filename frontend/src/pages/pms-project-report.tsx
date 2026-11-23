@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CalendarIcon } from "lucide-react";
@@ -17,6 +17,8 @@ interface ProjectReportRow {
   customerCreateDate: string | null;
   gmPayDate: string | null;
   gmDoc: number;
+  /** Legacy rows: upload date of the company's first GM document. */
+  gmDocDate?: string | null;
   bvDate: string | null;
   invoiceDate: string | null;
   receiptDate: string | null;
@@ -30,7 +32,8 @@ interface ProjectReportRow {
   p15Penalty: boolean;
   assignDate: string | null;
   finish: string | null;
-  remaining: number;
+  /** Days left, or (finished on/after the deadline) the finish date. */
+  remaining: number | string;
 }
 
 interface ProjectReportResponse {
@@ -46,6 +49,7 @@ interface FetchParams {
 }
 
 const LIMIT_OPTIONS = [10, 25, 50, 100];
+const COMPANY_SUGGEST_URL = "/api/dd-manager/project-report/companies";
 
 /** Format an ISO date string as DD-MM-YYYY; "-" when missing. */
 function fmtDate(value: string | null | undefined): string {
@@ -76,6 +80,69 @@ export default function PmsProjectReport() {
   const [limit, setLimit] = useState(10);
   const [fetchParams, setFetchParams] = useState<FetchParams | null>(null);
   const [dateError, setDateError] = useState("");
+
+  // Company Name type-ahead: debounced (300ms) suggestions under the input.
+  const [companyQuery, setCompanyQuery] = useState("");
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const suggestListRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setCompanyQuery(companyName.trim()), 300);
+    return () => clearTimeout(t);
+  }, [companyName]);
+
+  const { data: suggestData, isFetching: suggestLoading } = useQuery<{ companies: string[] }>({
+    queryKey: [COMPANY_SUGGEST_URL, companyQuery],
+    enabled: suggestOpen && companyQuery.length > 0,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `${COMPANY_SUGGEST_URL}?q=${encodeURIComponent(companyQuery)}`);
+      if (!res.ok) throw new Error("request_failed");
+      return res.json();
+    },
+  });
+  const suggestions = companyQuery ? suggestData?.companies ?? [] : [];
+  const showSuggest = suggestOpen && companyName.trim().length > 0 && companyQuery.length > 0;
+
+  useEffect(() => {
+    setActiveIdx(-1);
+  }, [companyQuery]);
+
+  useEffect(() => {
+    if (activeIdx < 0 || !suggestListRef.current) return;
+    const el = suggestListRef.current.children[activeIdx] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: "nearest" });
+  }, [activeIdx]);
+
+  const pickCompany = (name: string) => {
+    setCompanyName(name);
+    setSuggestOpen(false);
+    setActiveIdx(-1);
+  };
+
+  const handleCompanyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!suggestOpen) setSuggestOpen(true);
+      if (suggestions.length) setActiveIdx((i) => (i + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (suggestions.length) setActiveIdx((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (showSuggest && activeIdx >= 0 && suggestions[activeIdx]) {
+        pickCompany(suggestions[activeIdx]);
+      } else {
+        setSuggestOpen(false);
+        handleView();
+      }
+    } else if (e.key === "Escape") {
+      setSuggestOpen(false);
+      setActiveIdx(-1);
+    }
+  };
 
   const { data, isLoading, isError } = useQuery<ProjectReportResponse>({
     queryKey: ["/api/dd-manager/project-report", fetchParams, search, page, limit],
@@ -133,12 +200,60 @@ export default function PmsProjectReport() {
       <div className="bg-white rounded border border-gray-100 p-6 flex flex-col md:flex-row gap-6 items-end mb-6 shadow-sm flex-shrink-0 dark:bg-zinc-900 dark:border-zinc-800">
         <div className="flex flex-col gap-2 w-full md:w-1/3">
           <label className="text-[13px] font-semibold text-[#495057] dark:text-zinc-400">Company Name</label>
-          <Input
-            placeholder="Enter name"
-            className="h-10 text-[13px]"
-            value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
-          />
+          <div className="relative">
+            <Input
+              placeholder="Enter name"
+              className="h-10 text-[13px]"
+              value={companyName}
+              autoComplete="off"
+              role="combobox"
+              aria-expanded={showSuggest}
+              aria-autocomplete="list"
+              aria-controls="project-report-company-suggest"
+              aria-activedescendant={activeIdx >= 0 ? `project-report-company-${activeIdx}` : undefined}
+              onChange={(e) => {
+                setCompanyName(e.target.value);
+                setSuggestOpen(true);
+              }}
+              onFocus={() => setSuggestOpen(true)}
+              onBlur={() => setSuggestOpen(false)}
+              onKeyDown={handleCompanyKeyDown}
+            />
+            {showSuggest && (
+              <ul
+                id="project-report-company-suggest"
+                role="listbox"
+                ref={suggestListRef}
+                className="absolute left-0 right-0 top-full mt-1 z-50 max-h-64 overflow-auto rounded border border-gray-200 bg-white py-1 shadow-lg text-[13px] dark:bg-zinc-900 dark:border-zinc-700"
+              >
+                {suggestions.length === 0 ? (
+                  <li className="px-3 py-2 text-gray-500 dark:text-zinc-500">
+                    {suggestLoading ? "Searching..." : "No matching companies"}
+                  </li>
+                ) : (
+                  suggestions.map((name, i) => (
+                    <li
+                      key={name}
+                      id={`project-report-company-${i}`}
+                      role="option"
+                      aria-selected={i === activeIdx}
+                      // mousedown (not click) so the pick lands before the input's blur closes the list
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        pickCompany(name);
+                      }}
+                      onMouseEnter={() => setActiveIdx(i)}
+                      className={`px-3 py-2 cursor-pointer text-[#495057] dark:text-zinc-300 ${
+                        i === activeIdx ? "bg-gray-100 dark:bg-zinc-800" : ""
+                      }`}
+                    >
+                      {name}
+                    </li>
+                  ))
+                )}
+              </ul>
+            )}
+          </div>
         </div>
         <div className="flex flex-col gap-2 w-full md:w-1/4">
           <label className="text-[13px] font-semibold text-[#495057] dark:text-zinc-400">Start Date</label>
@@ -279,7 +394,7 @@ export default function PmsProjectReport() {
                     <TableCell className={tdClass}>{txt(row.person)}</TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.customerCreateDate)}</TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.gmPayDate)}</TableCell>
-                    <TableCell className={tdClass}>{row.gmDoc ?? 0}</TableCell>
+                    <TableCell className={tdClass}>{row.gmDocDate ? fmtDate(row.gmDocDate) : row.gmDoc ?? 0}</TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.bvDate)}</TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.invoiceDate)}</TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.receiptDate)}</TableCell>
@@ -298,7 +413,9 @@ export default function PmsProjectReport() {
                     </TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.assignDate)}</TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.finish)}</TableCell>
-                    <TableCell className={tdClass}>{row.remaining ?? 0}</TableCell>
+                    <TableCell className={tdClass}>
+                      {typeof row.remaining === "string" ? fmtDate(row.remaining) : row.remaining ?? 0}
+                    </TableCell>
                   </TableRow>
                 ))
               )}

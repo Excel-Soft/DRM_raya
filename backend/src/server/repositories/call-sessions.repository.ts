@@ -33,11 +33,10 @@ async function ensureCallSessionsSchema() {
       provider_call_id text null,
       created_at timestamptz not null default now()
     );
-    alter table call_sessions
-      alter column id type varchar using id::varchar,
-      alter column user_id type varchar using user_id::varchar,
-      alter column customer_id type varchar using customer_id::varchar,
-      alter column followup_id type varchar using followup_id::varchar;
+    -- No column type changes here: on the live DB user_id/customer_id/followup_id
+    -- are uuid columns with FKs to drm.users/customers/follow_ups, so altering
+    -- them to varchar fails ("foreign key constraint ... cannot be implemented")
+    -- and aborted the index creation below.
     create index if not exists idx_call_sessions_user_started on call_sessions(user_id, started_at);
     create index if not exists idx_call_sessions_followup on call_sessions(followup_id);
     create unique index if not exists uq_call_sessions_provider_call on call_sessions(provider_call_id) where provider_call_id is not null;

@@ -16,6 +16,63 @@ import { useLocation } from "wouter";
 // PHP columns: #, Drm id, Created Date, Company, Sale Person, Dollar, Cus Dollar,
 //              Pkr, Dollar Rate, Ex-Disc, Ex-Disc Pkr, Package, [loan Amount,] Type,
 //              Expire, Droupout, Status, Action
+/** Standard table page size for Dollar System lists (UI-only paging). */
+const TABLE_PAGE_SIZE = 15;
+
+function paginate<T>(arr: T[], page: number, pageSize = TABLE_PAGE_SIZE): T[] {
+  const start = (page - 1) * pageSize;
+  return arr.slice(start, start + pageSize);
+}
+
+function TablePagination({
+  page,
+  total,
+  onPageChange,
+  pageSize = TABLE_PAGE_SIZE,
+}: {
+  page: number;
+  total: number;
+  onPageChange: (p: number) => void;
+  pageSize?: number;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (total <= pageSize) {
+    return (
+      <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">
+        Showing {total} of {total} entries
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">
+        Showing {total === 0 ? 0 : (page - 1) * pageSize + 1} to {Math.min(page * pageSize, total)} of {total} entries
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={page <= 1}
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          className="px-3 py-1 text-[11px] font-bold border rounded disabled:opacity-40 hover:bg-gray-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        >
+          Previous
+        </button>
+        <span className="text-[11px] font-bold text-gray-600 dark:text-zinc-300">
+          Page {page} of {totalPages}
+        </span>
+        <button
+          type="button"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          className="px-3 py-1 text-[11px] font-bold border rounded disabled:opacity-40 hover:bg-gray-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function safeDate(val: any, fmt = "yyyy-MM-dd", fallback = "-"): string {
   if (!val) return fallback;
   if (typeof val === "string" && !/^\d{4}/.test(val) && !/^\d{1,2}[\/-]\d{1,2}/.test(val)) {
@@ -30,7 +87,7 @@ function safeDate(val: any, fmt = "yyyy-MM-dd", fallback = "-"): string {
   }
 }
 
-function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAttach, onViewInstallments }: any) {
+function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAttach, onViewInstallments, rowOffset = 0 }: any) {
   const colCount = 17;
   const tw = isLoan ? "1900px" : "1800px";
   return (
@@ -61,7 +118,7 @@ function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAtt
         <tbody className="bg-white font-bold dark:bg-zinc-900">
           {items.length > 0 ? items.map((item: any, i: number) => (
             <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
-              <td className="p-2.5 border-r font-bold text-gray-400 text-center">{i + 1}</td>
+              <td className="p-2.5 border-r font-bold text-gray-400 text-center">{rowOffset + i + 1}</td>
               <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 truncate" title={item.drmId}>
                 {onViewInstallments ? (
                   <button type="button" onClick={() => onViewInstallments(item)} className="underline decoration-dotted hover:text-[#008d4c] cursor-pointer">
@@ -142,7 +199,7 @@ function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAtt
 // Sale Person, Package, Type, Dollar, Dollar Rate, Pkr, Screenshort, Discount, Extra
 // Discount, Extra Pkr Discount, Status, Create, Accountant, HOD, Alibaba, Pay Date.
 // Drm Id opens the "Partial Payment Installment" modal (real gm_partial_receipts rows).
-function PartialPaymentReceivedTable({ items = [], onViewInstallments, onAttach }: any) {
+function PartialPaymentReceivedTable({ items = [], onViewInstallments, onAttach, rowOffset = 0 }: any) {
   const cols: [string, number][] = [
     ["#",45],["Drm Id",150],["Member Id",110],["Order Id",130],["Company",220],["Sale Person",120],
     ["Package",120],["Type",80],["Dollar",90],["Dollar Rate",90],["Pkr",100],["Screenshort",90],
@@ -159,7 +216,7 @@ function PartialPaymentReceivedTable({ items = [], onViewInstallments, onAttach 
         <tbody className="bg-white font-bold dark:bg-zinc-900">
           {items.length > 0 ? items.map((item: any, i: number) => (
             <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
-              <td className="p-2.5 border-r font-bold text-gray-400 text-center">{i + 1}</td>
+              <td className="p-2.5 border-r font-bold text-gray-400 text-center">{rowOffset + i + 1}</td>
               <td className="p-2.5 border-r whitespace-nowrap">
                 <button type="button" onClick={() => onViewInstallments(item)}
                   className="font-black text-[#00a65a] italic uppercase underline decoration-dotted hover:text-[#008d4c] cursor-pointer">
@@ -343,6 +400,13 @@ export default function DollarSystem() {
   const [bvDetailItem, setBvDetailItem] = useState<any>(null);
   const [bvDetailDate, setBvDetailDate] = useState("");
   const [bvDetailSaving, setBvDetailSaving] = useState(false);
+  // Old page: a row whose GM BV date is not in the current year shows a red date and
+  // the "Company & BV Date Details" eye (isOldDate).
+  const bvExpiring = (row: any) => {
+    if (!row?.gmBvDate) return true;
+    const d = new Date(row.gmBvDate);
+    return isNaN(d.getTime()) || d.getFullYear() !== new Date().getFullYear();
+  };
   const openBvDetail = (row: any) => {
     setBvDetailItem(row);
     setBvDetailDate(row.accountBvDate || row.gmBvDate?.slice(0, 10) || "");
@@ -355,10 +419,14 @@ export default function DollarSystem() {
     return d.toISOString().slice(0, 10);
   })();
   const saveBvDetail = async () => {
-    if (!bvDetailItem?.gmEntryId || !bvDetailDate) return;
+    const isLegacy = bvDetailItem?.source === "legacy";
+    if ((!isLegacy && !bvDetailItem?.gmEntryId) || (isLegacy && !bvDetailItem?.gmBvId) || !bvDetailDate) return;
     setBvDetailSaving(true);
     try {
-      const res = await fetch(`/api/account/gm-entries/${bvDetailItem.gmEntryId}/bv-date`, {
+      const url = isLegacy
+        ? `/api/account/dollar-system/legacy-gmaccount/${bvDetailItem.gmBvId}/bv-date`
+        : `/api/account/gm-entries/${bvDetailItem.gmEntryId}/bv-date`;
+      const res = await fetch(url, {
         method: "PATCH",
         headers: { ...getAuthHeader(), "Content-Type": "application/json" },
         credentials: "include",
@@ -843,8 +911,9 @@ export default function DollarSystem() {
   };
 
   const { data, isLoading } = useQuery({
-    queryKey: ["/api/account/dollar-system/list"],
-    queryFn: () => apiRequestJson("GET", "/api/account/dollar-system/list")
+    queryKey: ["/api/account/dollar-system/list", quarterFilter],
+    queryFn: () =>
+      apiRequestJson("GET", `/api/account/dollar-system/list?quarter=${encodeURIComponent(quarterFilter)}`),
   });
 
   const paidAbParams = new URLSearchParams();
@@ -858,7 +927,8 @@ export default function DollarSystem() {
   });
   const paidAlibabaRows = paidAbData?.records || [];
   const paidAbCounts = paidAbData?.counts || { processing: 0, paid: 0, all: 0 };
-  const paidAbTotals = paidAbData?.totals || { totalDollar: 0, totalExDisc: 0, cusProfit: 0, cusLoss: 0 };
+  const paidAbTotals = paidAbData?.totals || { totalDollar: 0, totalExDisc: 0, cusProfit: 0, cusLoss: 0, currentProfit: 0, currentLoss: 0 };
+  const paidAbQuarter = paidAbData?.quarterChips || null;
 
   const { data: buyerDetailData, isLoading: buyerDetailLoading } = useQuery({
     queryKey: ["/api/account/dollar-system/paid-alibaba/buyer-detail", orderDetailItem?.id],
@@ -895,23 +965,70 @@ export default function DollarSystem() {
     return true;
   });
 
-  const ncFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter((p: any)=>p.type==="New").length, [fullPayments, fullSearch, fullStart, fullEnd]);
-  const rcFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter((p: any)=>p.type==="Rc"||p.type==="Rc-Up").length, [fullPayments, fullSearch, fullStart, fullEnd]);
-  const ecFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter((p: any)=>p.type==="Ec").length, [fullPayments, fullSearch, fullStart, fullEnd]);
+  // FULL tab: paged on the server, 20 per page (old + new GMs are ~4k rows); search, dates,
+  // NC/RC/EC filter and the Cash Received totals are computed over all rows there.
+  const FULL_PAGE_SIZE = TABLE_PAGE_SIZE;
+  const [fullPage, setFullPage] = useState(1);
+  const [partialPage, setPartialPage] = useState(1);
+  const [partialPendingPage, setPartialPendingPage] = useState(1);
+  const [loanPage, setLoanPage] = useState(1);
+  const [pendPage, setPendPage] = useState(1);
+  const [paidAbPage, setPaidAbPage] = useState(1);
+  const [fullSearchDebounced, setFullSearchDebounced] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setFullSearchDebounced(fullSearch.trim()), 350);
+    return () => clearTimeout(t);
+  }, [fullSearch]);
+  useEffect(() => { setFullPage(1); }, [fullSearchDebounced, fullStart, fullEnd, fullTypeFilter]);
+  const [partialSearchDebounced, setPartialSearchDebounced] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setPartialSearchDebounced(partialSearch.trim()), 350);
+    return () => clearTimeout(t);
+  }, [partialSearch]);
+  useEffect(() => { setPartialPage(1); }, [partialSearchDebounced, partialStart, partialEnd]);
+  useEffect(() => { setPartialPendingPage(1); }, [partialSearch, partialStart, partialEnd]);
+  useEffect(() => { setLoanPage(1); }, [loanSearch, loanStart, loanEnd, loanTypeFilter]);
+  useEffect(() => { setPendPage(1); }, [pendSearch, pendStart, pendEnd]);
+  useEffect(() => { setPaidAbPage(1); }, [paidAbSearch, paidAbStart, paidAbEnd, paidAbStatus]);
+  const { data: fullPaged, isFetching: fullFetching } = useQuery<any>({
+    queryKey: ["/api/account/dollar-system/full-payments", fullPage, fullSearchDebounced, fullStart, fullEnd, fullTypeFilter],
+    queryFn: () => {
+      const q = new URLSearchParams({ page: String(fullPage), pageSize: String(FULL_PAGE_SIZE), type: fullTypeFilter });
+      if (fullSearchDebounced) q.set("search", fullSearchDebounced);
+      if (fullStart) q.set("start", fullStart);
+      if (fullEnd) q.set("end", fullEnd);
+      return apiRequestJson("GET", `/api/account/dollar-system/full-payments?${q.toString()}`);
+    },
+    placeholderData: (prev: any) => prev,
+  });
+  const fFull: any[] = fullPaged?.data || [];
+  const fullTotal = Number(fullPaged?.total || 0);
+  const fullTotalPages = Math.max(1, Math.ceil(fullTotal / FULL_PAGE_SIZE));
+  const fullAllCount = Number(fullPaged?.counts?.all || 0);
+  const ncFullCount = Number(fullPaged?.counts?.nc || 0);
+  const rcFullCount = Number(fullPaged?.counts?.rc || 0);
+  const ecFullCount = Number(fullPaged?.counts?.ec || 0);
 
-  const fFull = useMemo(() => {
-    const base = flt(fullPayments, fullSearch, fullStart, fullEnd);
-    if (fullTypeFilter === "all") return base;
-    if (fullTypeFilter === "Rc") return base.filter((p: any) => p.type === "Rc" || p.type === "Rc-Up");
-    return base.filter((p: any) => p.type === fullTypeFilter);
-  }, [fullPayments, fullSearch, fullStart, fullEnd, fullTypeFilter]);
-
-  // A Partial GM only moves into the "PARTIAL" tab once its installment
-  // collection is fully cleared (fullyPaid); until then it stays in the
-  // standalone "Partial Payment Received" section below.
-  const partialCleared = useMemo(() => partialPayments.filter((p: any) => p.fullyPaid), [partialPayments]);
+  const { data: partialClearedPaged, isFetching: partialClearedFetching } = useQuery<any>({
+    queryKey: ["/api/account/dollar-system/partial-payments", "cleared", partialPage, partialSearchDebounced, partialStart, partialEnd],
+    queryFn: () => {
+      const q = new URLSearchParams({ page: String(partialPage), pageSize: String(TABLE_PAGE_SIZE), mode: "cleared" });
+      if (partialSearchDebounced) q.set("search", partialSearchDebounced);
+      if (partialStart) q.set("start", partialStart);
+      if (partialEnd) q.set("end", partialEnd);
+      return apiRequestJson("GET", `/api/account/dollar-system/partial-payments?${q.toString()}`);
+    },
+    placeholderData: (prev: any) => prev,
+  });
+  const partialClearedTotal = Number(partialClearedPaged?.total ?? counts.partial ?? 0);
+  const fPartial: any[] =
+    partialClearedPaged?.data != null
+      ? partialClearedPaged.data
+      : (() => {
+          const cleared = partialPayments.filter((p: any) => p.fullyPaid);
+          return flt(cleared, partialSearch, partialStart, partialEnd);
+        })();
   const partialPending = useMemo(() => partialPayments.filter((p: any) => !p.fullyPaid), [partialPayments]);
-  const fPartial = useMemo(() => flt(partialCleared, partialSearch, partialStart, partialEnd), [partialCleared, partialSearch, partialStart, partialEnd]);
   const fPartialPending = useMemo(() => flt(partialPending, partialSearch, partialStart, partialEnd), [partialPending, partialSearch, partialStart, partialEnd]);
 
   const ncLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter((p: any)=>p.type==="New").length, [loans, loanSearch, loanStart, loanEnd]);
@@ -926,19 +1043,26 @@ export default function DollarSystem() {
   }, [loans, loanSearch, loanStart, loanEnd, loanTypeFilter]);
   const fPend    = useMemo(() => flt(pendingApprovals,pendSearch,    pendStart,    pendEnd),    [pendingApprovals,pendSearch,    pendStart,    pendEnd]);
 
-  const fullUsd  = useMemo(() => fFull.reduce((a: number, r: any) => a + Number(r.dollar||0), 0), [fFull]);
-  const fullPkr  = useMemo(() => fFull.reduce((a: number, r: any) => a + Number(r.pkr||0), 0),   [fFull]);
-  const partUsd  = useMemo(() => fPartial.reduce((a: number, r: any) => a + Number(r.dollar||0), 0), [fPartial]);
-  const partPkr  = useMemo(() => fPartial.reduce((a: number, r: any) => a + Number(r.pkr||0), 0),   [fPartial]);
+  const fullUsd  = Number(fullPaged?.totals?.usd || 0);
+  const fullPkr  = Number(fullPaged?.totals?.pkr || 0);
+  const partUsd  = Number(partialClearedPaged?.totals?.usd ?? fPartial.reduce((a: number, r: any) => a + Number(r.dollar||0), 0));
+  const partPkr  = Number(partialClearedPaged?.totals?.pkr ?? fPartial.reduce((a: number, r: any) => a + Number(r.pkr||0), 0));
   const partPendingUsd = useMemo(() => fPartialPending.reduce((a: number, r: any) => a + Number(r.dollar||0), 0), [fPartialPending]);
   const partPendingPkr = useMemo(() => fPartialPending.reduce((a: number, r: any) => a + Number(r.pkr||0), 0),   [fPartialPending]);
   const txItems  = useMemo(() => {
     const m: Record<string, any[]> = { balance: dts.balance?.items||[], buy: dts.buy?.items||[], sell: dts.sell?.items||[], martini: dts.martini?.items||[], notUsed: dts.notUsed?.items||[] };
     return m[activeTxTab] || [];
   }, [activeTxTab, dts]);
-  const TX_PAGE_SIZE = 4;
+  const TX_PAGE_SIZE = TABLE_PAGE_SIZE;
   const txTotalPages = Math.max(1, Math.ceil(txItems.length / TX_PAGE_SIZE));
-  const txPagedItems = useMemo(() => txItems.slice((txPage - 1) * TX_PAGE_SIZE, txPage * TX_PAGE_SIZE), [txItems, txPage]);
+  const txPagedItems = useMemo(() => paginate(txItems, txPage, TX_PAGE_SIZE), [txItems, txPage]);
+
+  const fPartialPagedClient = useMemo(() => paginate(fPartial, partialPage), [fPartial, partialPage]);
+  const fPartialPaged = partialClearedPaged?.data != null ? fPartial : fPartialPagedClient;
+  const fPartialPendingPaged = useMemo(() => paginate(fPartialPending, partialPendingPage), [fPartialPending, partialPendingPage]);
+  const fLoanPaged = useMemo(() => paginate(fLoan, loanPage), [fLoan, loanPage]);
+  const fPendPaged = useMemo(() => paginate(fPend, pendPage), [fPend, pendPage]);
+  const paidAlibabaPaged = useMemo(() => paginate(paidAlibabaRows, paidAbPage), [paidAlibabaRows, paidAbPage]);
 
   const fmt2 = (v: any) => Number(v||0).toFixed(2);
   const fmtN = (v: any) => Number(v||0).toLocaleString();
@@ -1031,6 +1155,7 @@ export default function DollarSystem() {
                     <option value="Show">Show</option>
                     <option value="Not Show">Not Show</option>
                     <option value="Refund">Refund</option>
+                    <option value="Not Used">Not Used</option>
                     {activeTxTab === "martini" && <option value="Move to Buy">Move to Buy</option>}
                     <option value="Canceled">Canceled</option>
                   </select>
@@ -1060,6 +1185,16 @@ export default function DollarSystem() {
                 <label className="font-bold text-gray-600 dark:text-zinc-400">DRM ID</label>
                 <input readOnly value={bvDetailItem.drmId || "-"} className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
               </div>
+              {bvDetailItem.source === "legacy" && (<>
+                <div className="space-y-1.5">
+                  <label className="font-bold text-gray-600 dark:text-zinc-400">table id</label>
+                  <input readOnly value={bvDetailItem.gmBvId || "-"} className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="font-bold text-gray-600 dark:text-zinc-400">GMID</label>
+                  <input readOnly value={bvDetailItem.legacyGmId || "-"} className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
+                </div>
+              </>)}
               <div className="flex flex-col gap-1.5">
                 <label className="font-bold text-gray-600 dark:text-zinc-400">Company Name</label>
                 <input readOnly value={bvDetailItem.company || "-"} className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
@@ -1778,10 +1913,20 @@ export default function DollarSystem() {
 
               {/* WALLETS CARD */}
               <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="p-4 font-bold text-gray-800 text-sm border-b uppercase dark:text-zinc-100 dark:border-zinc-800">Wallets</div>
+                <div className="p-4 font-bold text-gray-800 text-sm border-b uppercase dark:text-zinc-100 dark:border-zinc-800 flex items-center gap-2">
+                  Wallets
+                  {data?.legacyDollarTx ? (
+                    <span className="text-[9px] font-normal normal-case text-slate-500">(buying from legacy archive)</span>
+                  ) : null}
+                </div>
                 <div className="p-4 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] text-blue-400 font-bold">Available Balance</span>
+                  <div className="flex justify-between items-center gap-2">
+                    <div>
+                      <span className="text-[10px] text-blue-400 font-bold block">Available Balance</span>
+                      {ws.periodStart && ws.periodEnd ? (
+                        <span className="text-[9px] text-blue-400/80 font-bold">{ws.periodStart} – {ws.periodEnd}</span>
+                      ) : null}
+                    </div>
                     <div className="relative">
                       <select id="AccountdashHead" value={quarterFilter} onChange={e=>setQuarterFilter(e.target.value)} className="appearance-none border border-gray-200 rounded px-2 pr-6 py-0.5 text-[10px] font-bold text-gray-600 bg-white cursor-pointer dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-400 focus:outline-none">
                         <option value="CQ">Current Q</option>
@@ -1802,11 +1947,11 @@ export default function DollarSystem() {
                     <div className="text-right space-y-2">
                       <div>
                         <div className="text-[10px] text-gray-400 font-bold uppercase">Dollars Recovery</div>
-                        <a href="/account/recovery-payments" target="_blank" className="text-base font-[1000] text-gray-900 border-b-2 border-red-500 inline-block hover:text-red-500 dark:text-zinc-100">$ {fmt2(ws.dollarRecovered)}</a>
+                        <a href="/account/recovery-payments" target="_blank" className="text-base font-[1000] text-gray-900 border-b-2 border-red-500 inline-block hover:text-red-500 dark:text-zinc-100">$ {fmt2(ws.recoveryDollarsPending ?? ws.dollarRecovered)}</a>
                       </div>
                       <div>
                         <div className="text-[10px] text-gray-400 font-bold uppercase">Cash Recovery</div>
-                        <a href="/account/recovery-payments" target="_blank" className="text-base font-[1000] text-gray-900 hover:text-red-500 dark:text-zinc-100 block">PKR {fmt2(ws.cashRecovered)}</a>
+                        <a href="/account/recovery-payments" target="_blank" className="text-base font-[1000] text-gray-900 hover:text-red-500 dark:text-zinc-100 block">PKR {fmt2(ws.recoveryCashPending ?? ws.cashRecovered)}</a>
                       </div>
                       <div>
                         <div className="text-[10px] text-gray-400 font-bold uppercase">Partial Dollars Recovery</div>
@@ -1874,7 +2019,10 @@ export default function DollarSystem() {
                             <div className="text-[10px] font-black text-gray-800 uppercase truncate w-28 dark:text-zinc-100">{tx.name||"-"}</div>
                             <div className="text-[9px] text-gray-400 font-bold uppercase">{safeDate(tx.date, "dd MMM yyyy")}</div>
                             <div className="text-[9px] text-blue-400 font-medium italic truncate w-28">{tx.email||"-"}</div>
-                            {(activeTxTab==="balance"||activeTxTab==="martini") && tx.balanceStatus && tx.balanceStatus !== "Show" && (
+                            {tx.source === "legacy" && (
+                              <span className="inline-block mt-1 mr-1 text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Old DRM</span>
+                            )}
+                            {(activeTxTab==="balance"||activeTxTab==="martini"||activeTxTab==="notUsed") && tx.balanceStatus && tx.balanceStatus !== "Show" && (
                               <span className={cn("inline-block mt-1 text-[8px] font-black uppercase px-1.5 py-0.5 rounded",
                                 tx.balanceStatus==="Not Show" ? "bg-gray-400 text-white" : "bg-red-500 text-white"
                               )}>{tx.balanceStatus}</span>
@@ -1885,7 +2033,7 @@ export default function DollarSystem() {
                               <div className="text-[10px] font-black text-gray-800 dark:text-zinc-100">{tx.rate||"-"}</div>
                               <div className="text-[10px] font-black text-gray-800 dark:text-zinc-100">$ {tx.amount||"0"}</div>
                             </div>
-                            {(activeTxTab==="balance"||activeTxTab==="martini") && (
+                            {(activeTxTab==="balance"||activeTxTab==="martini"||activeTxTab==="notUsed") && tx.source !== "legacy" && (
                               <div className="flex items-center gap-1">
                                 <button
                                   type="button"
@@ -1895,6 +2043,7 @@ export default function DollarSystem() {
                                 >
                                   <Eye size={13} />
                                 </button>
+                                {activeTxTab !== "balance" && (
                                 <button
                                   type="button"
                                   title="Edit status (date)"
@@ -1904,6 +2053,7 @@ export default function DollarSystem() {
                                 >
                                   <Pencil size={12} />
                                 </button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1944,10 +2094,10 @@ export default function DollarSystem() {
                 <div className="p-4 border-b dark:border-zinc-800">
                   <div className="flex flex-wrap items-center gap-1">
                     {[
-                      {id:"full",          label:"Full "+(fullPayments.length||counts.full||0)},
-                      {id:"partial",       label:"Partial "+partialCleared.length},
+                      {id:"full",          label:"Full "+(fullPaged ? fullAllCount : (counts.full||0))},
+                      {id:"partial",       label:"Partial "+partialClearedTotal},
                       {id:"term",          label:"Tem Payment "+(counts.temp||0)},
-                      {id:"ab_liabilities",label:"AB Liabilities "+(Number(abLiabilities.fullOnlinePaidCount||0)+Number(abLiabilities.fullCashReceivedCount||0)+Number(abLiabilities.partialOnlinePaidCount||0)+Number(abLiabilities.partialCashReceivedCount||0))},
+                      {id:"ab_liabilities",label:"AB Liabilities "+(Number(abLiabilities.fullOnlinePaidCount||0)+Number(abLiabilities.fullCashReceivedCount||0)+Number(abLiabilities.partialOnlinePaidCount||0)+Number(abLiabilities.partialCashReceivedCount||0)+Number(abLiabilities.uncompletedPartialsCount||0)+Number(abLiabilities.vendorOutstandingCount||0))},
                     ].map(t => (
                       <Badge key={t.id} className={cn("px-4 py-2 text-[12px] font-black uppercase rounded-md shadow-none cursor-pointer transition-all border-none whitespace-nowrap",
                         activeTab===t.id?"bg-[#00a65a] text-white hover:bg-[#008d4c]":"bg-transparent text-gray-500 dark:text-slate-400 hover:bg-gray-100"
@@ -1963,7 +2113,7 @@ export default function DollarSystem() {
                     <div className="flex flex-wrap items-center justify-between gap-y-3">
                       <div>
                         <div className="text-xl font-[1000] text-gray-900 uppercase tracking-tighter flex items-center gap-3 dark:text-zinc-100">
-                          Full Payment Received <span className="text-red-500">{fFull.length}</span>
+                          Full Payment Received <span className="text-red-500">{fullTotal}</span>
                         </div>
                         <div className="flex items-center gap-1.5 text-[12px] font-[1000] tracking-tighter uppercase mt-1">
                           <button
@@ -1973,7 +2123,7 @@ export default function DollarSystem() {
                               fullTypeFilter === "all" ? "bg-gray-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-sm" : "text-gray-500 hover:text-gray-900 dark:text-zinc-400"
                             )}
                           >
-                            All ({flt(fullPayments, fullSearch, fullStart, fullEnd).length})
+                            All ({fullAllCount})
                           </button>
                           <button
                             type="button"
@@ -2024,8 +2174,8 @@ export default function DollarSystem() {
                       </div>
                     </div>
                     <FilterBar searchTerm={fullSearch} onSearch={setFullSearch} startDate={fullStart} onStart={setFullStart} endDate={fullEnd} onEnd={setFullEnd} onClear={()=>{setFullSearch("");setFullStart("");setFullEnd("");setFullTypeFilter("all");}} onExcel={()=>{}}/>
-                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fFull} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
-                    <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fFull.length} of {fullPayments.length} entries</div>
+                    <div className={cn("border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800", fullFetching && "opacity-60")}><PaymentTable items={fFull} rowOffset={(fullPage - 1) * FULL_PAGE_SIZE} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
+                    <TablePagination page={fullPage} total={fullTotal} onPageChange={setFullPage} pageSize={FULL_PAGE_SIZE} />
                   </div>
                   )}
 
@@ -2033,7 +2183,7 @@ export default function DollarSystem() {
                   {activeTab==="partial" && (
                   <div className="space-y-4 animate-in fade-in duration-300">
                     <div className="flex flex-wrap items-center justify-between gap-y-3">
-                      <div className="text-xl font-[1000] text-gray-900 uppercase tracking-tighter dark:text-zinc-100">Partial Full Payment Received <span className="text-red-500">{fPartial.length}</span></div>
+                      <div className="text-xl font-[1000] text-gray-900 uppercase tracking-tighter dark:text-zinc-100">Partial Full Payment Received <span className="text-red-500">{partialClearedTotal}</span></div>
                       <div className="flex flex-wrap gap-2">
                         {[
                           {l:"Cash Received",       u:partUsd, p:partPkr},
@@ -2052,8 +2202,8 @@ export default function DollarSystem() {
                       </div>
                     </div>
                     <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
-                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PartialPaymentReceivedTable items={fPartial} onViewInstallments={setInstallmentItem} onAttach={setAttachItem}/></div>
-                    <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartial.length} of {partialCleared.length} entries</div>
+                    <div className={cn("border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800", partialClearedFetching && "opacity-60")}><PartialPaymentReceivedTable items={fPartialPaged} rowOffset={(partialPage - 1) * TABLE_PAGE_SIZE} onViewInstallments={setInstallmentItem} onAttach={setAttachItem}/></div>
+                    <TablePagination page={partialPage} total={partialClearedTotal} onPageChange={setPartialPage} pageSize={TABLE_PAGE_SIZE} />
                   </div>
                   )}
 
@@ -2095,21 +2245,21 @@ export default function DollarSystem() {
                               rows:[
                                 {m:"Online Paid",    u:Number(abLiabilities.fullOnlinePaidUsd||0),   p:Number(abLiabilities.fullOnlinePaidPkr||0)},
                                 {m:"Cash Received",  u:Number(abLiabilities.fullCashReceivedUsd||0), p:Number(abLiabilities.fullCashReceivedPkr||0)},
-                                {m:"Extra Discount", u:0, p:0},
+                                {m:"Extra Discount", u:Number(abLiabilities.fullExtraDiscountUsd||0), p:Number(abLiabilities.fullExtraDiscountPkr||0)},
                               ]},
                             {t:"Partial Payment",
                               c:Number(abLiabilities.partialOnlinePaidCount||0)+Number(abLiabilities.partialCashReceivedCount||0),
                               rows:[
                                 {m:"Online Paid",                u:Number(abLiabilities.partialOnlinePaidUsd||0),   p:Number(abLiabilities.partialOnlinePaidPkr||0)},
                                 {m:"Cash Received",              u:Number(abLiabilities.partialCashReceivedUsd||0), p:Number(abLiabilities.partialCashReceivedPkr||0)},
-                                {m:"Installment Extra Discount", u:0, p:0},
+                                {m:"Installment Extra Discount", u:Number(abLiabilities.partialInstallmentExtraDiscountUsd||0), p:Number(abLiabilities.partialInstallmentExtraDiscountPkr||0)},
                               ]},
                             {t:"Uncompleted GM Partials",
                               c:Number(abLiabilities.uncompletedPartialsCount||0),
                               rows:[
                                 {m:"Online Paid",    u:Number(abLiabilities.uncompletedOnlinePaidUsd||0),   p:Number(abLiabilities.uncompletedOnlinePaidPkr||0)},
                                 {m:"Cash Received",  u:Number(abLiabilities.uncompletedCashReceivedUsd||0), p:Number(abLiabilities.uncompletedCashReceivedPkr||0)},
-                                {m:"Extra Discount", u:0, p:0},
+                                {m:"Extra Discount", u:Number(abLiabilities.uncompletedExtraDiscountUsd||0), p:Number(abLiabilities.uncompletedExtraDiscountPkr||0)},
                               ]},
                           ].map(s => s.rows.map((r,ri) => (
                             <TableRow key={s.t+ri} className="border-b border-gray-100 dark:border-zinc-800">
@@ -2124,17 +2274,17 @@ export default function DollarSystem() {
                           <TableRow className="border-b border-gray-100 dark:border-zinc-800">
                             <TableCell className="p-4 border-r text-gray-600 font-black dark:text-zinc-300">Dollar Vendor Outstanding</TableCell>
                             <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">-</TableCell>
-                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ 0.00</TableCell>
-                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr 0.00</TableCell>
+                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ {fmtU(Number(abLiabilities.vendorOutstandingUsd||0))}</TableCell>
+                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr {fmtU(Number(abLiabilities.vendorOutstandingPkr||0))}</TableCell>
                           </TableRow>
                           <TableRow className="bg-gray-50/50 dark:bg-zinc-900">
                             <TableCell className="p-4 border-r text-gray-700 font-black uppercase dark:text-zinc-400">Total</TableCell>
                             <TableCell className="p-4 border-r text-gray-500 font-black italic dark:text-zinc-400">All Payments</TableCell>
                             <TableCell className="p-4 border-r text-[#3c8dbc] text-lg font-[1000] dark:text-zinc-100">
-                              $ {fmtU(Number(abLiabilities.fullOnlinePaidUsd||0)+Number(abLiabilities.fullCashReceivedUsd||0)+Number(abLiabilities.partialOnlinePaidUsd||0)+Number(abLiabilities.partialCashReceivedUsd||0)+Number(abLiabilities.uncompletedOnlinePaidUsd||0)+Number(abLiabilities.uncompletedCashReceivedUsd||0))}
+                              $ {fmtU(Number(abLiabilities.fullOnlinePaidUsd||0)+Number(abLiabilities.fullCashReceivedUsd||0)+Number(abLiabilities.fullExtraDiscountUsd||0)+Number(abLiabilities.partialOnlinePaidUsd||0)+Number(abLiabilities.partialCashReceivedUsd||0)+Number(abLiabilities.partialInstallmentExtraDiscountUsd||0)+Number(abLiabilities.uncompletedOnlinePaidUsd||0)+Number(abLiabilities.uncompletedCashReceivedUsd||0)+Number(abLiabilities.uncompletedExtraDiscountUsd||0)+Number(abLiabilities.vendorOutstandingUsd||0))}
                             </TableCell>
                             <TableCell className="p-4 text-red-500 text-lg font-[1000]">
-                              Pkr {fmtU(Number(abLiabilities.fullOnlinePaidPkr||0)+Number(abLiabilities.fullCashReceivedPkr||0)+Number(abLiabilities.partialOnlinePaidPkr||0)+Number(abLiabilities.partialCashReceivedPkr||0)+Number(abLiabilities.uncompletedOnlinePaidPkr||0)+Number(abLiabilities.uncompletedCashReceivedPkr||0))}
+                              Pkr {fmtU(Number(abLiabilities.fullOnlinePaidPkr||0)+Number(abLiabilities.fullCashReceivedPkr||0)+Number(abLiabilities.fullExtraDiscountPkr||0)+Number(abLiabilities.partialOnlinePaidPkr||0)+Number(abLiabilities.partialCashReceivedPkr||0)+Number(abLiabilities.partialInstallmentExtraDiscountPkr||0)+Number(abLiabilities.uncompletedOnlinePaidPkr||0)+Number(abLiabilities.uncompletedCashReceivedPkr||0)+Number(abLiabilities.uncompletedExtraDiscountPkr||0)+Number(abLiabilities.vendorOutstandingPkr||0))}
                             </TableCell>
                           </TableRow>
                         </TableBody>
@@ -2198,8 +2348,8 @@ export default function DollarSystem() {
               </div>
             </div>
             <FilterBar searchTerm={loanSearch} onSearch={setLoanSearch} startDate={loanStart} onStart={setLoanStart} endDate={loanEnd} onEnd={setLoanEnd} onClear={()=>{setLoanSearch("");setLoanStart("");setLoanEnd("");}}/>
-            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fLoan} isLoan onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal} onViewInstallments={setLoanRepaymentItem}/></div>
-            <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fLoan.length} of {loans.length} entries</div>
+            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fLoanPaged} rowOffset={(loanPage - 1) * TABLE_PAGE_SIZE} isLoan onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal} onViewInstallments={setLoanRepaymentItem}/></div>
+            <TablePagination page={loanPage} total={fLoan.length} onPageChange={setLoanPage} />
           </div>
 
           {/* PARTIAL PAYMENT RECEIVED SECTION — full page width, not confined to the right column */}
@@ -2225,8 +2375,8 @@ export default function DollarSystem() {
             <div className="flex flex-wrap items-center gap-2">
               <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
             </div>
-            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PartialPaymentReceivedTable items={fPartialPending} onViewInstallments={setInstallmentItem} onAttach={setAttachItem}/></div>
-            <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartialPending.length} of {partialPending.length} entries</div>
+            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PartialPaymentReceivedTable items={fPartialPendingPaged} rowOffset={(partialPendingPage - 1) * TABLE_PAGE_SIZE} onViewInstallments={setInstallmentItem} onAttach={setAttachItem}/></div>
+            <TablePagination page={partialPendingPage} total={fPartialPending.length} onPageChange={setPartialPendingPage} />
           </div>
 
           {/* PENDING APPROVALS — full page width, not confined to the right column */}
@@ -2241,9 +2391,9 @@ export default function DollarSystem() {
                     <TableRow>{["#","Drm id","Company","Sale Person","Dollar","Pkr","Dollar Rate","Ab Disc","Extra Disc","Package","Type","Droupout","Status","Accountant","HOD","Action"].map(h=><TableHead key={h} className="p-3 px-3 border-r last:border-0">{h}</TableHead>)}</TableRow>
                   </TableHeader>
                   <TableBody className="bg-white dark:bg-zinc-900">
-                    {fPend.length > 0 ? fPend.map((tx,i) => (
-                      <TableRow key={i} className="hover:bg-rose-50/10 transition-colors">
-                        <TableCell className="p-3 border-r border-b font-bold text-gray-400">{i+1}</TableCell>
+                    {fPendPaged.length > 0 ? fPendPaged.map((tx,i) => (
+                      <TableRow key={tx.id ?? i} className="hover:bg-rose-50/10 transition-colors">
+                        <TableCell className="p-3 border-r border-b font-bold text-gray-400">{(pendPage - 1) * TABLE_PAGE_SIZE + i + 1}</TableCell>
                         <TableCell className="p-3 border-r border-b font-[1000] text-[#00a65a] italic uppercase dark:text-zinc-400">{tx.drmId}</TableCell>
                         <TableCell className="p-3 border-r border-b font-black uppercase text-gray-700 dark:text-zinc-400">{tx.company}</TableCell>
                         <TableCell className="p-3 border-r border-b font-bold italic text-gray-500 dark:text-zinc-400">{tx.salePerson}</TableCell>
@@ -2283,14 +2433,15 @@ export default function DollarSystem() {
                 </Table>
               </div>
             </div>
+            <TablePagination page={pendPage} total={fPend.length} onPageChange={setPendPage} />
           </div>
 
           {/* PAID ALIBABA — full page width, not confined to the right column */}
           <div className="bg-[#fbfcfd] border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 pb-10 dark:border-zinc-800 dark:bg-zinc-900">
             <div className="flex items-center gap-3 border-b border-gray-100 pb-3 dark:border-zinc-800">
-              <h2 className="text-[18px] font-[1000] text-gray-800 tracking-tighter uppercase whitespace-nowrap dark:text-zinc-100">Paid Alibaba</h2>
+              <h2 className="text-[18px] font-[1000] text-gray-800 tracking-tighter uppercase whitespace-nowrap dark:text-zinc-100">Paid Alibaba</h2><a href="/account/dollar-pay" target="_blank" rel="noopener noreferrer" title="Open Dollar Pay" className="flex items-center gap-2 hover:opacity-80 cursor-pointer">
               <span className="text-[24px] font-black text-green-500 leading-none">..</span>
-              <h2 className="text-[18px] font-[1000] text-[#00a65a] tracking-tighter uppercase leading-none dark:text-zinc-400">Partial Payments Paid To Alibaba</h2>
+              <h2 className="text-[18px] font-[1000] text-[#00a65a] tracking-tighter uppercase leading-none dark:text-zinc-400">Partial Payments Paid To Alibaba</h2></a>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-y-3">
               <div className="flex flex-wrap gap-2">
@@ -2306,6 +2457,21 @@ export default function DollarSystem() {
                 </button>
               </div>
             </div>
+            {/* Old Paid Alibaba header: quarter figures (pay_date in current quarter) + table totals */}
+            <div className="flex flex-col gap-2 mb-3">
+              <div className="flex flex-wrap gap-2 text-[11px] font-black">
+                <span className="px-3 py-1.5 rounded-full bg-red-500 text-white" title={paidAbQuarter ? `${paidAbQuarter.start} – ${paidAbQuarter.end}` : ""}>$ In Processing {fmt2(paidAbQuarter?.processing)}</span>
+                <span className="px-3 py-1.5 rounded-full bg-amber-400 text-white" title={paidAbQuarter ? `${paidAbQuarter.start} – ${paidAbQuarter.end}` : ""}>$ Extra Disc {fmt2(paidAbQuarter?.extraDisc)}</span>
+                <span className="px-3 py-1.5 rounded-full bg-emerald-500 text-white" title={paidAbQuarter ? `${paidAbQuarter.start} – ${paidAbQuarter.end}` : ""}>$ Paid {fmt2(paidAbQuarter?.paid)}</span>
+              </div>
+              <div className="flex flex-wrap gap-2 text-[11px] font-black">
+                <span className="px-3 py-1.5 rounded-full bg-emerald-500 text-white">$ Current Profit {fmt2(paidAbTotals.currentProfit)}</span>
+                <span className="px-3 py-1.5 rounded-full bg-red-500 text-white">$ Current Loss {fmt2(paidAbTotals.currentLoss)}</span>
+                <span className="px-3 py-1.5 rounded-full bg-emerald-500 text-white">$ Custom Profit {fmt2(paidAbTotals.cusProfit)}</span>
+                <span className="px-3 py-1.5 rounded-full bg-red-500 text-white">$ Custom Loss {fmt2(paidAbTotals.cusLoss)}</span>
+                <span className="px-3 py-1.5 rounded-full bg-amber-400 text-white">$ Extra Discount {fmt2(paidAbTotals.totalExDisc)}</span>
+              </div>
+            </div>
             <FilterBar searchTerm={paidAbSearch} onSearch={setPaidAbSearch} startDate={paidAbStart} onStart={setPaidAbStart} endDate={paidAbEnd} onEnd={setPaidAbEnd} onClear={()=>{setPaidAbSearch("");setPaidAbStart("");setPaidAbEnd("");setPaidAbStatus("all");}}/>
             <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800">
               <div style={{display:"block",width:"100%",overflowX:"auto"}} className="custom-scrollbar">
@@ -2318,13 +2484,17 @@ export default function DollarSystem() {
                     </tr>
                   </thead>
                   <tbody className="bg-white font-bold dark:bg-zinc-900">
-                    {paidAlibabaRows.length > 0 ? paidAlibabaRows.map((row: any) => {
+                    {paidAlibabaPaged.length > 0 ? paidAlibabaPaged.map((row: any) => {
                       const cusProfit = Number(row.cusProfit || 0);
                       const reportProfitLoss = Number(row.reportProfitLoss || 0);
                       return (
                         <tr key={row.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
                           <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">{safeDate(row.payDate, "MM/dd/yyyy")}</td>
-                          <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">{safeDate(row.gmBvDate, "MM/dd/yyyy")}</td>
+                          <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">
+                            {row.source === "legacy" && bvExpiring(row)
+                              ? <span className="px-1.5 py-0.5 rounded bg-red-500 text-white">{safeDate(row.gmBvDate, "MM/dd/yyyy")}</span>
+                              : safeDate(row.gmBvDate, "MM/dd/yyyy")}
+                          </td>
                           <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 overflow-hidden text-ellipsis">{row.drmId || "-"}</td>
                           <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400 overflow-hidden text-ellipsis">{row.memberId || "-"}</td>
                           <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400 overflow-hidden text-ellipsis">{row.orderId || "-"}</td>
@@ -2362,6 +2532,13 @@ export default function DollarSystem() {
                           </td>
                           <td className="p-2.5 text-center">
                             <div className="flex items-center justify-center gap-1.5">
+                              {row.source === "legacy" ? (
+                                bvExpiring(row) && row.gmBvId ? (
+                                  <button type="button" title="Company & BV Date Details" onClick={()=>openBvDetail(row)} className="w-6 h-6 rounded-full bg-[#f39c12] hover:bg-[#d97706] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer">
+                                    <Eye size={12} strokeWidth={2.8} />
+                                  </button>
+                                ) : <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Old DRM</span>
+                              ) : (<>
                               {row.payStatus !== "paid" && (
                                 <button type="button" title="Payment Verify" onClick={()=>{
                                   setVerifyItem(row);
@@ -2373,6 +2550,7 @@ export default function DollarSystem() {
                               <button type="button" title="Company & BV Date Details" onClick={()=>openBvDetail(row)} className="w-6 h-6 rounded-full bg-[#f39c12] hover:bg-[#d97706] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer">
                                 <Eye size={12} strokeWidth={2.8} />
                               </button>
+                              </>)}
                             </div>
                           </td>
                         </tr>
@@ -2384,6 +2562,7 @@ export default function DollarSystem() {
                 </table>
               </div>
             </div>
+            <TablePagination page={paidAbPage} total={paidAlibabaRows.length} onPageChange={setPaidAbPage} />
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-semibold text-gray-700 dark:text-zinc-300 py-2 border-t border-gray-100 dark:border-zinc-800">
               <div className="flex items-center gap-1.5"><span>Total T-Dollar</span><Badge className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs font-bold">$ {fmt2(paidAbTotals.totalDollar)}</Badge></div>
               <div className="flex items-center gap-1.5"><span>Extra Disc</span><Badge className="bg-[#f6e8cc] text-[#a9730a] px-2 py-0.5 rounded text-xs font-bold">$ {fmt2(paidAbTotals.totalExDisc)}</Badge></div>

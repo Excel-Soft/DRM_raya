@@ -44,25 +44,49 @@ export interface DayTargetReport {
   tables: DayTargetUserTable[];
 }
 
-async function methodCountsFor(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<DayTargetMethodRow[]> {
-  const conditions = ["coalesce(f.is_deleted, false) = false", "f.created_at >= $1", "f.created_at <= $2"];
+// Old DRM activity comes from its own daily counter (legacy_archive.webxl_day_book:
+// SUM(followup) per method, by `date`, exactly like the old report); follow-ups
+// created in this app are counted from drm.follow_ups. Follow-ups copied from the
+// old DRM (webxl_followup) are skipped there, as the day book already covers them.
+async function methodCountsFor(userIds: string[] | null, fromDate: Date, toDate: Date, startDateStr: string, endDateStr: string): Promise<DayTargetMethodRow[]> {
+  const conditions = ["coalesce(f.is_deleted, false) = false", "f.created_at >= $1", "f.created_at <= $2",
+    `NOT EXISTS (SELECT 1 FROM migration_meta.migration_legacy_ids lm
+                  WHERE lm.modern_table = 'follow_ups' AND lm.modern_id = f.id::text)`];
   const params: any[] = [fromDate, toDate];
+  const legacyConds = ["b.date >= $1", "b.date <= $2"];
+  const legacyParams: any[] = [startDateStr.slice(0, 10), endDateStr.slice(0, 10)];
   if (userIds) {
     conditions.push(`f.assigned_to = ANY($3::uuid[])`);
     params.push(userIds);
+    legacyConds.push(`b.user_id IN (SELECT m.legacy_id FROM migration_meta.migration_legacy_ids m
+                                     WHERE m.modern_table = 'users' AND m.legacy_table = 'webxl_user'
+                                       AND m.modern_id = ANY($3::text[]))`);
+    legacyParams.push(userIds);
   }
-  const result = await pool.query<{ method: string | null; total: string }>(
-    `SELECT COALESCE(d.method, f.method) AS method, count(*)::int AS total
-       FROM drm.follow_ups f
-       LEFT JOIN drm.followup_subservice_details d ON d.followup_id = f.id
-      WHERE ${conditions.join(" AND ")}
-      GROUP BY COALESCE(d.method, f.method)
-      ORDER BY total DESC`,
-    params,
-  );
-  return result.rows
-    .filter((r) => r.method)
-    .map((r) => ({ method: r.method as string, total: Number(r.total) }));
+  const [modern, legacy] = await Promise.all([
+    pool.query<{ method: string | null; total: string }>(
+      `SELECT COALESCE(d.method, f.method) AS method, count(*)::int AS total
+         FROM drm.follow_ups f
+         LEFT JOIN drm.followup_subservice_details d ON d.followup_id = f.id
+        WHERE ${conditions.join(" AND ")}
+        GROUP BY COALESCE(d.method, f.method)`,
+      params,
+    ),
+    pool.query<{ method: string | null; total: string }>(
+      `SELECT btrim(b.method) AS method,
+              sum(coalesce(nullif(regexp_replace(coalesce(b.followup, ''), '[^0-9]', '', 'g'), '')::int, 0))::int AS total
+         FROM legacy_archive.webxl_day_book b
+        WHERE ${legacyConds.join(" AND ")}
+        GROUP BY btrim(b.method)`,
+      legacyParams,
+    ),
+  ]);
+  const totals = new Map<string, number>();
+  for (const r of [...legacy.rows, ...modern.rows]) {
+    if (!r.method) continue;
+    totals.set(r.method, (totals.get(r.method) || 0) + Number(r.total));
+  }
+  return Array.from(totals, ([method, total]) => ({ method, total })).sort((x, y) => y.total - x.total);
 }
 
 export async function getDayTargetReport(query: DayTargetQuery): Promise<DayTargetReport> {
@@ -72,7 +96,7 @@ export async function getDayTargetReport(query: DayTargetQuery): Promise<DayTarg
   // Unrestricted scope (global admin/hr with no specific user chosen) —
   // aggregate across everyone into a single "All" table.
   if (filterUserIds === null) {
-    const rows = await methodCountsFor(null, fromDate, toDate);
+    const rows = await methodCountsFor(null, fromDate, toDate, startDateStr, endDateStr);
     return { filters, tables: [{ userId: null, userName: "All", rows }] };
   }
 
@@ -87,7 +111,7 @@ export async function getDayTargetReport(query: DayTargetQuery): Promise<DayTarg
       `SELECT full_name FROM drm.users WHERE id = $1`,
       [id],
     );
-    const rows = await methodCountsFor([id], fromDate, toDate);
+    const rows = await methodCountsFor([id], fromDate, toDate, startDateStr, endDateStr);
     return { filters, tables: [{ userId: id, userName: nameRes.rows[0]?.full_name ?? "Unknown", rows }] };
   }
 
@@ -99,7 +123,7 @@ export async function getDayTargetReport(query: DayTargetQuery): Promise<DayTarg
   );
   const tables: DayTargetUserTable[] = [];
   for (const u of usersRes.rows) {
-    const rows = await methodCountsFor([u.id], fromDate, toDate);
+    const rows = await methodCountsFor([u.id], fromDate, toDate, startDateStr, endDateStr);
     tables.push({ userId: u.id, userName: u.full_name ?? "Unknown", rows });
   }
   return { filters, tables };

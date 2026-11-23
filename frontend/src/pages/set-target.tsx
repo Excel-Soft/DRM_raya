@@ -5,12 +5,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Pencil, Trash2, Loader2 } from "lucide-react";
+import { Pencil, Trash2, Loader2, Check, X } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, extractApiError } from "@/lib/queryClient";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 export default function SetTarget() {
   const [activeTab, setActiveTab] = useState<"user" | "role" | "same">("user");
@@ -218,6 +219,62 @@ export default function SetTarget() {
     deleteUserTargetMutation.mutate(id);
   };
 
+  // ---- Target Details table: search + pagination (client-side) -------------
+  const [listSearch, setListSearch] = useState("");
+  const [listPageSize, setListPageSize] = useState("10");
+  const [listPage, setListPage] = useState(1);
+  const filteredUserTargets = (() => {
+    const q = listSearch.trim().toLowerCase();
+    if (!q) return userTargets;
+    return userTargets.filter((row: any) =>
+      [row.userName, row.targetName, row.category]
+        .filter(Boolean)
+        .some((v: any) => String(v).toLowerCase().includes(q)),
+    );
+  })();
+  const listLimit = Number(listPageSize) || 10;
+  const listTotalPages = Math.max(1, Math.ceil(filteredUserTargets.length / listLimit));
+  const listCurrentPage = Math.min(listPage, listTotalPages);
+  const pagedUserTargets = filteredUserTargets.slice((listCurrentPage - 1) * listLimit, listCurrentPage * listLimit);
+  const listFirstRow = filteredUserTargets.length === 0 ? 0 : (listCurrentPage - 1) * listLimit + 1;
+  const listLastRow = (listCurrentPage - 1) * listLimit + pagedUserTargets.length;
+  // Page buttons: 1 … (current-1, current, current+1) … last
+  const listPageButtons: (number | "gap")[] = [];
+  for (let p = 1; p <= listTotalPages; p++) {
+    if (p === 1 || p === listTotalPages || Math.abs(p - listCurrentPage) <= 1) listPageButtons.push(p);
+    else if (listPageButtons[listPageButtons.length - 1] !== "gap") listPageButtons.push("gap");
+  }
+
+  // Inline "Target" number edit (legacy: click the dashed number -> input + ✓/✗).
+  const [inlineTargetId, setInlineTargetId] = useState<number | null>(null);
+  const [inlineTargetValue, setInlineTargetValue] = useState("");
+  const inlineTargetMutation = useMutation({
+    mutationFn: async (vars: { id: number; target: string }) => {
+      const res = await apiRequest("PATCH", `/api/target-system/user-targets/${vars.id}`, { target: vars.target });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(extractApiError(body, res.status));
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/target-system/user-targets"] });
+      toast({ title: "Target updated" });
+      setInlineTargetId(null);
+    },
+    onError: (error: any) => {
+      toast({ title: error.message || "Failed to update target.", variant: "destructive" });
+    },
+  });
+  const saveInlineTarget = () => {
+    if (inlineTargetId === null) return;
+    const v = inlineTargetValue.trim();
+    if (!/^\d+(\.\d+)?$/.test(v)) {
+      toast({ title: "Target must be a number", variant: "destructive" });
+      return;
+    }
+    inlineTargetMutation.mutate({ id: inlineTargetId, target: v });
+  };
+
   const toDateInputValue = (value: any) => (value ? new Date(value).toISOString().slice(0, 10) : "");
 
   const [editTarget, setEditTarget] = useState<any | null>(null);
@@ -279,15 +336,21 @@ export default function SetTarget() {
   const [sameTargetEndDate, setSameTargetEndDate] = useState("2026-06-30");
 
   const assignSameTargetMutation = useMutation({
-    mutationFn: async (data: { targetIds: number[], startDate: string, endDate: string }) => {
-      const res = await apiRequest("PUT", "/api/target-system/user-targets/bulk-dates", data);
+    // Legacy behaviour: copy last quarter's assignments as NEW rows with these
+    // dates (existing assignments are never overwritten).
+    mutationFn: async (data: { startDate: string, endDate: string }) => {
+      const res = await apiRequest("POST", "/api/target-system/user-targets/copy-last-quarter", data);
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(extractApiError(body, res.status));
-      return body;
+      return body as { copied: number; from: { start: string; end: string } };
     },
-    onSuccess: () => {
+    onSuccess: (body) => {
       queryClient.invalidateQueries({ queryKey: ["/api/target-system/user-targets"] });
-      toast({ title: "Targets successfully updated with the new timeframe!" });
+      toast({
+        title: body.copied > 0
+          ? `${body.copied} targets from last quarter (${body.from.start} to ${body.from.end}) assigned for the new dates.`
+          : `No targets found in last quarter (${body.from.start} to ${body.from.end}).`,
+      });
     },
     onError: (error: any) => {
       toast({ title: error.message || "Failed to update targets.", variant: "destructive" });
@@ -300,13 +363,7 @@ export default function SetTarget() {
       return;
     }
 
-    if (userTargets.length === 0) {
-      toast({ title: "No targets to update.", variant: "destructive" });
-      return;
-    }
-
-    const targetIds = userTargets.map(t => t.id);
-    assignSameTargetMutation.mutate({ targetIds, startDate: sameTargetStartDate, endDate: sameTargetEndDate });
+    assignSameTargetMutation.mutate({ startDate: sameTargetStartDate, endDate: sameTargetEndDate });
   };
 
   return (
@@ -368,19 +425,15 @@ export default function SetTarget() {
             <div className="mb-6">
               <div className="mb-4 max-w-md">
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">User</label>
-                <Select value={selectedUser} onValueChange={setSelectedUser}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Choose .." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Choose ..</SelectItem>
-                    {usersData.map((u: any) => (
-                      <SelectItem key={u.id} value={u.id}>
-                        {u.fullName || u.username} ({u.role})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  grouped={false}
+                  users={usersData}
+                  value={selectedUser}
+                  onChange={setSelectedUser}
+                  extraOptions={[{ value: "none", label: "Choose .." }]}
+                  placeholder="Choose .."
+                  className="h-9"
+                />
               </div>
               <Button 
                 className="bg-[#00a65a] hover:bg-[#008d4c] px-8 mb-6" 
@@ -633,7 +686,7 @@ export default function SetTarget() {
             <div className="flex justify-between items-center">
               <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-zinc-300">
                 <span>Show</span>
-                <Select defaultValue="10">
+                <Select value={listPageSize} onValueChange={(v) => { setListPageSize(v); setListPage(1); }}>
                   <SelectTrigger className="w-[70px] h-8">
                     <SelectValue />
                   </SelectTrigger>
@@ -647,7 +700,11 @@ export default function SetTarget() {
               </div>
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-600 dark:text-zinc-300">Search:</span>
-                <Input className="h-8 w-48" />
+                <Input
+                  className="h-8 w-48"
+                  value={listSearch}
+                  onChange={(e) => { setListSearch(e.target.value); setListPage(1); }}
+                />
               </div>
             </div>
           </div>
@@ -680,13 +737,57 @@ export default function SetTarget() {
                       Loading live data...
                     </TableCell>
                   </TableRow>
-                ) : userTargets.length > 0 ? (
-                  userTargets.map((row, index) => (
+                ) : pagedUserTargets.length > 0 ? (
+                  pagedUserTargets.map((row: any, index: number) => (
                     <TableRow key={row.id}>
-                      <TableCell className="text-center font-medium">{index + 1}</TableCell>
-                      <TableCell className="text-sm">{row.targetName}</TableCell>
+                      <TableCell className="text-center font-medium">{listFirstRow + index}</TableCell>
+                      <TableCell className="text-sm">
+                        {row.userName && <div className="text-gray-800 dark:text-zinc-200">{row.userName}</div>}
+                        <div className={row.userName ? "text-gray-500 dark:text-zinc-400" : ""}>{row.targetName}</div>
+                      </TableCell>
                       <TableCell className="text-center">{row.category}</TableCell>
-                      <TableCell className="text-center text-[#00a65a] underline decoration-dashed cursor-pointer dark:text-zinc-400">{row.target}</TableCell>
+                      <TableCell className="text-center">
+                        {inlineTargetId === row.id ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <Input
+                              autoFocus
+                              className="h-8 w-24"
+                              value={inlineTargetValue}
+                              onChange={(e) => setInlineTargetValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveInlineTarget();
+                                if (e.key === "Escape") setInlineTargetId(null);
+                              }}
+                            />
+                            <Button
+                              size="sm"
+                              className="h-8 w-8 p-0 bg-[#00a65a] hover:bg-[#008d4c]"
+                              onClick={saveInlineTarget}
+                              disabled={inlineTargetMutation.isPending}
+                              title="Save"
+                            >
+                              <Check className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              className="h-8 w-8 p-0"
+                              onClick={() => setInlineTargetId(null)}
+                              title="Cancel"
+                            >
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <span
+                            className="text-[#00a65a] underline decoration-dashed cursor-pointer dark:text-zinc-400"
+                            onClick={() => { setInlineTargetId(row.id); setInlineTargetValue(String(row.target ?? "")); }}
+                            title="Click to edit target"
+                          >
+                            {row.target}
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-center">{Number(row.price)}</TableCell>
                       <TableCell className="text-center">{Number(row.maxPrice)}</TableCell>
                       {/* func.php's own view handler shows the conversion value here,
@@ -713,7 +814,7 @@ export default function SetTarget() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={15} className="text-center py-6 text-gray-500 dark:text-zinc-400">
-                      No targets available.
+                      {listSearch ? "No targets match your search." : "No targets available."}
                     </TableCell>
                   </TableRow>
                 )}
@@ -721,12 +822,41 @@ export default function SetTarget() {
             </Table>
           </div>
 
-          <div className="p-4 flex items-center justify-between border-t text-sm text-gray-600 dark:text-zinc-300">
-            <div>Showing 1 to 6 of 6 entries</div>
-            <div className="flex space-x-1">
-              <Button variant="outline" className="h-8 px-3 text-gray-500 bg-gray-50 dark:bg-zinc-900 dark:text-zinc-400">Previous</Button>
-              <Button variant="default" className="h-8 w-8 p-0 bg-[#00a65a] hover:bg-[#008d4c]">1</Button>
-              <Button variant="outline" className="h-8 px-3">Next</Button>
+          <div className="p-4 flex flex-wrap gap-2 items-center justify-between border-t text-sm text-gray-600 dark:text-zinc-300">
+            <div>
+              Showing {listFirstRow} to {listLastRow} of {filteredUserTargets.length.toLocaleString()} entries
+            </div>
+            <div className="flex flex-wrap gap-1">
+              <Button
+                variant="outline"
+                className="h-8 px-3"
+                disabled={listCurrentPage <= 1}
+                onClick={() => setListPage(Math.max(1, listCurrentPage - 1))}
+              >
+                Previous
+              </Button>
+              {listPageButtons.map((p, i) =>
+                p === "gap" ? (
+                  <span key={`gap-${i}`} className="h-8 px-2 flex items-center">…</span>
+                ) : (
+                  <Button
+                    key={p}
+                    variant={p === listCurrentPage ? "default" : "outline"}
+                    className={p === listCurrentPage ? "h-8 min-w-8 px-2 bg-[#00a65a] hover:bg-[#008d4c]" : "h-8 min-w-8 px-2"}
+                    onClick={() => setListPage(p)}
+                  >
+                    {p}
+                  </Button>
+                ),
+              )}
+              <Button
+                variant="outline"
+                className="h-8 px-3"
+                disabled={listCurrentPage >= listTotalPages}
+                onClick={() => setListPage(Math.min(listTotalPages, listCurrentPage + 1))}
+              >
+                Next
+              </Button>
             </div>
           </div>
         </CardContent>

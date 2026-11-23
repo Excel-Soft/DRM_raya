@@ -205,7 +205,26 @@ export default function PostingDataLinkReport() {
     return !!key && (duplicateLinkCounts.get(key) || 0) > 1;
   };
 
-  const duplicateCount = rows.filter((item: any) => isDuplicateLink(item.links)).length;
+  // Rows that share a URL with another row (a URL posted twice = 2 rows).
+  const duplicateRowCount = rows.filter((item: any) => isDuplicateLink(item.links)).length;
+  // Distinct URLs that repeat — legacy func.php formula, same number as the
+  // "Total Duplicate Links" summary (Actual Links = Total - this).
+  const duplicateLinkCount =
+    summary?.totalDuplicates ?? Array.from(duplicateLinkCounts.values()).filter((c) => c > 1).length;
+
+  // Pagination: 50 rows per page, back to page 1 on every new View.
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [fetchParams]);
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const pageRows = rows.slice(pageStart, pageStart + PAGE_SIZE);
+  const pageButtons: (number | "gap")[] = [];
+  for (let p = 1; p <= totalPages; p++) {
+    if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1) pageButtons.push(p);
+    else if (pageButtons[pageButtons.length - 1] !== "gap") pageButtons.push("gap");
+  }
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -295,10 +314,11 @@ export default function PostingDataLinkReport() {
       <Card className="border-none shadow-sm dark:bg-zinc-900 mt-6">
         <div className="p-4 border-b border-slate-100 dark:border-zinc-800 flex items-center justify-between">
           <h2 className="font-semibold text-slate-700 dark:text-zinc-300">List</h2>
-          {duplicateCount > 0 && (
+          {duplicateLinkCount > 0 && (
             <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-900/40">
               <AlertTriangle className="h-3.5 w-3.5" />
-              {duplicateCount} duplicate link{duplicateCount > 1 ? "s" : ""} detected
+              {duplicateLinkCount} duplicate link{duplicateLinkCount > 1 ? "s" : ""} detected
+              <span className="font-normal">({duplicateRowCount} rows)</span>
             </div>
           )}
         </div>
@@ -347,7 +367,9 @@ export default function PostingDataLinkReport() {
                     </td>
                   </tr>
                 ) : (
-                  rows.map((item, index) => (
+                  pageRows.map((item, i) => {
+                    const index = pageStart + i;
+                    return (
                     <tr
                       key={item.id}
                       className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/50 transition-colors"
@@ -410,11 +432,43 @@ export default function PostingDataLinkReport() {
                         )}
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
+
+          {!isLoading && rows.length > PAGE_SIZE && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-slate-100 dark:border-zinc-800 text-xs text-slate-500 dark:text-zinc-400">
+              <div>
+                Showing {pageStart + 1} to {pageStart + pageRows.length} of {rows.length.toLocaleString()} entries
+              </div>
+              <div className="flex flex-wrap gap-1">
+                <Button variant="outline" size="sm" className="h-8 px-3" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>
+                  Previous
+                </Button>
+                {pageButtons.map((p, i) =>
+                  p === "gap" ? (
+                    <span key={`gap-${i}`} className="h-8 px-2 flex items-center">…</span>
+                  ) : (
+                    <Button
+                      key={p}
+                      size="sm"
+                      variant={p === currentPage ? "default" : "outline"}
+                      className={p === currentPage ? "h-8 min-w-8 px-2 bg-[#00a65a] hover:bg-[#008d4c]" : "h-8 min-w-8 px-2"}
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </Button>
+                  ),
+                )}
+                <Button variant="outline" size="sm" className="h-8 px-3" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
 
           {fetchParams && !isLoading && (
             <div

@@ -1,6 +1,13 @@
 import type { Express } from "express";
 import { authMiddleware } from "../middleware/auth.middleware";
 import { pool } from "../db";
+import { sqlDepartmentFamilyIn } from "@shared/project-department-variants";
+
+function tasksInDepartmentFamily(taskColumnPrefix: string, family: "dnd" | "product_posting"): string {
+  return `${taskColumnPrefix}project_id::text IN (
+    SELECT p.id::text FROM drm.projects p WHERE ${sqlDepartmentFamilyIn("p.department_type", family)}
+  )`;
+}
 
 // Software Executive reuses these D&D Executive endpoints (same task-execution model),
 // but must only ever see SOFTWARE-department projects, never D&D's — previously it was
@@ -10,10 +17,28 @@ function resolveTaskFilter(user: any, userId: string, alias?: string) {
     const roles = user?.roles || [];
     const isTrueAdmin = roles.includes("admin") || roles.includes("super_admin") || user?.roleId === "admin";
     const isSoftware = roles.includes("software_executive") || user?.roleId === "software_executive";
+    const isPostingExec =
+        roles.includes("product_posting_executive") ||
+        roles.includes("posting_executive") ||
+        user?.roleId === "product_posting_executive" ||
+        user?.roleId === "posting_executive";
+    const isDdExec = roles.includes("dd_executive") || user?.roleId === "dd_executive";
     if (isTrueAdmin) return { filterSql: "true", queryParams: [] as any[] };
     if (isSoftware) {
         return {
             filterSql: `${col}assigned_to_user_id::text = $1::text and ${col}project_id in (select id from drm.projects where department_type = 'SOFTWARE')`,
+            queryParams: [userId] as any[],
+        };
+    }
+    if (isPostingExec) {
+        return {
+            filterSql: `${col}assigned_to_user_id::text = $1::text AND ${tasksInDepartmentFamily(col, "product_posting")}`,
+            queryParams: [userId] as any[],
+        };
+    }
+    if (isDdExec) {
+        return {
+            filterSql: `${col}assigned_to_user_id::text = $1::text AND ${tasksInDepartmentFamily(col, "dnd")}`,
             queryParams: [userId] as any[],
         };
     }
@@ -237,7 +262,7 @@ export function registerDdExecutiveRoutes(app: Express) {
 
             const { filterSql, queryParams } = resolveTaskFilter(user, userId, "t");
 
-            const period = (req.query.period as string) || "WK";
+            const period = (req.query.period as string) || "MO";
             let periodStartSql = "date_trunc('month', CURRENT_DATE)";
             if (period === "TD") periodStartSql = "CURRENT_DATE";
             else if (period === "WK") periodStartSql = "date_trunc('week', CURRENT_DATE)";
@@ -262,13 +287,66 @@ export function registerDdExecutiveRoutes(app: Express) {
                 ORDER BY t.updated_at DESC
             `, queryParams);
 
-            res.json(result.rows.map(row => ({
+            const legacyResult = await pool.query(
+                `
+                SELECT
+                    u.name as "userName",
+                    coalesce(nullif(trim(a.soft_task_cname), ''), 'Unknown') as "companyName",
+                    coalesce(nullif(trim(tl.task_name), ''), nullif(trim(a.soft_task_name), ''), '-') as "projectName",
+                    CASE
+                      WHEN lower(coalesce(a.stauts, '')) IN ('end', 'completed', 'done', 'finish', 'finished') THEN 'Completed'
+                      ELSE coalesce(nullif(trim(a.stauts), ''), 'Completed')
+                    END as status,
+                    coalesce(
+                      NULLIF(trim(a.last_update), '')::timestamptz,
+                      NULLIF(trim(a.assign_date), '')::timestamptz,
+                      now()
+                    ) as "updatedAt",
+                    0::int as "spentMinutes"
+                FROM legacy_archive.webxl_task_assign a
+                LEFT JOIN legacy_archive.webxl_tasks_list tl
+                  ON trim(tl._legacy_pk) = trim(a.task_id) OR trim(tl.id) = trim(a.task_id)
+                JOIN migration_meta.migration_legacy_ids um
+                  ON um.legacy_table = 'webxl_user'
+                 AND um.legacy_id = trim(a.user_id)
+                 AND um.modern_id::text = $1::text
+                LEFT JOIN drm.users u ON u.id = um.modern_id::uuid
+                WHERE lower(coalesce(a.stauts, '')) IN ('end', 'completed', 'done', 'finish', 'finished')
+                  AND coalesce(
+                        NULLIF(trim(a.last_update), '')::timestamptz,
+                        NULLIF(trim(a.assign_date), '')::timestamptz,
+                        now()
+                      ) >= ${periodStartSql}
+                ORDER BY 5 DESC
+                LIMIT 100
+                `,
+                [userId],
+            );
+
+            const mapRow = (row: {
+                userName?: string;
+                companyName?: string;
+                projectName?: string;
+                status?: string;
+                spentMinutes?: number;
+            }) => ({
                 name: row.userName?.charAt(0).toLowerCase() || "u",
                 company: row.companyName || "Unknown",
                 project: row.projectName || "-",
                 status: row.status,
-                spent: `${row.spentMinutes || 0} mins`
-            })));
+                spent: `${row.spentMinutes || 0} mins`,
+            });
+
+            const merged = [...result.rows, ...legacyResult.rows].map(mapRow);
+            const seen = new Set<string>();
+            const deduped = merged.filter((row) => {
+                const key = `${row.company}|${row.project}|${row.status}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+
+            res.json(deduped);
         } catch (error) {
             console.error("Error fetching monthly complete:", error);
             res.status(500).json({ error: "Failed to fetch monthly complete" });

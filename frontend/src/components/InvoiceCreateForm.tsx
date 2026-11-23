@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { isDepartmentAllowedFor, useDepartmentCodeNames } from "@/lib/department-access";
 import { getAuthHeader } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,44 +78,12 @@ export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCrea
         }
     });
 
+    // Codes like "LEGACY-2" (Sales Department) -> names; old numeric ids keep working too.
+    const deptCodeNamesForm = useDepartmentCodeNames();
     const isDepartmentAllowed = (userRole: string, allowedDeps: string[]) => {
-        const normalizedRole = (userRole || "").toLowerCase();
-        // Allow admin/manager overrides if needed, but for now strict check:
-        if (normalizedRole.includes('admin') || normalizedRole.includes('super_hod')) return true;
-        
-        if (!allowedDeps || allowedDeps.length === 0) return false;
-        
-        return allowedDeps.some(dep => {
-            let d = dep.toLowerCase();
-            d = d.replace(/^dep:/i, '');
-            // Map legacy IDs to the new string values for checking
-            const legacyMap: Record<string, string> = {
-                "13": "it",
-                "10": "dnd",
-                "8": "seo_smm",
-                "9": "product_posting",
-                "11": "software",
-                "12": "service",
-                "1": "sales",
-                "2": "accounts"
-            };
-            if (legacyMap[d]) d = legacyMap[d];
-
-            if (d === 'sales') return normalizedRole.includes('sales');
-            if (d === 'accounts') return normalizedRole.includes('account');
-            if (d === 'it') return normalizedRole === 'it_manager' || normalizedRole.includes('it');
-            if (d === 'software') return normalizedRole.includes('software');
-            if (d === 'dnd' || d === 'd&d') return normalizedRole.includes('dd') || normalizedRole.includes('dnd');
-            if (d === 'product_posting') return normalizedRole.includes('product_posting') || normalizedRole.includes('posting');
-            if (d === 'seo_smm') return normalizedRole.includes('seo') || normalizedRole.includes('smm');
-            if (d === 'service') return normalizedRole.includes('service');
-            if (d === 'marketing') return normalizedRole.includes('marketing');
-            if (d === 'lead') return normalizedRole.includes('lead');
-            if (d === 'qa') return normalizedRole.includes('qa');
-            if (d === 'reception') return normalizedRole.includes('reception');
-            if (d === 'verification') return normalizedRole.includes('verification');
-            return false;
-        });
+        const legacyIds: Record<string, string> = { "13": "IT Department", "10": "D&D Department", "8": "SEO/SMM Department", "9": "Product Posting", "11": "Software Department", "12": "Service Department", "1": "Sales Department", "2": "Accounts Department" };
+        const deps = (allowedDeps || []).map((d) => { const k = String(d).replace(/^dep:/i, ""); return legacyIds[k] ?? k; });
+        return isDepartmentAllowedFor(userRole, deps, deptCodeNamesForm);
     };
 
     const [items, setItems] = useState<InvoiceItem[]>([

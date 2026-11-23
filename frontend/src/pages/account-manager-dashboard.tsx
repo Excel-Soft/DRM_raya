@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeader } from "@/lib/queryClient";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import { GmApprovalCard } from "@/components/gm-approval-card";
@@ -88,6 +88,44 @@ import { InvoiceReceipt } from "@/components/invoice/InvoiceReceipt";
 import { format, isToday, isSameMonth } from "date-fns";
 import { AccountApprovalModal } from "@/components/account-approval-modal";
 
+function isInvoiceLockedForEdit(inv: { status?: string } | null | undefined): boolean {
+    const s = String(inv?.status ?? "").toLowerCase();
+    return s === "paid" || s === "approved";
+}
+
+function formatAccountPaymentMethod(raw: string | null | undefined): string {
+    if (!raw || !String(raw).trim()) return "-";
+    const key = String(raw).toLowerCase().replace(/[^a-z]/g, "");
+    const map: Record<string, string> = {
+        cash: "Cash",
+        banktransfer: "Bank Transfer",
+        banktransfar: "Bank Transfer",
+        creditcard: "Credit Card",
+        cheque: "Cheque",
+        check: "Cheque",
+        online: "Online",
+        free: "Free",
+        delay: "Delay",
+    };
+    return map[key] || raw;
+}
+
+function parseInvoiceMeta(inv: { notes?: string | null; paymentMethod?: string | null }) {
+    let receiptNumber = "";
+    let notePayment = "";
+    try {
+        if (inv.notes) {
+            const p = JSON.parse(inv.notes);
+            receiptNumber = p.receiptNumber || "";
+            notePayment = p.paymentMethod || "";
+        }
+    } catch { /* non-JSON notes */ }
+    return {
+        receiptNumber,
+        paymentMethod: inv.paymentMethod || notePayment,
+    };
+}
+
 const DASHBOARD_PAGE_SIZE = 10;
 const MONTHLY_TASK_PAGE_SIZE = 5;
 
@@ -101,6 +139,7 @@ export default function AccountManagerDashboard() {
     const [createProjectPage, setCreateProjectPage] = useState(1);
     const [invoicePage, setInvoicePage] = useState(1);
     const [createProjectOpen, setCreateProjectOpen] = useState(false);
+    const [projectSubmitting, setProjectSubmitting] = useState(false);
     const [selectedGm, setSelectedGm] = useState<any>(null);
     const [approvalModalOpen, setApprovalModalOpen] = useState(false);
     const [approvalGm, setApprovalGm] = useState<any>(null);
@@ -337,7 +376,14 @@ export default function AccountManagerDashboard() {
                 notes: newNotes,
                 paymentMethod: data.paymentMethod || "BankTransfer"
             });
-            if (!res.ok) throw new Error("Failed to update invoice");
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => ({}));
+                const msg =
+                    errBody?.error?.message ||
+                    (typeof errBody?.error === "string" ? errBody.error : "") ||
+                    "Failed to update invoice";
+                throw new Error(msg);
+            }
             return res.json();
         },
         onSuccess: () => {
@@ -352,21 +398,22 @@ export default function AccountManagerDashboard() {
     });
 
     const handleEditInvoiceClick = (inv: any) => {
+        if (isInvoiceLockedForEdit(inv)) {
+            toast({
+                title: "Cannot edit",
+                description: "Paid invoices are locked and cannot be changed.",
+                variant: "destructive",
+            });
+            return;
+        }
         setSelectedInvoice(inv);
-        let receiptNumber = "";
-        let paymentMethod = "";
-        try {
-            if (inv.notes) {
-                const parsed = JSON.parse(inv.notes);
-                receiptNumber = parsed.receiptNumber || "";
-                paymentMethod = parsed.paymentMethod || "";
-            }
-        } catch (e) { }
-
+        const meta = parseInvoiceMeta(inv);
         setInvoiceForm({
             status: inv.status || "Sent",
-            receiptNumber,
-            paymentMethod
+            receiptNumber: meta.receiptNumber,
+            paymentMethod: formatAccountPaymentMethod(meta.paymentMethod) === "-"
+                ? ""
+                : formatAccountPaymentMethod(meta.paymentMethod),
         });
         setEditInvoiceOpen(true);
     };
@@ -740,6 +787,8 @@ export default function AccountManagerDashboard() {
         onSuccess: (_, vars) => {
             queryClient.invalidateQueries({ queryKey: ["account-pending-quotations"] });
             queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+            queryClient.invalidateQueries({ queryKey: ["account-dashboard-invoices"] });
+            setCreateProjectOpen(false);
             toast({
                 title: vars.action === "approve" ? "Invoice Approved ✅" : "Invoice Rejected",
                 description: vars.action === "approve" ? "Invoice has been approved successfully." : "Invoice has been rejected.",
@@ -784,51 +833,60 @@ export default function AccountManagerDashboard() {
         && enteredApprovalPkr > 0
         && !meetsInvoiceProjectThreshold(enteredApprovalPkr, selectedInvoiceTotalPkr);
 
+    const isCreateProjectSaving =
+        projectSubmitting ||
+        processQuotationMutation.isPending ||
+        createProjectFromGmMutation.isPending;
+
     const handleSaveProject = async () => {
-        if (!selectedGm) return;
+        if (!selectedGm || isCreateProjectSaving) return;
 
         const action = projectForm.approvalStatus === 'rejected' ? 'reject' : 'approve';
-        let proofUrl = undefined;
+        let proofUrl: string | undefined;
 
-        if (projectForm.receiptImage) {
-            const formData = new FormData();
-            formData.append("file", projectForm.receiptImage);
-            formData.append("entryId", selectedGm.id); // hack for backend
-            try {
+        setProjectSubmitting(true);
+        try {
+            if (projectForm.receiptImage) {
+                const formData = new FormData();
+                formData.append("file", projectForm.receiptImage);
+                formData.append("entryId", selectedGm.id);
                 const res = await fetch("/api/account/dollar-system/attach", {
                     method: "POST",
+                    headers: getAuthHeader(),
+                    credentials: "include",
                     body: formData,
                 });
                 if (res.ok) {
                     const data = await res.json();
                     if (data.proofUrl) proofUrl = data.proofUrl;
                 }
-            } catch (err) {
-                console.error("Failed to upload receipt", err);
             }
-        }
 
-        if (selectedGm.entrySource === 'invoice') {
-            processQuotationMutation.mutate({
-                id: selectedGm.id,
-                action,
-                amount: projectForm.amount,
-                paymentMethod: projectForm.method,
-                receiptNumber: projectForm.receiptNumber,
-                receiptImage: proofUrl,
-                projectName: projectForm.name
-            });
-            setCreateProjectOpen(false);
-        } else {
-            createProjectFromGmMutation.mutate({
-                gmId: selectedGm.id,
-                projectName: projectForm.name,
-                dueAmount: Number(projectForm.due),
-                totalAmount: Number(projectForm.amount),
-                paymentMethod: projectForm.method,
-                approvalStatus: projectForm.approvalStatus,
-                proofUrl
-            });
+            if (selectedGm.entrySource === 'invoice') {
+                await processQuotationMutation.mutateAsync({
+                    id: selectedGm.id,
+                    action,
+                    amount: projectForm.amount,
+                    paymentMethod: projectForm.method,
+                    receiptNumber: projectForm.receiptNumber,
+                    receiptImage: proofUrl,
+                    projectName: projectForm.name,
+                });
+            } else {
+                await createProjectFromGmMutation.mutateAsync({
+                    gmId: selectedGm.id,
+                    projectName: projectForm.name,
+                    dueAmount: Number(projectForm.due),
+                    totalAmount: Number(projectForm.amount),
+                    paymentMethod: projectForm.method,
+                    approvalStatus: projectForm.approvalStatus,
+                    proofUrl,
+                });
+            }
+        } catch {
+            // mutate onError already shows toast
+        } finally {
+            setProjectSubmitting(false);
         }
     };
 
@@ -916,6 +974,20 @@ export default function AccountManagerDashboard() {
 
     // "Create Project" section: GM entries excluded. Pending tab uses the
     // pending-only API; All/Today/Monthly keep the broader list.
+    const isHodApprovedInvoice = (item: any) => {
+        const hs = String(item?.hodStatus ?? "").trim().toLowerCase();
+        if (hs) {
+            if (hs.includes("reject")) return false;
+            return hs.includes("approv") || hs === "done";
+        }
+        // Rows on this queue are HOD-approved except explicit pending_hod invoices.
+        const status = String(item?.saveStatus ?? "").trim().toUpperCase();
+        if (item?.source === "quotation" && status === "PENDING_ACCOUNT_MANAGER") return true;
+        if (item?.source === "product_posting" && (status === "PENDING_ACCOUNT" || status === "APPROVED")) return true;
+        if (item?.source === "standard_invoice" && status === "SENT") return true;
+        if (item?.source === "standard_invoice" && ["PAID", "APPROVED", "PARTIAL", "OVERDUE"].includes(status)) return true;
+        return false;
+    };
     const isAccountPendingInvoice = (item: any) => {
         const status = String(item?.saveStatus || "").trim();
         const statusUpper = status.toUpperCase();
@@ -1367,10 +1439,10 @@ export default function AccountManagerDashboard() {
                                                     </TableCell>
                                                     <TableCell className="text-center">
                                                         <div className="flex flex-col gap-1 items-center justify-center">
-                                                            {isAccountPendingInvoice(item) ? (
-                                                                <span className="text-amber-600 font-medium">Pending</span>
-                                                            ) : (
+                                                            {isHodApprovedInvoice(item) ? (
                                                                 <span className="text-emerald-600 font-medium">Approved</span>
+                                                            ) : (
+                                                                <span className="text-amber-600 font-medium">Pending</span>
                                                             )}
                                                         </div>
                                                     </TableCell>
@@ -1532,31 +1604,27 @@ export default function AccountManagerDashboard() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {invoicePagedItems.map((inv: any) => (
+                                    {invoicePagedItems.map((inv: any) => {
+                                        const meta = parseInvoiceMeta(inv);
+                                        const locked = isInvoiceLockedForEdit(inv);
+                                        return (
                                         <TableRow key={inv.id}>
                                             <TableCell className="font-medium">{inv.invoiceNumber}</TableCell>
-                                            <TableCell>
-                                                {(() => {
-                                                    try {
-                                                        const p = typeof inv.notes === 'string' ? JSON.parse(inv.notes) : (inv.notes || {});
-                                                        return p.receiptNumber || '-';
-                                                    } catch (e) { return '-'; }
-                                                })()}
-                                            </TableCell>
+                                            <TableCell>{meta.receiptNumber || "-"}</TableCell>
                                             <TableCell>{parseFloat(inv.total).toLocaleString()} {inv.currency || 'USD'}</TableCell>
-                                            <TableCell>
-                                                {(() => {
-                                                    try {
-                                                        const p = typeof inv.notes === 'string' ? JSON.parse(inv.notes) : (inv.notes || {});
-                                                        return p.paymentMethod || inv.paymentMethod || '-';
-                                                    } catch (e) { return inv.paymentMethod || '-'; }
-                                                })()}
-                                            </TableCell>
+                                            <TableCell>{formatAccountPaymentMethod(meta.paymentMethod)}</TableCell>
                                             <TableCell><Badge variant="outline" className={inv.status === 'Paid' ? 'border-emerald-500 text-emerald-600' : inv.status === 'Overdue' ? 'border-rose-500 text-rose-600' : 'border-amber-500 text-amber-600'}>{inv.status}</Badge></TableCell>
                                             <TableCell>{format(new Date(inv.issueDate), "MM/dd/yyyy hh:mm a")}</TableCell>
                                             <TableCell>
                                                 <div className="flex items-center gap-1">
-                                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:text-blue-600 hover:bg-blue-50" onClick={() => handleEditInvoiceClick(inv)}>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className={`h-8 w-8 ${locked ? "text-slate-300 cursor-not-allowed" : "text-blue-500 hover:text-blue-600 hover:bg-blue-50"}`}
+                                                        onClick={() => handleEditInvoiceClick(inv)}
+                                                        disabled={locked}
+                                                        title={locked ? "Paid invoices cannot be edited" : "Edit invoice"}
+                                                    >
                                                         <Edit className="h-4 w-4" />
                                                     </Button>
                                                     {(() => {
@@ -1576,8 +1644,8 @@ export default function AccountManagerDashboard() {
                                                 </div>
                                             </TableCell>
                                         </TableRow>
-                                    ))
-                                    }
+                                    );
+                                    })}
                                     {invoiceItems.length === 0 && (
                                         <TableRow>
                                             <TableCell colSpan={6} className="text-center text-slate-400 py-8">No invoices found</TableCell>
@@ -1821,7 +1889,13 @@ export default function AccountManagerDashboard() {
             </Dialog>
 
             {/* Create Project Modal */}
-            <Dialog open={createProjectOpen} onOpenChange={setCreateProjectOpen}>
+            <Dialog
+                open={createProjectOpen}
+                onOpenChange={(open) => {
+                    if (!open && isCreateProjectSaving) return;
+                    setCreateProjectOpen(open);
+                }}
+            >
                 <DialogContent className="sm:max-w-[550px] p-0 gap-0 rounded-xl overflow-hidden">
                     <DialogHeader className="p-6 pb-4 border-b">
                         <DialogTitle className="text-2xl font-semibold text-slate-800 flex items-center gap-2 dark:text-zinc-100">
@@ -1829,7 +1903,18 @@ export default function AccountManagerDashboard() {
                         </DialogTitle>
                         <DialogDescription className="sr-only">Create a new project entry</DialogDescription>
                     </DialogHeader>
-                    <div className="p-6 space-y-5">
+                    <div className="p-6 space-y-5 relative">
+                        {isCreateProjectSaving && (
+                            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-lg bg-white/85 backdrop-blur-[1px] dark:bg-zinc-950/85">
+                                <Loader2 className="h-9 w-9 animate-spin text-emerald-600" />
+                                <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
+                                    {projectForm.approvalStatus === "rejected"
+                                        ? "Rejecting invoice…"
+                                        : "Approving invoice & creating project…"}
+                                </p>
+                                <p className="text-xs text-muted-foreground">Please wait — do not close this window.</p>
+                            </div>
+                        )}
                         {/* Name & Due */}
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
@@ -1977,6 +2062,7 @@ export default function AccountManagerDashboard() {
                                 variant="outline"
                                 onClick={() => setCreateProjectOpen(false)}
                                 className="px-6 flex-1 sm:flex-none"
+                                disabled={isCreateProjectSaving}
                             >
                                 Close
                             </Button>
@@ -1987,11 +2073,16 @@ export default function AccountManagerDashboard() {
                                         : 'bg-emerald-600 hover:bg-emerald-700'
                                 }`}
                                 onClick={handleSaveProject}
-                                disabled={createProjectFromGmMutation.isPending || !selectedGm || selectedGm.status === 'Paid'}
+                                disabled={isCreateProjectSaving || !selectedGm || selectedGm.status === 'Paid'}
                             >
-                                {createProjectFromGmMutation.isPending
-                                    ? (projectForm.approvalStatus === 'rejected' ? "Rejecting..." : "Approving...")
-                                    : (projectForm.approvalStatus === 'rejected' ? "Reject" : "Approve")}
+                                {isCreateProjectSaving ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                        {projectForm.approvalStatus === 'rejected' ? "Rejecting…" : "Approving…"}
+                                    </>
+                                ) : (
+                                    projectForm.approvalStatus === 'rejected' ? "Reject" : "Approve"
+                                )}
                             </Button>
                         </div>
                     </DialogFooter>

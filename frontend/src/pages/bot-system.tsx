@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -25,12 +25,34 @@ type User = {
     email: string;
 };
 
+function BotBubble({ msg }: { msg: Message }) {
+    const isUser = msg.sender === "user";
+    return (
+        <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+            <div
+                className={`max-w-2xl px-4 py-3 rounded-lg ${isUser
+                    ? "bg-green-600 text-white"
+                    : "bg-white dark:bg-zinc-900 border text-gray-800 dark:text-slate-200"
+                    }`}
+            >
+                <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                <p
+                    className={`text-xs mt-1 ${isUser ? "text-green-100" : "text-gray-500 dark:text-slate-400"
+                        }`}
+                >
+                    {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </p>
+            </div>
+        </div>
+    );
+}
+
 export default function BotSystem() {
     const { toast } = useToast();
     const [message, setMessage] = useState("");
     const [messages, setMessages] = useState<Message[]>([]);
+    const [booted, setBooted] = useState(false);
 
-    // Fetch current user data
     const { data: user } = useQuery<User>({
         queryKey: ["/api/me/profile"],
         queryFn: async () => {
@@ -39,42 +61,66 @@ export default function BotSystem() {
         },
     });
 
-    // Send message mutation
     const sendMutation = useMutation({
         mutationFn: async (text: string) => {
-            return apiRequest("POST", "/api/bot/send-message", { message: text });
-        },
-        onSuccess: (response) => {
-            // Add user message
-            const userMsg: Message = {
-                id: Date.now().toString(),
-                text: message,
-                sender: "user",
-                timestamp: new Date(),
-            };
-            setMessages((prev) => [...prev, userMsg]);
-            setMessage("");
-
-            // Simulate bot response (in production, this would come from the API)
-            setTimeout(() => {
-                const botMsg: Message = {
-                    id: (Date.now() + 1).toString(),
-                    text: "Message received. How can I help you?",
-                    sender: "bot",
-                    timestamp: new Date(),
-                };
-                setMessages((prev) => [...prev, botMsg]);
-            }, 500);
-        },
-        onError: () => {
-            toast({ title: "Failed to send message", variant: "destructive" });
+            const res = await apiRequest("POST", "/api/bot/send-message", { message: text });
+            const body = await res.json();
+            if (!res.ok) throw new Error(body.error || "Bot request failed");
+            return body as { response: string };
         },
     });
 
-    const handleSend = () => {
-        if (!message.trim()) return;
-        sendMutation.mutate(message);
+    const pushBot = (text: string) => {
+        setMessages((prev) => [
+            ...prev,
+            {
+                id: `bot-${Date.now()}`,
+                text,
+                sender: "bot",
+                timestamp: new Date(),
+            },
+        ]);
     };
+
+    const pushUser = (text: string) => {
+        setMessages((prev) => [
+            ...prev,
+            {
+                id: `user-${Date.now()}`,
+                text,
+                sender: "user",
+                timestamp: new Date(),
+            },
+        ]);
+    };
+
+    useEffect(() => {
+        if (booted) return;
+        setBooted(true);
+        sendMutation
+            .mutateAsync("Hello")
+            .then((data) => pushBot(data.response))
+            .catch(() => {
+                pushBot("Chat Bot\n\nType Hi or Hello for commands.");
+            });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [booted]);
+
+    const sendText = async (text: string) => {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        pushUser(trimmed);
+        setMessage("");
+        try {
+            const data = await sendMutation.mutateAsync(trimmed);
+            pushBot(data.response);
+        } catch (e: unknown) {
+            const err = e instanceof Error ? e.message : "Failed to reach bot";
+            toast({ title: "Bot error", description: err, variant: "destructive" });
+        }
+    };
+
+    const handleSend = () => sendText(message);
 
     const handleKeyPress = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -83,50 +129,22 @@ export default function BotSystem() {
         }
     };
 
-    const handleViewProfile = () => {
-        toast({ title: "View Profile clicked" });
-        // Navigate to profile or open profile modal
-    };
+    const handleGetCommands = () => sendText("Hello");
 
     const handleClearChat = () => {
         setMessages([]);
+        setBooted(false);
         toast({ title: "Chat cleared" });
-    };
-
-    const handleMuted = () => {
-        toast({ title: "Muted toggled" });
-        // Toggle mute functionality
-    };
-
-    const handleDelete = () => {
-        toast({ title: "Delete clicked", variant: "destructive" });
-        // Delete conversation
-    };
-
-    const handleGetCommands = () => {
-        const commandsMsg: Message = {
-            id: Date.now().toString(),
-            text: "Available commands:\n/help - Show help\n/clear - Clear chat\n/status - Check status",
-            sender: "bot",
-            timestamp: new Date(),
-        };
-        setMessages([commandsMsg]);
     };
 
     return (
         <div className="flex flex-col h-[calc(100vh-4rem)] bg-gray-50 dark:bg-zinc-900">
-            {/* Header */}
             <div className="bg-white border-b px-6 py-4 dark:bg-zinc-900">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <h1 className="text-sm font-semibold text-gray-800 uppercase tracking-wide dark:text-zinc-100">
-                            BOT SYSTEM
-                        </h1>
-                    </div>
-                </div>
+                <h1 className="text-sm font-semibold text-gray-800 uppercase tracking-wide dark:text-zinc-100">
+                    BOT SYSTEM
+                </h1>
             </div>
 
-            {/* User Info Bar */}
             <div className="bg-white border-b px-6 py-3 flex items-center justify-between dark:bg-zinc-900">
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-green-600 flex items-center justify-center text-white font-semibold">
@@ -144,119 +162,52 @@ export default function BotSystem() {
                             {user?.fullName || "Loading..."}
                         </p>
                         <p className="text-xs text-green-600 flex items-center gap-1">
-                            <span className="w-2 h-2 rounded-full bg-green-600"></span>
+                            <span className="w-2 h-2 rounded-full bg-green-600" />
                             Active now
                         </p>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-9 w-9">
-                                <Search className="h-4 w-4 text-gray-600 dark:text-zinc-300" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuItem>
-                                Action
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                                Another action
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                                Something else
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                    <Button variant="ghost" size="icon" className="h-9 w-9" type="button" onClick={handleGetCommands}>
+                        <Search className="h-4 w-4 text-gray-600 dark:text-zinc-300" />
+                    </Button>
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon" className="h-9 w-9">
                                 <Settings className="h-4 w-4 text-gray-600 dark:text-zinc-300" />
                             </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuItem onClick={handleViewProfile}>
-                                View Profile
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={handleClearChat}>
-                                Clear chat
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={handleMuted}>
-                                Muted
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={handleDelete} className="text-red-600">
-                                Delete
-                            </DropdownMenuItem>
+                        <DropdownMenuContent align="end" className="w-44">
+                            <DropdownMenuItem onClick={handleClearChat}>Clear chat</DropdownMenuItem>
+                            <DropdownMenuItem onClick={handleGetCommands}>Get commands</DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-9 w-9">
-                                <MoreVertical className="h-4 w-4 text-gray-600 dark:text-zinc-300" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuItem>
-                                Action
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                                Another action
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                                Something else
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                    <Button variant="ghost" size="icon" className="h-9 w-9" type="button" disabled>
+                        <MoreVertical className="h-4 w-4 text-gray-400" />
+                    </Button>
                 </div>
             </div>
 
-            {/* Messages Area */}
             <div className="flex-1 overflow-y-auto px-6 py-4">
                 {messages.length === 0 ? (
                     <div className="flex items-center justify-center h-full">
-                        <div className="text-center">
-                            <p
-                                className="text-red-500 text-sm cursor-pointer hover:underline"
-                                onClick={handleGetCommands}
-                            >
-                                Click Here To Get Commands
-                            </p>
-                        </div>
+                        <button
+                            type="button"
+                            className="text-red-500 text-sm hover:underline"
+                            onClick={handleGetCommands}
+                        >
+                            Click Here To Get Commands
+                        </button>
                     </div>
                 ) : (
                     <div className="space-y-4">
                         {messages.map((msg) => (
-                            <div
-                                key={msg.id}
-                                className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"
-                                    }`}
-                            >
-                                <div
-                                    className={`max-w-md px-4 py-2 rounded-lg ${msg.sender === "user"
-                                        ? "bg-green-600 text-white"
-                                        : "bg-white dark:bg-zinc-900 border text-gray-800 dark:text-slate-200"
-                                        }`}
-                                >
-                                    <p className="text-sm">{msg.text}</p>
-                                    <p
-                                        className={`text-xs mt-1 ${msg.sender === "user"
-                                            ? "text-green-100"
-                                            : "text-gray-500 dark:text-slate-400"
-                                            }`}
-                                    >
-                                        {msg.timestamp.toLocaleTimeString([], {
-                                            hour: "2-digit",
-                                            minute: "2-digit",
-                                        })}
-                                    </p>
-                                </div>
-                            </div>
+                            <BotBubble key={msg.id} msg={msg} />
                         ))}
                     </div>
                 )}
             </div>
 
-            {/* Input Area */}
             <div className="bg-white border-t px-6 py-4 dark:bg-zinc-900">
                 <div className="flex items-center gap-3">
                     <Input
@@ -265,6 +216,7 @@ export default function BotSystem() {
                         onKeyPress={handleKeyPress}
                         placeholder="Enter Message..."
                         className="flex-1 bg-gray-100 border-0 focus-visible:ring-0 focus-visible:ring-offset-0 dark:bg-zinc-900"
+                        disabled={sendMutation.isPending}
                     />
                     <Button
                         onClick={handleSend}
@@ -279,4 +231,3 @@ export default function BotSystem() {
         </div>
     );
 }
-

@@ -66,6 +66,9 @@ interface Notice {
   assignedByUserId: string;
   assignedToRole?: string;
   assignedToDepartment?: string;
+  assigneeLabel?: string;
+  assignedUserNames?: string | null;
+  legacyReadOnly?: boolean;
   assignedDate: string;
   createdAt: string;
   updatedAt: string;
@@ -78,6 +81,16 @@ const DEPARTMENTS = [
   "Sales", "IT", "HR", "Reception", "Accounts", 
   "QA", "Verification", "Project", "D&D", "Product Posting"
 ];
+
+function getNoticeAssigneeLabel(notice: Notice): string {
+  return (
+    notice.assigneeLabel?.trim() ||
+    notice.assignedUserNames?.trim() ||
+    notice.assignedToRole?.trim() ||
+    notice.assignedToDepartment?.trim() ||
+    "All Staff"
+  );
+}
 
 const ROLES_LIST = [
   { key: "admin", label: "Admin" },
@@ -263,8 +276,15 @@ export default function NoticeBoard() {
       const res = await apiRequest("POST", "/api/notice-board/assign", data);
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Success", description: "Notice assigned successfully" });
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/notice-board"] });
+      toast({
+        title: "Success",
+        description:
+          variables.userId === "all"
+            ? "Notice assigned to all staff"
+            : "Notice assigned successfully",
+      });
       setIsAssignModalOpen(false);
       setAssignNoticeId("");
       setAssignUserId("");
@@ -431,7 +451,7 @@ export default function NoticeBoard() {
                           <span className="text-[13px] font-bold text-slate-700 dark:text-zinc-400">{notice.title}</span>
                           <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                             <Users className="w-3 h-3" />
-                            {notice.assignedToRole || notice.assignedToDepartment || "All Staff"}
+                            {getNoticeAssigneeLabel(notice)}
                           </span>
                         </div>
                       </TableCell>
@@ -473,26 +493,30 @@ export default function NoticeBoard() {
                           >
                             <Eye className="w-4 h-4" />
                           </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-slate-400 hover:text-blue-600 hover:bg-blue-50"
-                            onClick={() => handleEdit(notice)}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50"
-                            onClick={() => {
-                              if (confirm("Are you sure you want to delete this notice?")) {
-                                deleteNoticeMutation.mutate(notice.id);
-                              }
-                            }}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {!notice.legacyReadOnly && (
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-slate-400 hover:text-blue-600 hover:bg-blue-50"
+                              onClick={() => handleEdit(notice)}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {!notice.legacyReadOnly && (
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                              onClick={() => {
+                                if (confirm("Are you sure you want to delete this notice?")) {
+                                  deleteNoticeMutation.mutate(notice.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -572,7 +596,7 @@ export default function NoticeBoard() {
                   onChange={handleNoticeSelect}
                   options={[
                     { id: "none", label: "Select Notice" },
-                    ...notices.map(n => ({ id: n.id, label: n.title }))
+                    ...notices.filter((n) => !n.legacyReadOnly).map((n) => ({ id: n.id, label: n.title }))
                   ]}
                 />
               </div>
@@ -582,10 +606,14 @@ export default function NoticeBoard() {
                   placeholder="Choose..."
                   value={assignUserId}
                   onChange={setAssignUserId}
-                  options={usersList.map((u: any) => ({ 
-                    id: u.id, 
-                    label: u.fullName || u.name || u.email 
-                  }))}
+                  options={[
+                    { id: "all", label: "All Staff" },
+                    // Disabled profiles (role 54 "Deactive") can't be assigned.
+                    ...usersList.filter((u: any) => !u.isDeactive).map((u: any) => ({
+                      id: u.id,
+                      label: u.fullName || u.name || u.email,
+                    })),
+                  ]}
                 />
               </div>
             </div>
@@ -646,7 +674,7 @@ export default function NoticeBoard() {
                     </div>
                     <div className="flex items-center gap-1 text-[12px] text-[#059669] font-bold dark:text-zinc-400">
                       <Users className="w-3.5 h-3.5" />
-                      {selectedNotice.assignedToRole || selectedNotice.assignedToDepartment || "All Staff"}
+                      {getNoticeAssigneeLabel(selectedNotice)}
                     </div>
                   </div>
                 </div>

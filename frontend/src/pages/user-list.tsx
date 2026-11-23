@@ -54,7 +54,14 @@ import {
     Plus,
     CheckCircle2,
     ChevronDown,
+    Eye,
+    EyeOff,
+    Settings,
+    CreditCard,
+    GraduationCap,
 } from "lucide-react";
+import Swal from "sweetalert2";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
 
 type User = {
     id: string;
@@ -66,7 +73,42 @@ type User = {
     phone?: string;
     status: string;
     createdAt: string;
+    // old-DRM listing columns (GET /api/users?withProfile=true)
+    fatherHusbandName?: string | null;
+    attendanceId?: string | null;
+    joinDate?: string | null;
+    netSalary?: number | null;
+    city?: string | null;
+    contactNo?: string | null;
+    address?: string | null;
+    picture?: string | null;
+    securityDoc?: string | null;
+    roleTitles?: { id: string; title: string }[];
+    isDeactive?: boolean;
 };
+
+const userPhotoUrl = (file: string) => `/api/legacy-assets/user-image?f=${encodeURIComponent(file)}`;
+
+function UserAvatar({ user }: { user: User }) {
+    const [failed, setFailed] = useState(false);
+    if (user.picture && !failed) {
+        return (
+            <img
+                src={userPhotoUrl(user.picture)}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                onError={() => setFailed(true)}
+                className="h-10 w-10 shrink-0 rounded-full object-cover border border-slate-200 dark:border-zinc-700"
+            />
+        );
+    }
+    return (
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-sm font-bold text-emerald-700 dark:bg-emerald-950/40">
+            {(user.fullName || "?").charAt(0).toUpperCase()}
+        </div>
+    );
+}
 
 const ROLES = [
     { value: "all", label: "All Roles" },
@@ -99,12 +141,11 @@ const ROLE_TYPES = [
 ];
 
 const INCREMENT_OPTIONS = [
-    { value: "none", label: "Select..." },
-    { value: "5", label: "5%" },
-    { value: "10", label: "10%" },
-    { value: "15", label: "15%" },
-    { value: "20", label: "20%" },
-    { value: "custom", label: "Custom" },
+    { value: "1 Year", label: "1 Year" },
+    { value: "2 Year", label: "2 Year" },
+    { value: "3 Year", label: "3 Year" },
+    { value: "4 Year", label: "4 Year" },
+    { value: "5 Year", label: "5 Year" },
 ];
 
 const ROLE_GROUPS = ROLE_TYPES.reduce((acc, role) => {
@@ -124,6 +165,12 @@ export default function UserList() {
     const [, setLocation] = useLocation();
     const [search, setSearch] = useState("");
     const [roleFilter, setRoleFilter] = useState("all");
+    // Old DRM: eye = active users, crossed eye = disabled (role 54 "Deactive") users.
+    const [showDisabled, setShowDisabled] = useState(false);
+    const [pageSize, setPageSize] = useState(10);
+    const [page, setPage] = useState(1);
+    const currentRole = (typeof window !== "undefined" ? sessionStorage.getItem("userRole") : "") || "";
+    const isAdmin = ["admin", "super_admin", "adm"].includes(currentRole.toLowerCase());
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [userToDelete, setUserToDelete] = useState<User | null>(null);
     const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -214,6 +261,7 @@ export default function UserList() {
             const params = new URLSearchParams();
             if (search) params.append("search", search);
             if (roleFilter && roleFilter !== "all") params.append("role", roleFilter);
+            params.append("withProfile", "true");
 
             const res = await apiRequest("GET", `/api/users?${params.toString()}`);
             const json = await res.json();
@@ -278,7 +326,8 @@ export default function UserList() {
     // Users available to add (not already in team, not the manager themselves)
     const teamMemberIds = new Set(teamMembers.map((m: any) => m.id));
     const availableToAdd = (users || []).filter(
-        (u) => u.id !== teamManager?.id && !teamMemberIds.has(u.id)
+        // Disabled profiles (role 54 "Deactive") can't be added to a team.
+        (u) => u.id !== teamManager?.id && !teamMemberIds.has(u.id) && !(u as any).isDeactive
     );
     const filteredAvailable = availableToAdd.filter((u) =>
         memberSearch === "" ||
@@ -298,7 +347,7 @@ export default function UserList() {
             setUserToDelete(null);
         },
         onError: () => {
-            toast({ title: "Failed to delete user", variant: "destructive" });
+            toast({ title: "Failed to delete user", description: "Only admin can delete users.", variant: "destructive" });
         },
     });
 
@@ -316,9 +365,22 @@ export default function UserList() {
         },
     });
 
-    const handleDeleteClick = (user: User) => {
-        setUserToDelete(user);
-        setDeleteDialogOpen(true);
+    const handleDeleteClick = async (user: User) => {
+        if (!isAdmin) return;
+        const result = await Swal.fire({
+            icon: "warning",
+            title: "Delete this user?",
+            html: `<b>${(user.fullName || "").replace(/</g, "&lt;")}</b><br/>This action is <b>not reversible</b>. Please do it carefully.`,
+            showCancelButton: true,
+            confirmButtonText: "Yes, delete",
+            cancelButtonText: "Cancel",
+            confirmButtonColor: "#dc2626",
+            focusCancel: true,
+        });
+        if (result.isConfirmed) {
+            setUserToDelete(user);
+            deleteMutation.mutate(user.id);
+        }
     };
 
     const handleEditClick = async (user: User) => {
@@ -409,8 +471,25 @@ export default function UserList() {
         },
     });
 
-    const handleUpdateUser = () => {
-        if (userToEdit) {
+    const handleUpdateUser = async () => {
+        if (!userToEdit) return;
+        const result = await Swal.fire({
+            icon: "warning",
+            title: "Save changes to this user?",
+            html: `<b>${(userToEdit.fullName || "").replace(/</g, "&lt;")}</b><br/>This action is <b>not reversible</b>. Please check the details carefully.`,
+            showCancelButton: true,
+            confirmButtonText: "Yes, save",
+            cancelButtonText: "Cancel",
+            confirmButtonColor: "#16a34a",
+            focusCancel: true,
+            // opened on top of the Radix edit dialog, which disables pointer events on <body>
+            didOpen: () => {
+                const c = Swal.getContainer();
+                if (c) c.style.pointerEvents = "auto";
+            },
+        });
+        if (!result.isConfirmed) return;
+        {
             updateMutation.mutate({
                 userId: userToEdit.id,
                 updates: {
@@ -428,132 +507,207 @@ export default function UserList() {
         return found?.label || role.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
     };
 
-    const filteredUsers = users || [];
+    const allListed = users || [];
+    const activeCount = allListed.filter((u) => !u.isDeactive).length;
+    const disabledCount = allListed.length - activeCount;
+    const filteredUsers = allListed.filter((u) => (showDisabled ? !!u.isDeactive : !u.isDeactive));
+    const totalPages = Math.max(1, Math.ceil(filteredUsers.length / pageSize));
+    const currentPage = Math.min(page, totalPages);
+    const pageStart = (currentPage - 1) * pageSize;
+    const pageUsers = filteredUsers.slice(pageStart, pageStart + pageSize);
+    const pageButtons: (number | "gap")[] = [];
+    for (let n = 1; n <= totalPages; n++) {
+        if (n === 1 || n === totalPages || Math.abs(n - currentPage) <= 1) pageButtons.push(n);
+        else if (pageButtons[pageButtons.length - 1] !== "gap") pageButtons.push("gap");
+    }
+    const userRoleList = (u: User) =>
+        u.roleTitles && u.roleTitles.length > 0
+            ? u.roleTitles.map((r) => r.title)
+            : [getRoleLabel(u.role)];
 
     return (
         <div className="p-6 space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-semibold" data-testid="text-page-title">
-                        User Management
+                    <h1 className="text-xl font-bold uppercase tracking-wide text-slate-700 dark:text-zinc-200" data-testid="text-page-title">
+                        Users List
                     </h1>
-                    <p className="text-muted-foreground mt-1">
-                        Manage system users and their roles ({filteredUsers.length} users)
+                    <p className="text-muted-foreground mt-1 text-sm">
+                        {activeCount} active · {disabledCount} disabled users
                     </p>
                 </div>
-                <Button onClick={() => setLocation("/drm/users/add")} data-testid="button-add-user">
-                    <UserPlus className="w-4 h-4 mr-2" />
-                    Add User
-                </Button>
             </div>
 
-            {/* Filters */}
             <Card>
-                <CardContent className="pt-4">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
-                        {/* Search */}
-                        <div className="flex-1 min-w-[200px]">
-                            <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                                Search
-                            </label>
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                    placeholder="Search by name, email, or phone..."
-                                    value={search}
-                                    onChange={(e) => setSearch(e.target.value)}
-                                    className="pl-9"
-                                    data-testid="input-search"
-                                />
+                <CardContent className="pt-5 space-y-4">
+                    {/* Toolbar: Add User + active/disabled toggle (old DRM), role filter + search (new) */}
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Button onClick={() => setLocation("/drm/users/add")} className="bg-[#3a8a4f] hover:bg-[#2f7341] text-white" data-testid="button-add-user">
+                                <UserPlus className="w-4 h-4 mr-2" />
+                                Add User
+                            </Button>
+                            <Button
+                                size="icon"
+                                variant={showDisabled ? "outline" : "default"}
+                                className={!showDisabled ? "bg-[#3a8a4f] hover:bg-[#2f7341] text-white" : ""}
+                                title={`Active users (${activeCount})`}
+                                onClick={() => { setShowDisabled(false); setPage(1); }}
+                            >
+                                <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                                size="icon"
+                                variant={showDisabled ? "default" : "outline"}
+                                className={showDisabled ? "bg-slate-500 hover:bg-slate-600 text-white" : ""}
+                                title={`Disabled users (${disabledCount})`}
+                                onClick={() => { setShowDisabled(true); setPage(1); }}
+                            >
+                                <EyeOff className="h-4 w-4" />
+                            </Button>
+                            <div className="ml-2 flex items-center gap-2 text-sm text-muted-foreground">
+                                Show
+                                <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                                    <SelectTrigger className="h-9 w-20"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        {[10, 25, 50, 100].map((n) => (<SelectItem key={n} value={String(n)}>{n}</SelectItem>))}
+                                    </SelectContent>
+                                </Select>
+                                entries
                             </div>
                         </div>
-
-                        {/* Role Filter */}
-                        <div className="w-full lg:w-[200px]">
-                            <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                                Role
-                            </label>
-                            <Select value={roleFilter} onValueChange={setRoleFilter}>
-                                <SelectTrigger data-testid="select-role">
-                                    <SelectValue placeholder="All Roles" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All Roles</SelectItem>
-                                    {allRoles.map((role) => (
-                                        <SelectItem key={role.value} value={role.value}>
-                                            {role.label}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                        <div className="flex flex-wrap items-end gap-3">
+                            <div className="w-[200px]">
+                                <label className="text-xs font-medium text-muted-foreground mb-1 block">Role</label>
+                                <Select value={roleFilter} onValueChange={(v) => { setRoleFilter(v); setPage(1); }}>
+                                    <SelectTrigger data-testid="select-role">
+                                        <SelectValue placeholder="All Roles" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All Roles</SelectItem>
+                                        {allRoles.map((role) => (
+                                            <SelectItem key={role.value} value={role.value}>
+                                                {role.label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="w-[260px]">
+                                <label className="text-xs font-medium text-muted-foreground mb-1 block">Search</label>
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                    <Input
+                                        placeholder="Name, email, phone..."
+                                        value={search}
+                                        onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                                        className="pl-9"
+                                        data-testid="input-search"
+                                    />
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </CardContent>
-            </Card>
 
-            {/* Users Table */}
-            <Card>
-                <CardContent className="p-0">
-                    <div className="w-full overflow-x-auto">
+                    {/* Users Table (old DRM layout) */}
+                    <div className="w-full overflow-x-auto rounded-md border border-slate-100 dark:border-zinc-800">
                         <Table>
-                            <TableHeader>
+                            <TableHeader className="bg-slate-50 dark:bg-zinc-900">
                                 <TableRow>
-                                    <TableHead>Name</TableHead>
-                                    <TableHead>Email</TableHead>
-                                    <TableHead>Role</TableHead>
-                                    <TableHead>Department</TableHead>
-                                    <TableHead>Designation</TableHead>
-                                    <TableHead>Phone</TableHead>
+                                    <TableHead className="w-12">No#</TableHead>
+                                    <TableHead className="min-w-[220px]">Name</TableHead>
+                                    <TableHead className="text-center">Degree/Cheque</TableHead>
+                                    <TableHead>Date of Joining</TableHead>
+                                    <TableHead className="text-center">Roles</TableHead>
+                                    <TableHead>Office Id</TableHead>
+                                    <TableHead>Net Salary</TableHead>
+                                    <TableHead>City</TableHead>
+                                    <TableHead>Contact No</TableHead>
+                                    <TableHead className="min-w-[160px]">Address</TableHead>
                                     <TableHead>Status</TableHead>
-                                    <TableHead>Created</TableHead>
-                                    <TableHead className="text-right">Actions</TableHead>
+                                    <TableHead className="text-right">Action</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {isLoading ? (
                                     <TableRow>
-                                        <TableCell colSpan={8} className="text-center py-12">
+                                        <TableCell colSpan={12} className="text-center py-12">
                                             <Users className="h-12 w-12 mx-auto text-muted-foreground mb-3 animate-pulse" />
                                             <p className="text-muted-foreground">Loading users...</p>
                                         </TableCell>
                                     </TableRow>
-                                ) : filteredUsers.length === 0 ? (
+                                ) : pageUsers.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={8} className="text-center py-12">
+                                        <TableCell colSpan={12} className="text-center py-12">
                                             <Users className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
                                             <p className="text-muted-foreground">No users found</p>
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    filteredUsers.map((user) => (
+                                    pageUsers.map((user, idx) => {
+                                        const roles = userRoleList(user);
+                                        const doc = (user.securityDoc || "").toLowerCase();
+                                        return (
                                         <TableRow key={user.id} className="hover:bg-muted/30">
-                                            <TableCell className="font-medium">
-                                                <div className="flex items-center gap-2">
-                                                    <Shield className="h-4 w-4 text-muted-foreground" />
-                                                    {user.fullName}
+                                            <TableCell className="text-sm text-muted-foreground">{pageStart + idx + 1}</TableCell>
+                                            <TableCell>
+                                                <div className="flex items-center gap-3" title={user.email}>
+                                                    <UserAvatar user={user} />
+                                                    <div className="min-w-0">
+                                                        <div className="font-semibold text-slate-800 dark:text-zinc-100 truncate">{user.fullName}</div>
+                                                        <div className="text-xs text-muted-foreground truncate">{user.fatherHusbandName || user.email}</div>
+                                                    </div>
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="text-sm">{user.email}</TableCell>
+                                            <TableCell className="text-center">
+                                                {doc ? (
+                                                    <span className="inline-flex flex-col items-center text-[10px] text-slate-500" title={user.securityDoc || ""}>
+                                                        {doc.includes("degree") ? <GraduationCap className="h-5 w-5 text-slate-600" /> : <CreditCard className="h-5 w-5 text-slate-600" />}
+                                                        {user.securityDoc}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-muted-foreground">—</span>
+                                                )}
+                                            </TableCell>
+                                            <TableCell className="text-sm whitespace-nowrap">{user.joinDate ? String(user.joinDate).slice(0, 10) : "—"}</TableCell>
+                                            <TableCell className="text-center">
+                                                <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
+                                                        <Button variant="ghost" size="icon" className="h-8 w-8" title={roles.join(", ")}>
+                                                            <Settings className="h-4 w-4" />
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent className="min-w-[200px]">
+                                                        <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">Roles</div>
+                                                        {roles.map((r) => (
+                                                            <DropdownMenuItem key={r} className="text-sm">{r}</DropdownMenuItem>
+                                                        ))}
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu>
+                                            </TableCell>
+                                            <TableCell className="text-sm">{user.attendanceId || "—"}</TableCell>
                                             <TableCell>
-                                                <Badge variant="outline">{getRoleLabel(user.role)}</Badge>
+                                                {user.netSalary ? (
+                                                    <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold">
+                                                        {Number(user.netSalary).toLocaleString()}
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-muted-foreground">—</span>
+                                                )}
                                             </TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">
-                                                {user.department || "—"}
-                                            </TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">
-                                                {user.designation || "—"}
-                                            </TableCell>
-                                            <TableCell className="text-sm font-mono">
-                                                {user.phone || "—"}
+                                            <TableCell className="text-sm">{user.city || "—"}</TableCell>
+                                            <TableCell className="text-sm font-mono whitespace-nowrap">{user.contactNo || user.phone || "—"}</TableCell>
+                                            <TableCell className="text-sm">
+                                                <span className="block max-w-[180px] truncate font-medium" title={user.address || ""}>{user.address || "—"}</span>
                                             </TableCell>
                                             <TableCell>
                                                 <DropdownMenu>
                                                     <DropdownMenuTrigger asChild>
                                                         <Badge
-                                                            className={`${STATUS_COLORS[user.status] || "bg-gray-400"} cursor-pointer hover:opacity-80`}
+                                                            className={`${user.isDeactive ? "bg-gray-400" : STATUS_COLORS[user.status] || "bg-gray-400"} cursor-pointer hover:opacity-80`}
                                                         >
-                                                            {user.status}
+                                                            {user.isDeactive ? "disabled" : user.status}
                                                         </Badge>
                                                     </DropdownMenuTrigger>
                                                     <DropdownMenuContent>
@@ -580,11 +734,6 @@ export default function UserList() {
                                                     </DropdownMenuContent>
                                                 </DropdownMenu>
                                             </TableCell>
-                                            <TableCell className="text-sm text-muted-foreground">
-                                                {user.createdAt
-                                                    ? format(new Date(user.createdAt), "MMM dd, yyyy")
-                                                    : "—"}
-                                            </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex items-center justify-end gap-1">
                                                     <Button
@@ -602,6 +751,7 @@ export default function UserList() {
                                                         size="icon"
                                                         className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
                                                         onClick={() => handleEditClick(user)}
+                                                        title="Edit"
                                                         data-testid={`button-edit-${user.id}`}
                                                     >
                                                         <Edit className="h-4 w-4" />
@@ -609,8 +759,10 @@ export default function UserList() {
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                                        className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                                                         onClick={() => handleDeleteClick(user)}
+                                                        disabled={!isAdmin || deleteMutation.isPending}
+                                                        title={isAdmin ? "Delete" : "Only admin can delete users"}
                                                         data-testid={`button-delete-${user.id}`}
                                                     >
                                                         <Trash2 className="h-4 w-4" />
@@ -618,48 +770,42 @@ export default function UserList() {
                                                 </div>
                                             </TableCell>
                                         </TableRow>
-                                    ))
+                                        );
+                                    })
                                 )}
                             </TableBody>
                         </Table>
                     </div>
+
+                    {/* Footer: showing x to y + pagination */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+                        <span>
+                            {filteredUsers.length === 0
+                                ? "Showing 0 entries"
+                                : `Showing ${pageStart + 1} to ${pageStart + pageUsers.length} of ${filteredUsers.length} entries`}
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                            <Button variant="outline" size="sm" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Previous</Button>
+                            {pageButtons.map((n, i) =>
+                                n === "gap" ? (
+                                    <span key={`gap-${i}`} className="flex h-9 items-center px-1.5">…</span>
+                                ) : (
+                                    <Button
+                                        key={n}
+                                        size="sm"
+                                        variant={n === currentPage ? "default" : "outline"}
+                                        className={n === currentPage ? "bg-[#3a8a4f] hover:bg-[#2f7341] min-w-9" : "min-w-9"}
+                                        onClick={() => setPage(n)}
+                                    >
+                                        {n}
+                                    </Button>
+                                ),
+                            )}
+                            <Button variant="outline" size="sm" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>Next</Button>
+                        </div>
+                    </div>
                 </CardContent>
             </Card>
-
-            {/* Delete Confirmation Dialog */}
-            <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Delete User</DialogTitle>
-                        <DialogDescription>
-                            Are you sure you want to delete this user? This action cannot be undone.
-                        </DialogDescription>
-                    </DialogHeader>
-                    {userToDelete && (
-                        <div className="py-4">
-                            <div className="flex items-center gap-2 p-3 bg-muted rounded-md">
-                                <AlertCircle className="h-5 w-5 text-destructive" />
-                                <div>
-                                    <p className="font-medium">{userToDelete.fullName}</p>
-                                    <p className="text-sm text-muted-foreground">{userToDelete.email}</p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-                            Cancel
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            onClick={handleConfirmDelete}
-                            disabled={deleteMutation.isPending}
-                        >
-                            {deleteMutation.isPending ? "Deleting..." : "Delete"}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
 
             {/* Edit User Dialog - Full Form */}
             <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
@@ -836,32 +982,12 @@ export default function UserList() {
                                                 groups.push({ groupLabel: "", items: [{ value: "main", name: "Main" }] });
 
                                                 if (allUsers && allUsers.length > 0) {
-                                                    const usersByRole: Record<string, Array<{ id: string; fullName: string }>> = {};
-                                                    const roleOrder: string[] = [];
-                                                    for (const user of allUsers) {
-                                                        const role = user.role || "Unknown";
-                                                        const roleLabel = role.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
-                                                        if (!usersByRole[roleLabel]) {
-                                                            usersByRole[roleLabel] = [];
-                                                            roleOrder.push(roleLabel);
-                                                        }
-                                                        usersByRole[roleLabel].push(user);
-                                                    }
-                                                    // Sort roleOrder based on ROLE_TYPES array
-                                                    roleOrder.sort((a, b) => {
-                                                        const indexA = ROLE_TYPES.findIndex(rt => rt.label.toLowerCase() === a.toLowerCase() || rt.value.replace(/_/g, ' ').toLowerCase() === a.toLowerCase());
-                                                        const indexB = ROLE_TYPES.findIndex(rt => rt.label.toLowerCase() === b.toLowerCase() || rt.value.replace(/_/g, ' ').toLowerCase() === b.toLowerCase());
-                                                        
-                                                        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-                                                        if (indexA !== -1) return -1;
-                                                        if (indexB !== -1) return 1;
-                                                        return a.localeCompare(b);
-                                                    });
-
-                                                    for (const roleLabel of roleOrder) {
+                                                    // One section per role title; multi-role users under each role;
+                                                    // disabled (role 54) profiles can't be picked.
+                                                    for (const g of groupUsersByRoleTitle(allUsers as any[])) {
                                                         groups.push({
-                                                            groupLabel: roleLabel,
-                                                            items: usersByRole[roleLabel].map(u => ({ value: u.id, name: u.fullName })),
+                                                            groupLabel: g.role,
+                                                            items: g.users.map((u: any) => ({ value: u.id, name: u.fullName })),
                                                         });
                                                     }
                                                 }
@@ -983,6 +1109,10 @@ export default function UserList() {
                                                 <SelectValue placeholder="Select..." />
                                             </SelectTrigger>
                                             <SelectContent>
+                                                {/* keep an existing old value (date / %) selectable instead of blanking it */}
+                                                {editForm.increment && !INCREMENT_OPTIONS.some((o) => o.value === editForm.increment) && (
+                                                    <SelectItem value={editForm.increment}>{editForm.increment}</SelectItem>
+                                                )}
                                                 {INCREMENT_OPTIONS.map((opt) => (
                                                     <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                                                 ))}

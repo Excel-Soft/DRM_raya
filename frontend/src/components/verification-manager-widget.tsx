@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DashboardPromotionAside } from "@/components/dashboard-promotion-aside";
 import { isSupportModuleEnabled } from "@/lib/feature-flags";
 import { useUiWorkflowConfig } from "@/hooks/use-ui-workflow-config";
 import { getVerificationLifecycleLabels } from "@shared/verification-lifecycle";
@@ -481,20 +482,11 @@ export function VerificationManagerWidget() {
 
                 {/* Right Column */}
                 <div className="space-y-4">
-                    {/* Promotion Banners */}
-                    <div className="bg-white rounded-lg border shadow-sm overflow-hidden dark:bg-zinc-900">
-                        <div className="px-4 py-3 border-b">
-                            <h2 className="text-[14px] font-bold text-gray-800 dark:text-zinc-100">Promotion Banners</h2>
-                        </div>
-                        <div className="h-[140px] bg-gray-100 flex items-center justify-center relative group dark:bg-zinc-900">
-                            <img
-                                src="https://img.freepik.com/free-photo/group-businesswomen-working-office_23-2148908920.jpg"
-                                alt="Promotion"
-                                className="w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 bg-black/5 group-hover:bg-black/0 transition-colors" />
-                        </div>
-                    </div>
+                    <DashboardPromotionAside
+                        title="Promotion Banners"
+                        titleClassName="text-[14px] text-gray-800 dark:text-zinc-100 px-4 pt-3"
+                        className="bg-white rounded-lg border shadow-sm overflow-hidden p-0 pb-3 dark:bg-zinc-900"
+                    />
 
                     {/* Projects Overview */}
                     <div className="bg-white rounded-lg border shadow-sm dark:bg-zinc-900">

@@ -45,7 +45,7 @@ export function normalizeRole(role: string): RoleKey {
   if (normalized.includes("product") && (normalized.includes("manage") || normalized.includes("manager"))) return ROLES.PRODUCT_POSTING_MANAGER;
   if (normalized.includes("software") && normalized.includes("manager")) return ROLES.SOFTWARE_MANAGER;
   if (normalized.includes("software") && (normalized.includes("exec") || normalized.includes("exce"))) return ROLES.SOFTWARE_EXECUTIVE;
-  if (normalized.includes("posting") && normalized.includes("exec")) return ROLES.POSTING_EXECUTIVE;
+  if (normalized.includes("posting") && normalized.includes("exec")) return ROLES.PRODUCT_POSTING_EXECUTIVE;
   if (normalized.includes("posting") && normalized.includes("manager")) return ROLES.PRODUCT_POSTING_MANAGER;
   if (normalized.includes("marketing") && normalized.includes("manager")) return ROLES.MARKETING_MANAGER;
 
@@ -118,6 +118,17 @@ export const MANAGERIAL_ROLES: string[] = [
   ROLES.MARKETING_MANAGER,
 ];
 
+/** Private / lead pool: org-wide customer & follow-up visibility (not team-scoped). */
+export function isLeadPoolOrgWideViewer(role?: string | null): boolean {
+  const n = normalizeRole(role || "");
+  return (
+    n === ROLES.ADMIN ||
+    n === "super_admin" ||
+    n === ROLES.SUPER_HOD ||
+    n === ROLES.HOD
+  );
+}
+
 export function isManagerialRole(role?: string | null): boolean {
   if (!role) return false;
   const n = normalizeRole(role);
@@ -142,4 +153,101 @@ export function isManagerialRole(role?: string | null): boolean {
 export function shouldSkipLeadAutoOwnership(role?: string | null): boolean {
   if (!role) return false;
   return isManagerialRole(role) || normalizeRole(role) === ROLES.LEAD_EXECUTIVE;
+}
+
+const PRIMARY_ROLE_PRIORITY: RoleKey[] = [
+  ROLES.ADMIN,
+  ROLES.SUPER_HOD,
+  ROLES.HOD,
+  ROLES.SALES_MANAGER,
+  ROLES.SERVICE_MANAGER,
+  ROLES.ACCOUNT_MANAGER,
+  ROLES.LEAD_MANAGER,
+  ROLES.DEVELOPER,
+  ROLES.SALES_EXECUTIVE,
+];
+
+/** Legacy JWTs sometimes stored comma-separated legacy role ids in activeRoleId. */
+export function looksLikeLegacyRoleCsv(value: string | undefined | null): boolean {
+  if (!value) return false;
+  return /^\d+(\s*,\s*\d+)+$/.test(String(value).trim());
+}
+
+export function pickPrimaryRole(roleKeys: string[]): RoleKey {
+  const uniq = [...new Set(roleKeys.filter(Boolean).map((r) => normalizeRole(r)))];
+  for (const p of PRIMARY_ROLE_PRIORITY) {
+    if (uniq.includes(p)) return p;
+  }
+  return (uniq[0] || ROLES.SALES_EXECUTIVE) as RoleKey;
+}
+
+export function resolveActiveRoleId(
+  rawActive: string | undefined | null,
+  dbRole: string,
+  roles: string[] | undefined,
+): RoleKey {
+  const normalizedDb = normalizeRole(dbRole);
+  const userRoles =
+    roles && roles.length > 0
+      ? roles.map((r) => normalizeRole(r))
+      : [normalizedDb];
+
+  if (!rawActive || looksLikeLegacyRoleCsv(rawActive)) {
+    return pickPrimaryRole(userRoles);
+  }
+
+  const active = normalizeRole(String(rawActive));
+  const activeLooksCorrupt =
+    looksLikeLegacyRoleCsv(String(rawActive)) ||
+    (/^\d+$/.test(active) && active.length > 4);
+
+  if (activeLooksCorrupt) {
+    return pickPrimaryRole(userRoles);
+  }
+
+  if (userRoles.includes(active)) return active;
+  return normalizedDb;
+}
+
+const ROLE_DISPLAY_LABELS: Record<string, string> = {
+  [ROLES.ADMIN]: "Admin",
+  [ROLES.SALES_MANAGER]: "Sales Manager",
+  [ROLES.SALES_ASSISTANT_MANAGER]: "Sales Assistant Manager",
+  [ROLES.SALES_EXECUTIVE]: "Sales Executive",
+  [ROLES.ACCOUNT_MANAGER]: "Account Manager",
+  [ROLES.DEVELOPER]: "Developer",
+  [ROLES.HOD]: "HOD",
+  [ROLES.SUPER_HOD]: "Super HOD",
+  [ROLES.SERVICE_MANAGER]: "Service Manager",
+  [ROLES.SERVICE_ASSISTANT_MANAGER]: "Service Assistant Manager",
+  [ROLES.SERVICE_EXECUTIVE]: "Service Executive",
+  [ROLES.PRODUCT_POSTING_EXECUTIVE]: "Product Posting Executive",
+  [ROLES.PRODUCT_POSTING_MANAGER]: "Product Posting Manager",
+  [ROLES.QA_MANAGER]: "QA Manager",
+  [ROLES.VERIFICATION_MANAGER]: "Verification Manager",
+  [ROLES.DD_MANAGER]: "D&D Manager",
+  [ROLES.DD_EXECUTIVE]: "D&D Executive",
+  [ROLES.IT_MANAGER]: "IT Manager",
+  [ROLES.RECEPTION_MANAGER]: "Reception Manager",
+  [ROLES.SEO_SMM_MANAGER]: "SEO/SMM Manager",
+  [ROLES.SOFTWARE_MANAGER]: "Software Manager",
+  [ROLES.SOFTWARE_EXECUTIVE]: "Software Executive",
+  [ROLES.LEAD_MANAGER]: "Lead Manager",
+  [ROLES.LEAD_EXECUTIVE]: "Lead Executive",
+  [ROLES.MARKETING_MANAGER]: "Marketing Manager",
+  [ROLES.COMPLAINT_MANAGER]: "Complaint Manager",
+};
+
+export function formatRoleLabel(role: string | undefined | null): string {
+  if (!role) return "Sales Executive";
+  const key = normalizeRole(role);
+  if (ROLE_DISPLAY_LABELS[key]) return ROLE_DISPLAY_LABELS[key];
+  if (looksLikeLegacyRoleCsv(role)) {
+    return formatRoleLabel(key);
+  }
+  return key
+    .split("_")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }

@@ -41,16 +41,8 @@ export function registerOvertimeRoutes(app: Express) {
         return res.json(records);
       }
 
-      const result = await pool.query(
-        `select o.id, o.user_id as "userId", o.date, o.hours as "timeSpent", o.status, o.reason as "taskTitle", o.reason as "taskDetails", o.approved_by as "reviewedByUserId", o.created_at as "createdAt", o.updated_at as "updatedAt", u.full_name as "userName"
-           from drm.overtime_records o
-           left join drm.users u on u.id = o.user_id
-          where o.user_id = ANY($1::uuid[])
-          order by o.created_at desc`,
-        [targetUserIds]
-      );
-
-      res.json(result.rows);
+      const records = await overtimeRepository.findByUserId(userId);
+      res.json(records);
     } catch (error) {
       console.error("Error fetching overtime records:", error);
       res.status(500).json({ error: "Failed to fetch overtime records" });
@@ -84,14 +76,11 @@ export function registerOvertimeRoutes(app: Express) {
       if (!isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to view all overtime records." });
       }
-      const { pool } = await import("../db.js");
-      // Sales Manager: self-only, never org-wide, even though this is
-      // otherwise a manager "view all" endpoint.
       const isSalesManagerRole = normalizeRole(callerRole(req)) === ROLES.SALES_MANAGER;
-      const selfClause = isSalesManagerRole ? "WHERE o.user_id = $1" : "";
-      const overtimeQueryParams = isSalesManagerRole ? [req.user.userId] : [];
-      const { rows } = await pool.query(`SELECT o.id, o.user_id AS "userId", u.full_name AS "userName", o.date, o.hours AS "timeSpent", o.status, o.reason, COALESCE(o.task_title, o.reason, 'N/A') AS "taskTitle", COALESCE(o.task_details, '') AS "taskDetails", o.created_at AS "createdAt" FROM drm.overtime_records o LEFT JOIN drm.users u ON u.id = o.user_id ${selfClause} ORDER BY o.created_at DESC`, overtimeQueryParams);
-      res.json(rows);
+      const records = isSalesManagerRole
+        ? await overtimeRepository.findByUserId(req.user.userId)
+        : await overtimeRepository.findAll();
+      res.json(records);
     } catch (error) { res.status(500).json({ error: "Failed" }); }
   });
 
@@ -173,14 +162,13 @@ export function registerOvertimeRoutes(app: Express) {
       if (targetUserId !== req.user.userId && !isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You can only submit overtime for yourself." });
       }
-      const { date, hours, reason, taskTitle, taskDetails } = req.body ?? {};
+      const body = req.body ?? {};
       const parseResult = insertOvertimeRecordSchema.safeParse({
-        date,
-        hours,
-        reason,
-        taskTitle,
-        taskDetails,
         userId: targetUserId,
+        taskTitle: body.taskTitle ?? body.reason ?? "Overtime",
+        timeSpent: body.timeSpent ?? body.hours,
+        taskDetails: body.taskDetails ?? body.reason ?? "",
+        date: body.date,
       });
 
       if (!parseResult.success) {

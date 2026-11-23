@@ -9,6 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { apiRequest, extractApiError } from "@/lib/queryClient";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 export default function ReportsBvPendingEcnc() {
   const [, setLocation] = useLocation();
@@ -39,17 +41,8 @@ export default function ReportsBvPendingEcnc() {
     }
   });
 
-  const groupedUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    users.forEach((u: any) => {
-      const role = u.role || "Unassigned Role";
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(u);
-    });
-    return Object.entries(grouped)
-      .map(([role, users]) => ({ role, users }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [users]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedUsers = useMemo(() => groupUsersByRoleTitle(users), [users]);
 
   const { data: reportData, isLoading, isError, error } = useQuery<any>({
     queryKey: ["/api/reports/bv", "pending", fetchParams],
@@ -140,7 +133,9 @@ export default function ReportsBvPendingEcnc() {
     setLocation(`/customers/attribute/${customerId}?${q.toString()}`);
   };
 
-  const showBvDateColumn = !!fetchParams?.pendingBv;
+  // Old DRM showed BV Date in both modes: the real bvDate normally, "Pending"
+  // with the Pending Bv checkbox.
+  const showBvDateColumn = true;
   const tableColSpan = (showBvDateColumn ? 9 : 8) + 2;
 
   const formatReportDate = (value: unknown, pendingLabel = "Pending") => {
@@ -173,24 +168,14 @@ export default function ReportsBvPendingEcnc() {
                     <label htmlFor="pendingBv" className="text-[10px] text-slate-500">Pending Bv</label>
                   </div>
                 </div>
-                <Select value={selectedUser} onValueChange={setSelectedUser}>
-                  <SelectTrigger className="bg-white dark:bg-zinc-800">
-                    <SelectValue placeholder="Choose..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    {groupedUsers.map(({ role, users }) => (
-                      <SelectGroup key={role}>
-                        <SelectLabel>{role}</SelectLabel>
-                        {users.filter(u => u.fullName || u.username).map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.fullName || u.username}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  users={users}
+                  value={selectedUser}
+                  onChange={setSelectedUser}
+                  extraOptions={[{ value: "all", label: "All" }]}
+                  placeholder="Choose..."
+                  className="bg-white dark:bg-zinc-800"
+                />
               </div>
 
               <div className="space-y-2">
@@ -201,10 +186,13 @@ export default function ReportsBvPendingEcnc() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All</SelectItem>
+                    {/* Rc/New labels the API returns (Create GM page's gmTypeLabel mapping). */}
                     <SelectItem value="New">New</SelectItem>
-                    <SelectItem value="Renew">Renew</SelectItem>
-                    <SelectItem value="Expire">Expire</SelectItem>
-                    <SelectItem value="Rc/Up">Rc/Up</SelectItem>
+                    <SelectItem value="Rc">Rc</SelectItem>
+                    <SelectItem value="Ec">Ec</SelectItem>
+                    <SelectItem value="Rc-Up">Rc-Up</SelectItem>
+                    <SelectItem value="Kwa">Kwa</SelectItem>
+                    <SelectItem value="None">None</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

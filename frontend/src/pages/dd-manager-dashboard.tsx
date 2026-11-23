@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { Breadcrumb } from "@/components/breadcrumb";
+import { DashboardPromotionAside } from "@/components/dashboard-promotion-aside";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -89,6 +90,9 @@ const itemVariants = {
 
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
+import { filterDdExecutiveUsers } from "@/lib/dd-executive-users";
+import { apiRequestJson } from "@/lib/queryClient";
 
 export default function DDManagerDashboard() {
     const [, setLocation] = useLocation();
@@ -102,6 +106,8 @@ export default function DDManagerDashboard() {
     const [queuePageSize, setQueuePageSize] = useState(10);
     const [perfPage, setPerfPage] = useState(1);
     const PERF_PAGE_SIZE = 10;
+    const [dailyActivitiesPage, setDailyActivitiesPage] = useState(1);
+    const [dailyActivitiesPageSize, setDailyActivitiesPageSize] = useState(10);
 
     useEffect(() => {
         const handleStorageChange = () => setStorageSync(prev => prev + 1);
@@ -159,14 +165,40 @@ export default function DDManagerDashboard() {
 
     // Fetch activities summary (donut chart)
     const { data: activitiesSummary, isLoading: isActivitiesLoading } = useQuery({
-        queryKey: ["/api/dd-manager/activities-summary"],
+        queryKey: ["/api/dd-manager/activities-summary", hubPeriod],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/dd-manager/activities-summary");
+            const res = await apiRequest("GET", `/api/dd-manager/activities-summary?period=${hubPeriod}`);
             return res.json();
         },
         staleTime: 30000,
         refetchOnWindowFocus: false
     }) as any;
+
+    const activitiesDonut = useMemo(() => {
+        const complete = Number((activitiesSummary as any)?.complete || 0);
+        const pending = Number((activitiesSummary as any)?.pending || 0);
+        const free = Number((activitiesSummary as any)?.free || 0);
+        const total = Number((activitiesSummary as any)?.total || complete + pending + free);
+        const sum = complete + pending + free || 1;
+        const circumference = 2 * Math.PI * 40;
+        const segments = [
+            { value: complete, color: "#e5b367" },
+            { value: pending, color: "#a7f3d0" },
+            { value: free, color: "#4a5568" },
+        ].filter((s) => s.value > 0);
+        let offsetPct = 0;
+        const rings =
+            segments.length === 0
+                ? [{ dashArray: `${circumference} ${circumference}`, dashOffset: 0, color: "#e2e8f0" }]
+                : segments.map((seg) => {
+                      const pct = (seg.value / sum) * 100;
+                      const dashArray = `${(pct / 100) * circumference} ${circumference}`;
+                      const dashOffset = -(offsetPct / 100) * circumference;
+                      offsetPct += pct;
+                      return { dashArray, dashOffset, color: seg.color };
+                  });
+        return { total, rings, circumference };
+    }, [activitiesSummary]);
 
     // Fetch user performance
     const { data: usersPerformance, isLoading: isPerformanceLoading } = useQuery({
@@ -213,12 +245,15 @@ export default function DDManagerDashboard() {
     }) as any;
 
     const { data: executivesRes } = useQuery({
-        queryKey: ["/api/users", { role: "all" }],
+        queryKey: ["dd-executives-for-assign"],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/users?role=all");
-            const data = await res.json();
-            return (data.users || []).filter((u: any) => u.role === "dd_executive");
-        }
+            const direct = await apiRequestJson<any>("GET", "/api/users?role=dd_executive");
+            const fromRoleParam = filterDdExecutiveUsers(direct?.users);
+            if (fromRoleParam.length > 0) return fromRoleParam;
+            const all = await apiRequestJson<any>("GET", "/api/users?role=all");
+            return filterDdExecutiveUsers(all?.users);
+        },
+        staleTime: 60_000,
     });
     const executives = executivesRes || [];
 
@@ -393,6 +428,20 @@ export default function DDManagerDashboard() {
     }) || [];
 
     const dailyActivitiesData = (usersPerformance as any) || [];
+
+    const dailyActivitiesTotalPages = Math.max(
+        1,
+        Math.ceil(dailyActivitiesData.length / dailyActivitiesPageSize),
+    );
+    const currentDailyActivitiesPage = Math.min(dailyActivitiesPage, dailyActivitiesTotalPages);
+    const pagedDailyActivities = dailyActivitiesData.slice(
+        (currentDailyActivitiesPage - 1) * dailyActivitiesPageSize,
+        currentDailyActivitiesPage * dailyActivitiesPageSize,
+    );
+
+    useEffect(() => {
+        setDailyActivitiesPage(1);
+    }, [dailyActivitiesData.length, dailyActivitiesPageSize]);
 
     // Removed the full-page loader to prevent disruptive blinking. 
     // The UI handles null/loading states locally now.
@@ -851,14 +900,7 @@ export default function DDManagerDashboard() {
                 {/* Sidebar (4 columns) */}
                 <div className="col-span-12 lg:col-span-4 space-y-6">
 
-                    {/* Banner Card */}
-                    <Card className="overflow-hidden border border-border shadow-sm rounded-xl relative h-[185px]">
-                        <img
-                            src="https://img.freepik.com/free-vector/black-friday-sale-banner-template_23-2148705353.jpg"
-                            alt="Mega Sale"
-                            className="w-full h-full object-cover"
-                        />
-                    </Card>
+                    <DashboardPromotionAside />
 
                     {/* Projects Overview - Redesigned Grid */}
                     <Card className="dashboard-card border-none shadow-sm rounded-xl overflow-hidden">
@@ -1007,24 +1049,43 @@ export default function DDManagerDashboard() {
                                 <Activity className="h-4 w-4 text-primary" />
                                 Activities
                             </CardTitle>
-                            <div className="flex items-center gap-1 border rounded-md px-2 py-1 bg-muted/30 cursor-pointer group hover:bg-muted transition-colors">
-                                <span className="text-[12px] font-bold text-foreground">TD</span>
-                                <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                            </div>
+                            <Select value={hubPeriod} onValueChange={setHubPeriod}>
+                                <SelectTrigger className="h-8 w-[72px] text-[12px] font-bold border rounded-md">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="TD">TD</SelectItem>
+                                    <SelectItem value="WC">WC</SelectItem>
+                                    <SelectItem value="MN">MN</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </CardHeader>
                         <CardContent className="p-6">
                             <div className="flex items-center gap-8">
                                 {/* Donut Chart Container */}
                                 <div className="relative w-[180px] h-[180px] flex items-center justify-center">
                                     <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
-                                        <circle cx="50" cy="50" r="40" fill="transparent" stroke="#10b981" strokeWidth="12" strokeDasharray="251.2" strokeDashoffset="60" />
-                                        <circle cx="50" cy="50" r="40" fill="transparent" stroke="#a7f3d0" strokeWidth="12" strokeDasharray="251.2" strokeDashoffset="180" />
-                                        <circle cx="50" cy="50" r="40" fill="transparent" stroke="#e5b367" strokeWidth="12" strokeDasharray="251.2" strokeDashoffset="210" />
-                                        <circle cx="50" cy="50" r="40" fill="transparent" stroke="#4a5568" strokeWidth="12" strokeDasharray="251.2" strokeDashoffset="240" />
+                                        {activitiesDonut.rings.map((ring, i) => (
+                                            <circle
+                                                key={i}
+                                                cx="50"
+                                                cy="50"
+                                                r="40"
+                                                fill="transparent"
+                                                stroke={ring.color}
+                                                strokeWidth="12"
+                                                strokeDasharray={ring.dashArray}
+                                                strokeDashoffset={ring.dashOffset}
+                                            />
+                                        ))}
                                     </svg>
                                     <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                                        <p className="text-[24px] font-bold text-[#4a5568] leading-tight dark:text-zinc-400">{(activitiesSummary as any)?.total || "0"}</p>
-                                        <p className="text-[12px] font-medium text-slate-400 opacity-80">({(activitiesSummary as any)?.totalValue?.toLocaleString() || "0"})</p>
+                                        <p className="text-[24px] font-bold text-[#4a5568] leading-tight dark:text-zinc-400">
+                                            {isActivitiesLoading ? "…" : activitiesDonut.total}
+                                        </p>
+                                        <p className="text-[12px] font-medium text-slate-400 opacity-80">
+                                            ({Number((activitiesSummary as any)?.totalValue || 0).toLocaleString()})
+                                        </p>
                                     </div>
                                 </div>
                                 <div className="flex-1 space-y-1">
@@ -1039,11 +1100,28 @@ export default function DDManagerDashboard() {
 
                     {/* Daily Activities - Redesigned Card */}
                     <Card className="dashboard-card overflow-hidden">
-                        <CardHeader className="py-4 px-6 border-b flex flex-row items-center justify-between bg-muted/5">
+                        <CardHeader className="py-4 px-6 border-b flex flex-row items-center justify-between bg-muted/5 gap-3">
                             <CardTitle className="text-[14px] font-bold flex items-center gap-2">
                                 <FileBarChart2 className="h-4 w-4 text-primary" />
                                 Daily Activities
                             </CardTitle>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Rows</span>
+                                <Select
+                                    value={String(dailyActivitiesPageSize)}
+                                    onValueChange={(v) => setDailyActivitiesPageSize(Number(v))}
+                                >
+                                    <SelectTrigger className="h-8 w-[72px] text-[12px] font-bold">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="5">5</SelectItem>
+                                        <SelectItem value="10">10</SelectItem>
+                                        <SelectItem value="15">15</SelectItem>
+                                        <SelectItem value="20">20</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         </CardHeader>
                         <CardContent className="p-0">
                             <Table>
@@ -1056,8 +1134,15 @@ export default function DDManagerDashboard() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {(dailyActivitiesData as any)?.map?.((item: any, i: number) => (
-                                        <TableRow key={i} className="hover:bg-slate-50 border-slate-100 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                                    {!dailyActivitiesData.length ? (
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="py-10 text-center text-[12px] text-muted-foreground">
+                                                No D&amp;D executive activity for today yet.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : null}
+                                    {pagedDailyActivities.map((item: any, i: number) => (
+                                        <TableRow key={item.name || i} className="hover:bg-slate-50 border-slate-100 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                             <TableCell className="py-4 pl-6">
                                                 <div className="flex items-center gap-3">
                                                     <img src={item.avatar} alt={item.name} className="h-9 w-9 rounded-full border border-slate-100 shadow-sm dark:border-zinc-800" />
@@ -1065,12 +1150,12 @@ export default function DDManagerDashboard() {
                                                 </div>
                                             </TableCell>
                                             <TableCell className="py-4">
-                                                <Badge className={cn(
-                                                    "px-4 py-1.5 text-[11px] font-bold text-white border-none rounded-[6px] shadow-sm",
-                                                    item.methodColor || "bg-emerald-500"
-                                                )}>
-                                                    {item.method || "Task"}
-                                                </Badge>
+                                                <div
+                                                    className="max-w-[180px] truncate rounded-[6px] bg-slate-100 px-3 py-1.5 text-[11px] font-semibold text-slate-600 dark:bg-zinc-900 dark:text-zinc-300"
+                                                    title={item.method || "—"}
+                                                >
+                                                    {item.method || "—"}
+                                                </div>
                                             </TableCell>
                                             <TableCell className="py-4">
                                                 <div className="flex items-start gap-1">
@@ -1091,6 +1176,33 @@ export default function DDManagerDashboard() {
                                     ))}
                                 </TableBody>
                             </Table>
+                            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-t border-border/50">
+                                <span className="text-[12px] font-bold text-muted-foreground">
+                                    {dailyActivitiesData.length === 0
+                                        ? "Showing 0 entries"
+                                        : `Showing ${(currentDailyActivitiesPage - 1) * dailyActivitiesPageSize + 1} to ${Math.min(currentDailyActivitiesPage * dailyActivitiesPageSize, dailyActivitiesData.length)} of ${dailyActivitiesData.length}`}
+                                </span>
+                                <div className="flex gap-2">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 text-[12px] px-3"
+                                        disabled={currentDailyActivitiesPage <= 1}
+                                        onClick={() => setDailyActivitiesPage((p) => Math.max(1, p - 1))}
+                                    >
+                                        Previous
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 text-[12px] px-3"
+                                        disabled={currentDailyActivitiesPage >= dailyActivitiesTotalPages}
+                                        onClick={() => setDailyActivitiesPage((p) => Math.min(dailyActivitiesTotalPages, p + 1))}
+                                    >
+                                        Next
+                                    </Button>
+                                </div>
+                            </div>
                         </CardContent>
                     </Card>
                 </div>
@@ -1175,21 +1287,15 @@ export default function DDManagerDashboard() {
                                         <div className="space-y-4 pt-6 border-t border-gray-100 dark:border-zinc-800">
                                             <h4 className="text-[14px] font-bold text-gray-800 uppercase dark:text-zinc-100">Assign Task to Executive</h4>
                                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                                <Select
+                                                <RoleGroupedUserSelect
+                                                    grouped={false}
+                                                    users={executives}
                                                     value={taskDetails.assigneeId}
-                                                    onValueChange={(v) => setTaskDetails((f) => ({ ...f, assigneeId: v }))}
-                                                >
-                                                    <SelectTrigger className="h-10 text-[13px]">
-                                                        <SelectValue placeholder="Choose an executive..." />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {executives.length === 0 ? (
-                                                            <div className="px-3 py-2 text-[12px] text-slate-400">No D&amp;D executives found.</div>
-                                                        ) : executives.map((ex: any) => (
-                                                            <SelectItem key={ex.id} value={ex.id}>{ex.fullName || ex.name} ({ex.email})</SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
+                                                    onChange={(v) => setTaskDetails((f) => ({ ...f, assigneeId: v }))}
+                                                    getLabel={(ex: any) => `${ex.fullName || ex.name || ""} (${ex.email})`}
+                                                    placeholder={executives.length === 0 ? "No D&D executives found." : "Choose an executive..."}
+                                                    className="h-10 text-[13px]"
+                                                />
                                                 <Input
                                                     placeholder="Task title..."
                                                     value={taskDetails.title}

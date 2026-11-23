@@ -477,11 +477,13 @@ export default function ChartOfAccounts() {
   );
 
   const typeOptionsForForm = form.category ? ACCOUNT_TYPES[form.category] ?? [] : [];
+  const isTopLevelForm = form.parentAccountId === NONE;
+  const formParent = isTopLevelForm ? undefined : accountHeads.find((h) => h.id === form.parentAccountId);
   
 
   const renderCards = (nodes: TreeNode[]) => {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
         {nodes.map(parent => {
           if (!parent.isMatch) return null;
           return (
@@ -492,7 +494,7 @@ export default function ChartOfAccounts() {
               onClick={() => toggleExpand(parent.id)}
             >
               <h6 className="mb-0 text-slate-800 font-bold m-0 text-sm flex items-center">
-                ({parent.code}) {parent.name}
+                ({/^\d+$/.test(String(parent.code)) ? `${parent.code}-${Number(parent.code) + 4999}` : parent.code}) {parent.name}
               </h6>
               <div className="flex items-center gap-2">
                 <Button 
@@ -732,8 +734,13 @@ export default function ChartOfAccounts() {
           <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-slate-700">
-                {editingId ? "Edit Account Head" : "Add Account Head"}
+                {editingId ? "Edit Account Head" : isTopLevelForm ? "Add Parent Account Head" : "Add Account Head"}
               </DialogTitle>
+              {!isTopLevelForm && formParent && (
+                <p className="text-xs text-slate-500">
+                  Under <span className="font-semibold text-slate-700">({formParent.code}) {formParent.name}</span>
+                </p>
+              )}
             </DialogHeader>
             
             {autoCodeLoading && !editingId && (
@@ -743,165 +750,79 @@ export default function ChartOfAccounts() {
               </div>
             )}
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+            {/* Old-DRM layout: Head Name, Account Code (auto), Account Type (top level only),
+                Description. Normal/opening balance, branch and parent are kept as-is in the
+                form state (type and normal balance follow the account type / parent). */}
+            <div className="space-y-4 pt-2">
               <div className="space-y-1.5">
                 <Label className="text-slate-600 font-medium">
-                  Category <span className="text-red-500">*</span>
-                </Label>
-                <Select
-                  value={form.category}
-                  onValueChange={(v) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      category: v,
-                      type: "",
-                      normalBalance: prev.normalBalance || defaultNormalBalance(v),
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CATEGORIES.map((c) => (
-                      <SelectItem key={c.value} value={c.value}>
-                        {c.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.category && (
-                  <p className="text-xs text-red-500">{errors.category}</p>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-slate-600 font-medium">
-                  Type <span className="text-red-500">*</span>
-                </Label>
-                <Select
-                  value={form.type}
-                  onValueChange={(v) => setForm((prev) => ({ ...prev, type: v }))}
-                  disabled={!form.category}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {typeOptionsForForm.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {t}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.type && <p className="text-xs text-red-500">{errors.type}</p>}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-slate-600 font-medium">
-                  Code <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  value={form.code}
-                  onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value }))}
-                  placeholder="e.g. 10101"
-                />
-                {errors.code && <p className="text-xs text-red-500">{errors.code}</p>}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-slate-600 font-medium">
-                  Name <span className="text-red-500">*</span>
+                  Head Name <span className="text-red-500">*</span>
                 </Label>
                 <Input
                   value={form.name}
                   onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                  placeholder="Account head name"
+                  placeholder={isTopLevelForm ? "Enter parent head name" : "Enter head name"}
+                  className="h-11"
                 />
                 {errors.name && <p className="text-xs text-red-500">{errors.name}</p>}
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-slate-600 font-medium">Normal Balance</Label>
-                <Select
-                  value={form.normalBalance || defaultNormalBalance(form.category)}
-                  onValueChange={(v) =>
-                    setForm((prev) => ({ ...prev, normalBalance: v }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {NORMAL_BALANCES.map((b) => (
-                      <SelectItem key={b} value={b}>
-                        {b}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-slate-600 font-medium">Opening Balance</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={form.openingBalance}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, openingBalance: e.target.value }))
-                  }
-                  placeholder="0.00"
-                />
-                {errors.openingBalance && (
-                  <p className="text-xs text-red-500">{errors.openingBalance}</p>
+                <Label className="text-slate-600 font-medium">Account Code</Label>
+                {editingId ? (
+                  <Input
+                    value={form.code}
+                    onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value }))}
+                    className="h-11"
+                  />
+                ) : (
+                  <div className="rounded-md bg-sky-50 px-4 py-3.5 text-sm font-semibold text-emerald-600 dark:bg-sky-950/40">
+                    {autoCodeLoading ? "Generating next account code..." : form.code ? `Next Account Code: ${form.code}` : "—"}
+                  </div>
                 )}
+                {errors.code && <p className="text-xs text-red-500">{errors.code}</p>}
               </div>
+
+              {isTopLevelForm && (
+                <div className="space-y-1.5">
+                  <Label className="text-slate-600 font-medium">
+                    Account Type <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={form.category}
+                    onValueChange={(v) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        category: v,
+                        type: prev.category === v && prev.type ? prev.type : (ACCOUNT_TYPES[v]?.[0] ?? ""),
+                        normalBalance: prev.category === v && prev.normalBalance ? prev.normalBalance : defaultNormalBalance(v),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="h-11">
+                      <SelectValue placeholder="Select Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIES.map((c) => (
+                        <SelectItem key={c.value} value={c.value}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {(errors.category || errors.type) && (
+                    <p className="text-xs text-red-500">{errors.category || errors.type}</p>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-1.5">
-                <Label className="text-slate-600 font-medium">Parent Head</Label>
-                <Select
-                  value={form.parentAccountId}
-                  onValueChange={(v) =>
-                    setForm((prev) => ({ ...prev, parentAccountId: v }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="None" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE}>None (top level)</SelectItem>
-                    {parentOptions.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.code} — {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.parentAccountId && (
-                  <p className="text-xs text-red-500">{errors.parentAccountId}</p>
-                )}
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-slate-600 font-medium">Branch</Label>
-                <Input
-                  value={form.branch}
-                  onChange={(e) => setForm((prev) => ({ ...prev, branch: e.target.value }))}
-                  placeholder="Optional"
-                />
-              </div>
-
-              <div className="space-y-1.5 sm:col-span-2">
                 <Label className="text-slate-600 font-medium">Description</Label>
                 <Textarea
                   value={form.description}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, description: e.target.value }))
-                  }
-                  placeholder="Optional notes"
-                  className="resize-none h-20"
+                  onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder="Enter description (optional)"
+                  className="resize-none h-24"
                 />
               </div>
             </div>
@@ -923,7 +844,9 @@ export default function ChartOfAccounts() {
                   ? "Saving..."
                   : editingId
                     ? "Save Changes"
-                    : "Create Head"}
+                    : isTopLevelForm
+                      ? "Save Parent Head"
+                      : "Save Head"}
               </Button>
             </DialogFooter>
           </DialogContent>

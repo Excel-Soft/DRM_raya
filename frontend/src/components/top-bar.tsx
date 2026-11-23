@@ -23,6 +23,8 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { NotificationDropdown } from "./notification-dropdown";
+import { formatRoleLabel, normalizeRoleForCompare } from "@/lib/role-labels";
+import { getRoleHome } from "@/lib/role-dashboards";
 
 interface TopBarProps {
   userRole: string;
@@ -69,6 +71,14 @@ export function TopBar({
   // actually App.tsx fetches /api/auth/me which is what we want.
 
   const handleImpersonate = async (roleKey: string) => {
+  const isCurrentlyImpersonating =
+    isImpersonating || sessionStorage.getItem("isImpersonating") === "true";
+
+    if (isCurrentlyImpersonating && roleKey === "admin") {
+      await handleStopImpersonation();
+      return;
+    }
+
     try {
       // Determine if the current user is an admin
       const normalizedUserRolesList = userRoles.map(r => r.toLowerCase().replace(/\s+/g, '_'));
@@ -76,11 +86,12 @@ export function TopBar({
         || ['admin', 'super_admin', 'adm'].includes(userRole.toLowerCase().replace(/\s+/g, '_'));
 
       let res: Response;
-      if (isAdmin) {
-        // Admin users: use impersonation endpoint (can become any role)
+      const switchingToOwnAdmin = roleKey === "admin" && isAdmin && !isCurrentlyImpersonating;
+      if (switchingToOwnAdmin) {
+        res = await apiRequest("POST", "/api/auth/set-active-role", { roleId: "admin" });
+      } else if (isAdmin) {
         res = await apiRequest("POST", "/api/admin/impersonate", { roleKey });
       } else {
-        // Non-admin users: use set-active-role endpoint (switch between their own assigned roles)
         res = await apiRequest("POST", "/api/auth/set-active-role", { roleId: roleKey });
       }
 
@@ -93,46 +104,13 @@ export function TopBar({
         // Prevent queryClient from wiping the token during reload
         sessionStorage.setItem("roleSwitchInProgress", Date.now().toString());
         
-        // Track impersonation state
-        if (isAdmin) {
+        if (isAdmin && roleKey !== "admin") {
           sessionStorage.setItem("isImpersonating", "true");
         } else {
           sessionStorage.removeItem("isImpersonating");
         }
 
-        // Redirect to appropriate dashboard based on role
-        const roleDashboards: Record<string, string> = {
-          sales_manager: "/dashboard/sales-manager",
-          sales_assistant_manager: "/dashboard/sales-assistant-manager",
-          sales_executive: "/dashboard/sales-executive",
-          account_manager: "/dashboard/account-manager",
-          service_manager: "/dashboard/service-manager",
-          service_assistant_manager: "/dashboard/service-assistant-manager",
-          service_executive: "/dashboard/service-executive",
-          super_hod: "/dashboard/super-hod",
-          hod: "/dashboard/hod",
-          dd_manager: "/dashboard/dd-manager",
-          dd_executive: "/dashboard/dd-executive",
-          qa_manager: "/qa/manager",
-          verification_manager: "/verification/manager",
-          product_posting_manager: "/product-posting/manager",
-          product_posting_executive: "/product-posting/executive",
-          posting_executive: "/product-posting/executive",
-          developer: "/dashboard/developer",
-          it_manager: "/dashboard/it-manager",
-          it_executive: "/dashboard/it-executive",
-          reception_manager: "/dashboard/reception",
-          software_manager: "/dashboard/software-manager",
-          software_executive: "/dashboard/software-executive",
-          lead_manager: "/dashboard/lead-manager",
-          lead_executive: "/dashboard/lead-executive",
-          seo_smm_manager: "/dashboard/seo-smm",
-          seo_smm_executive: "/dashboard/seo-smm-executive",
-          marketing_manager: "/dashboard/marketing-manager",
-          complaint_manager: "/dashboard/complaint-manager",
-        };
-
-        const targetDashboard = roleDashboards[roleKey] || "/";
+        const targetDashboard = getRoleHome(roleKey);
         if (window.location.pathname === targetDashboard) {
           window.location.reload();
         } else {
@@ -157,10 +135,10 @@ export function TopBar({
         sessionStorage.setItem("token", data.token);
         sessionStorage.removeItem("isImpersonating");
         sessionStorage.setItem("roleSwitchInProgress", Date.now().toString());
-        window.location.reload();
+        window.location.href = "/admin";
       } else {
         sessionStorage.removeItem("isImpersonating");
-        window.location.reload();
+        window.location.href = "/admin";
       }
     } catch (err) {
       console.error("Stop impersonation failed", err);
@@ -188,7 +166,9 @@ export function TopBar({
             <Button variant="ghost" className="flex items-center gap-2 px-2 hover:bg-accent/50 h-9" data-testid="role-switcher-trigger">
                 <span className="text-xs font-bold text-muted-foreground uppercase tracking-tight">Role:</span>
                 <Badge variant="secondary" className={cn("gap-1 border-primary/10 px-3 py-1 text-[10px] font-black", isImpersonating && "bg-blue-600 text-white hover:bg-blue-700 shadow-sm")}>
-                  {isImpersonating ? `Acting as: ${userRole}` : userRole}
+                  {isImpersonating
+                    ? `Acting as: ${formatRoleLabel(userRole)}`
+                    : formatRoleLabel(userRole)}
                   <ChevronDown className="h-3 w-3 opacity-50" />
                 </Badge>
               </Button>
@@ -202,6 +182,7 @@ export function TopBar({
                   || ['admin', 'super_admin', 'adm'].includes(userRole.toLowerCase().replace(/\s+/g, '_'));
 
                 const DEFAULT_MANAGEABLE_ROLES = [
+                  { key: "admin", label: "Admin" },
                   { key: "sales_manager", label: "Sales Manager" },
                   { key: "sales_assistant_manager", label: "Sales Assistant Manager" },
                   { key: "sales_executive", label: "Sales Executive" },
@@ -216,7 +197,6 @@ export function TopBar({
                   { key: "verification_manager", label: "Verification Manager" },
                   { key: "product_posting_manager", label: "Product Posting Manager" },
                   { key: "product_posting_executive", label: "Product Posting Executive" },
-                  { key: "posting_executive", label: "Posting Executive" },
                   { key: "dd_manager", label: "D&D Manager" },
                   { key: "dd_executive", label: "D&D Executive" },
                   { key: "it_manager", label: "IT Manager" },
@@ -245,7 +225,7 @@ export function TopBar({
                       className="flex items-center justify-between"
                     >
                       <span>{role.label}</span>
-                      {userRole.toLowerCase() === role.key && <Check className="h-4 w-4" />}
+                      {normalizeRoleForCompare(userRole) === role.key && <Check className="h-4 w-4" />}
                     </DropdownMenuItem>
                   ));
                 }
@@ -262,7 +242,7 @@ export function TopBar({
                       className="flex items-center justify-between"
                     >
                       <span>{role.label}</span>
-                      {userRole.toLowerCase() === role.key && <Check className="h-4 w-4" />}
+                      {normalizeRoleForCompare(userRole) === role.key && <Check className="h-4 w-4" />}
                     </DropdownMenuItem>
                   ));
                 }
@@ -274,7 +254,7 @@ export function TopBar({
                   return (
                     <DropdownMenuItem key={key} onSelect={() => handleImpersonate(key)}>
                       <span>{label}</span>
-                      {userRole.toLowerCase() === key && <Check className="h-4 w-4" />}
+                      {normalizeRoleForCompare(userRole) === key && <Check className="h-4 w-4" />}
                     </DropdownMenuItem>
                   );
                 });
@@ -295,7 +275,7 @@ export function TopBar({
         ) : (
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-muted-foreground uppercase">Role:</span>
-            <Badge variant="secondary" className="text-[10px] font-black" data-testid="badge-user-role">{userRole}</Badge>
+            <Badge variant="secondary" className="text-[10px] font-black" data-testid="badge-user-role">{formatRoleLabel(userRole)}</Badge>
           </div>
         )}
       </div>

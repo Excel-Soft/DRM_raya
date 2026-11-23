@@ -15,8 +15,20 @@ type Promotion = {
 // field) banner carousel. GET /api/drm/promotions?scope=banner surfaces
 // approved+active promotions, open to any authenticated role. Reusable: drop
 // onto any dashboard.
+const LEGACY_PROMO_BASE =
+  (import.meta.env.VITE_LEGACY_PROMOTION_ASSET_BASE as string | undefined)?.replace(/\/?$/, "/") ||
+  "https://webexcels.pk/drm/assets/images/promotions/";
+
+function resolveBannerSrc(url: string | null | undefined): string | null {
+  if (!url?.trim()) return null;
+  const raw = url.trim();
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("data:") || raw.startsWith("/")) return raw;
+  return LEGACY_PROMO_BASE + raw.split("/").map((p) => encodeURIComponent(p)).join("/");
+}
+
 export function PromotionBannerWidget() {
   const [bannerIndex, setBannerIndex] = useState(0);
+  const [imageFailed, setImageFailed] = useState(false);
 
   const promotionsQuery = useQuery<{ data: Promotion[] }>({
     queryKey: ["/api/drm/promotions", "banner"],
@@ -24,6 +36,11 @@ export function PromotionBannerWidget() {
   });
   const promotions = promotionsQuery.data?.data ?? [];
   const activeBanner = promotions[bannerIndex % Math.max(promotions.length, 1)];
+  const bannerSrc = resolveBannerSrc(activeBanner?.bannerUrl);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [bannerSrc, bannerIndex]);
 
   // Auto-advance every 4s when there's more than one banner to slide through.
   useEffect(() => {
@@ -42,7 +59,7 @@ export function PromotionBannerWidget() {
     );
   }
 
-  if (!activeBanner?.bannerUrl) {
+  if (!bannerSrc) {
     return (
       <Card className="dashboard-card overflow-hidden h-[185px] flex items-center justify-center text-sm text-muted-foreground">
         No active promotions
@@ -52,7 +69,18 @@ export function PromotionBannerWidget() {
 
   return (
     <Card className="dashboard-card overflow-hidden relative h-[185px] group">
-      <img src={activeBanner.bannerUrl} alt={activeBanner.title || "Promotion Banner"} className="w-full h-full object-cover" />
+      {!imageFailed ? (
+        <img
+          src={bannerSrc}
+          alt={activeBanner?.title || "Promotion Banner"}
+          className="w-full h-full object-cover"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        <div className="w-full h-full bg-gradient-to-br from-emerald-600 to-emerald-800 flex items-center justify-center px-4 text-center">
+          <p className="text-sm font-bold text-white">{activeBanner?.title || "Promotion"}</p>
+        </div>
+      )}
       {activeBanner.title && (
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-4 py-3">
           <p className="text-[13px] font-bold text-white">{activeBanner.title}</p>

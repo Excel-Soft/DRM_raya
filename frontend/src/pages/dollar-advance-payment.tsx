@@ -44,6 +44,7 @@ type AdvancePaymentRecord = {
   status: string;
   created_at: string;
   updated_at: string;
+  source?: string;
 };
 
 function formatDateDMY(iso: string | null) {
@@ -349,6 +350,9 @@ export default function DollarAdvancePayment() {
                         <TableCell className="max-w-[200px] truncate">{r.comment || "-"}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs">{formatDateTime(r.created_at)}</TableCell>
                         <TableCell className="pr-6">
+                          {r.source === "legacy" ? (
+                            <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Old DRM</span>
+                          ) : (
                           <button
                             onClick={() => deleteMutation.mutate(r.id)}
                             disabled={deleteMutation.isPending}
@@ -357,6 +361,7 @@ export default function DollarAdvancePayment() {
                           >
                             <Trash2 className="h-3 w-3" />
                           </button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}

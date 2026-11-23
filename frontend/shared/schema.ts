@@ -763,6 +763,8 @@ export const allowedIps = drmSchema.table("allowed_ips", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   ip_cidr: text("ip_cidr").notNull().unique(),
   description: text("description"),
+  userId: uuid("user_id").references(() => users.id),
+  userName: text("user_name"),
   is_active: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -1443,10 +1445,16 @@ export const insertPolicySchema = createInsertSchema(policies).omit({
   updatedAt: true,
 });
 
-export const insertAllowedIpSchema = createInsertSchema(allowedIps).omit({
-  id: true,
-  createdAt: true,
-});
+export const insertAllowedIpSchema = createInsertSchema(allowedIps)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    user_id: z.string().uuid().nullable().optional(),
+    user_name: z.string().nullable().optional(),
+  });
 
 export const insertAttendanceSchema = createInsertSchema(attendance).omit({
   id: true,

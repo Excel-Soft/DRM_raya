@@ -32,6 +32,11 @@ function resolveCopilotMigrationPath(): string {
 
 export async function ensureCopilotSchema(): Promise<void> {
   if (ensured) return;
+  if (process.env.SKIP_SCHEMA_ENSURE === "true") {
+    console.warn("[copilot] skipping ensureCopilotSchema (SKIP_SCHEMA_ENSURE=true)");
+    ensured = true;
+    return;
+  }
   const sqlPath = resolveCopilotMigrationPath();
   const sql = readFileSync(sqlPath, "utf8");
   const client = await pool.connect();

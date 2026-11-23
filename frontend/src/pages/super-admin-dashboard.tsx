@@ -9,10 +9,24 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, UserPlus, Pencil, Trash2, Shield, Settings, Users, Activity, Globe, MapPin, CheckCircle2, XCircle, Plus, Info, Eye, EyeOff } from "lucide-react";
-import { useState, useEffect } from "react";
+import { Loader2, UserPlus, Pencil, Trash2, Shield, Settings, Users, Activity, Globe, MapPin, CheckCircle2, XCircle, Plus, Eye, EyeOff, ChevronsUpDown } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+} from "@/components/ui/command";
 
 interface User {
     id: string;
@@ -47,14 +61,113 @@ interface AllowedIp {
     is_active: boolean;
 }
 
+const USERS_PAGE_SIZE = 25;
+
+function RoleMultiSelect({
+    roles,
+    value,
+    onChange,
+    loading,
+    label = "Roles",
+    hint = "Select one or more roles (user can switch between them after login).",
+    triggerLabel = "Select roles",
+    maxHeightClass = "max-h-56",
+}: {
+    roles: Role[];
+    value: string[];
+    onChange: (next: string[]) => void;
+    loading?: boolean;
+    label?: string;
+    hint?: string;
+    triggerLabel?: string;
+    maxHeightClass?: string;
+}) {
+    const [open, setOpen] = useState(false);
+    const [search, setSearch] = useState("");
+    const filtered = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        if (!q) return roles;
+        return roles.filter(
+            (r) =>
+                r.name.toLowerCase().includes(q) ||
+                (r.description || "").toLowerCase().includes(q),
+        );
+    }, [roles, search]);
+
+    const toggleRole = (roleName: string, checked: boolean) => {
+        if (checked) {
+            if (!value.includes(roleName)) onChange([...value, roleName]);
+        } else {
+            onChange(value.filter((r) => r !== roleName));
+        }
+    };
+
+    return (
+        <div className="grid gap-1.5">
+            <Label className="uppercase text-xs font-semibold">{label}</Label>
+            {hint ? <p className="text-[11px] text-muted-foreground leading-snug">{hint}</p> : null}
+            <div className="flex flex-wrap gap-1 min-h-[28px] rounded-md border bg-slate-50/50 dark:bg-zinc-900 p-2">
+                {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                ) : value.length === 0 ? (
+                    <span className="text-xs text-muted-foreground">No roles selected yet</span>
+                ) : (
+                    value.map((r) => (
+                        <Badge key={r} variant="secondary" className="text-[10px] uppercase">
+                            {r.replace(/_/g, " ")}
+                        </Badge>
+                    ))
+                )}
+            </div>
+            <Popover open={open} onOpenChange={setOpen}>
+                <PopoverTrigger asChild>
+                    <Button type="button" variant="outline" size="sm" className="h-9 justify-between font-normal">
+                        <span>{value.length ? `${value.length} role(s) selected` : triggerLabel}</span>
+                        <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
+                    </Button>
+                </PopoverTrigger>
+                <PopoverContent className="p-0 w-[320px]" align="start">
+                    <Command shouldFilter={false}>
+                        <CommandInput placeholder="Search roles…" value={search} onValueChange={setSearch} />
+                        <CommandList className={maxHeightClass}>
+                            <CommandEmpty>No role found.</CommandEmpty>
+                            <CommandGroup>
+                                {filtered.map((r) => (
+                                    <CommandItem
+                                        key={r.id}
+                                        value={r.name}
+                                        onSelect={() => toggleRole(r.name, !value.includes(r.name))}
+                                        className="flex items-center gap-2 cursor-pointer"
+                                    >
+                                        <Checkbox
+                                            checked={value.includes(r.name)}
+                                            onCheckedChange={(checked) => toggleRole(r.name, !!checked)}
+                                        />
+                                        <span className="text-[11px] uppercase">{r.name.replace(/_/g, " ")}</span>
+                                    </CommandItem>
+                                ))}
+                            </CommandGroup>
+                        </CommandList>
+                    </Command>
+                </PopoverContent>
+            </Popover>
+        </div>
+    );
+}
+
 export default function SuperAdminDashboard() {
     const { toast } = useToast();
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
+    const [activeTab, setActiveTab] = useState("overview");
     const [searchQuery, setSearchQuery] = useState("");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [usersPage, setUsersPage] = useState(0);
     const [settingsView, setSettingsView] = useState<"none" | "roles" | "ips" | "policies" | "locations">("none");
     const [showPassword, setShowPassword] = useState(false);
     const [showCreatePassword, setShowCreatePassword] = useState(false);
+    const [createUserRoles, setCreateUserRoles] = useState<string[]>([]);
+    const [editUserRoles, setEditUserRoles] = useState<string[]>([]);
 
     // Dialog states for settings
     const [isAddRoleDialogOpen, setIsAddRoleDialogOpen] = useState(false);
@@ -62,15 +175,68 @@ export default function SuperAdminDashboard() {
     const [isAddIpDialogOpen, setIsAddIpDialogOpen] = useState(false);
     const [editingPolicy, setEditingPolicy] = useState<Policy | null>(null);
 
-    // Queries
-    const { data: users, isLoading: usersLoading } = useQuery<User[]>({
-        queryKey: ["/api/users", "super-admin"],
-        queryFn: async () => {
-            const res = await apiRequest("GET", "/api/users");
-            const data = await res.json();
-            return data.users || [];
+    useEffect(() => {
+        const t = setTimeout(() => {
+            setDebouncedSearch(searchQuery.trim());
+            setUsersPage(0);
+        }, 350);
+        return () => clearTimeout(t);
+    }, [searchQuery]);
+
+    useEffect(() => {
+        if (!editingUser) {
+            setEditUserRoles([]);
+            return;
         }
+        setEditUserRoles(
+            editingUser.roles?.length
+                ? [...editingUser.roles]
+                : editingUser.role
+                  ? [editingUser.role]
+                  : [],
+        );
+    }, [editingUser]);
+
+    const needsRoles = activeTab === "overview" || activeTab === "users" || isAddDialogOpen || !!editingUser;
+    const needsPolicies =
+        settingsView === "policies" ||
+        settingsView === "locations" ||
+        isAddDialogOpen ||
+        !!editingUser;
+    const needsIps = activeTab === "settings" && settingsView === "ips";
+
+    const { data: userStats } = useQuery<{ totalUsers: number }>({
+        queryKey: ["/api/users/stats/summary"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/users/stats/summary");
+            return res.json();
+        },
+        staleTime: 60_000,
     });
+
+    const { data: usersPageData, isLoading: usersLoading, isFetching: usersFetching } = useQuery({
+        queryKey: ["/api/users", "super-admin", usersPage, debouncedSearch],
+        queryFn: async () => {
+            const params = new URLSearchParams({
+                limit: String(USERS_PAGE_SIZE),
+                offset: String(usersPage * USERS_PAGE_SIZE),
+            });
+            if (debouncedSearch) params.set("search", debouncedSearch);
+            const res = await apiRequest("GET", `/api/users?${params.toString()}`);
+            const data = await res.json();
+            return {
+                users: (data.users || []) as User[],
+                total: Number(data.total) || 0,
+            };
+        },
+        enabled: activeTab === "users",
+        placeholderData: (prev) => prev,
+        staleTime: 30_000,
+    });
+
+    const users = usersPageData?.users ?? [];
+    const usersTotal = usersPageData?.total ?? 0;
+    const usersPageCount = Math.max(1, Math.ceil(usersTotal / USERS_PAGE_SIZE));
 
     const { data: roles, isLoading: rolesLoading } = useQuery<Role[]>({
         queryKey: ["/api/settings/roles"],
@@ -78,36 +244,47 @@ export default function SuperAdminDashboard() {
             const res = await apiRequest("GET", "/api/settings/roles");
             const data = await res.json();
             return Array.isArray(data) ? data : (data.roles || []);
-        }
+        },
+        enabled: needsRoles,
+        staleTime: 5 * 60_000,
     });
 
-    const { data: ips, isLoading: ipsLoading } = useQuery<AllowedIp[]>({
+    const { data: ips } = useQuery<AllowedIp[]>({
         queryKey: ["/api/settings/allowed-ips"],
         queryFn: async () => {
             const res = await apiRequest("GET", "/api/settings/allowed-ips");
             const data = await res.json();
             return Array.isArray(data) ? data : (data.ips || []);
-        }
+        },
+        enabled: needsIps,
+        staleTime: 5 * 60_000,
     });
 
-    const { data: policies, isLoading: policiesLoading } = useQuery<Policy[]>({
+    const { data: policies } = useQuery<Policy[]>({
         queryKey: ["/api/settings/policies"],
         queryFn: async () => {
             const res = await apiRequest("GET", "/api/settings/policies");
             const data = await res.json();
             return Array.isArray(data) ? data : (data.policies || []);
-        }
+        },
+        enabled: needsPolicies,
+        staleTime: 5 * 60_000,
     });
 
-    const filteredUsers = (Array.isArray(users) ? users : []).filter(user => {
-        const query = searchQuery.toLowerCase();
-        return (
-            user.fullName.toLowerCase().includes(query) ||
-            user.email.toLowerCase().includes(query) ||
-            user.role.toLowerCase().includes(query) ||
-            user.roles?.some(r => r.toLowerCase().includes(query))
-        );
-    });
+    const locationOptions = useMemo(() => {
+        const loc = policies?.find((p) => p.key === "system_locations")?.value_json;
+        return {
+            branches: (loc?.branches as string[] | undefined) || [
+                "Lahore Gulburg",
+                "Lahore Raya",
+                "Sialkot Welc",
+                "Sialkot webexcels",
+                "Gugrawala webexcels",
+                "Faislabad webexcels",
+            ],
+            countries: (loc?.countries as string[] | undefined) || ["UAE", "USA", "Pakistan"],
+        };
+    }, [policies]);
 
     // Mutations
     const createMutation = useMutation({
@@ -119,7 +296,9 @@ export default function SuperAdminDashboard() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/users/stats/summary"] });
             setIsAddDialogOpen(false);
+            setCreateUserRoles([]);
             toast({ title: "User created successfully" });
         },
         onError: (error: any) => {
@@ -141,6 +320,7 @@ export default function SuperAdminDashboard() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/users/stats/summary"] });
             setEditingUser(null);
             toast({ title: "User updated successfully" });
         },
@@ -155,6 +335,7 @@ export default function SuperAdminDashboard() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/users/stats/summary"] });
             toast({ title: "User deleted successfully" });
         },
         onError: (error: any) => {
@@ -221,24 +402,11 @@ export default function SuperAdminDashboard() {
         const formData = new FormData(form);
         const data: any = Object.fromEntries(formData);
 
-        // Collect roles from checked boxes - be more robust with checking for "on" or any truthy string
-        const getCheck = (name: string) => {
-            const val = formData.get(name);
-            return val === "on" || val === "true" || val === "";
-        };
-
-        const selectedRoles = roles?.filter(r =>
-            getCheck(`role_${r.name}`) ||
-            getCheck(`create_role_${r.name}`)
-        ).map(r => r.name);
-
-        data.roles = selectedRoles && selectedRoles.length > 0 ? selectedRoles : [];
-        
+        data.roles = [...createUserRoles];
         if (data.roles.length === 0) {
             toast({ title: "Error", description: "Please select at least one role", variant: "destructive" });
             return;
         }
-        
         data.role = data.roles[0];
 
         // Ensure we have required data
@@ -256,10 +424,11 @@ export default function SuperAdminDashboard() {
         const formData = new FormData(e.currentTarget);
         const data: any = Object.fromEntries(formData);
 
-        // Collect roles from checked boxes
-        const selectedRoles = roles?.filter(r => formData.get(`role_${r.name}`) === "on").map(r => r.name);
-        data.roles = selectedRoles && selectedRoles.length > 0 ? selectedRoles : [data.role];
-        // Sync legacy role field with first selected role
+        data.roles = [...editUserRoles];
+        if (data.roles.length === 0) {
+            toast({ title: "Error", description: "Please select at least one role", variant: "destructive" });
+            return;
+        }
         data.role = data.roles[0];
 
         updateMutation.mutate({ id: editingUser.id, data });
@@ -294,7 +463,13 @@ export default function SuperAdminDashboard() {
             <div className="flex items-center justify-between">
                 <h2 className="text-[14px] font-bold tracking-tight uppercase">Super Admin Dashboard</h2>
                 <div className="flex items-center space-x-2">
-                    <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+                    <Dialog
+                        open={isAddDialogOpen}
+                        onOpenChange={(open) => {
+                            setIsAddDialogOpen(open);
+                            if (!open) setCreateUserRoles([]);
+                        }}
+                    >
                         <DialogTrigger asChild>
                             <Button className="bg-emerald-600 hover:bg-emerald-700">
                                 <UserPlus className="mr-2 h-4 w-4" /> Add New User
@@ -314,25 +489,20 @@ export default function SuperAdminDashboard() {
                                             </Button>
                                         </div>
                                     </div>
-                                    <div className="grid gap-1.5">
-                                        <Label className="font-bold text-muted-foreground mr-1">Roles</Label>
-                                        <div className="grid grid-cols-2 gap-2 border rounded-md p-3 bg-slate-50/50 dark:bg-zinc-900 max-h-[160px] overflow-y-auto">
-                                            {rolesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> :
-                                                roles?.map(r => (
-                                                    <div key={r.id} className="flex items-center space-x-2">
-                                                        <Checkbox id={`add_role_${r.name}`} name={`role_${r.name}`} value="on" />
-                                                        <Label htmlFor={`add_role_${r.name}`} className="text-[11px] font-normal cursor-pointer uppercase">{r.name.replace(/_/g, ' ')}</Label>
-                                                    </div>
-                                                ))}
-                                        </div>
-
-                                    </div>
+                                    <RoleMultiSelect
+                                        roles={roles || []}
+                                        value={createUserRoles}
+                                        onChange={setCreateUserRoles}
+                                        loading={rolesLoading}
+                                        label="Roles"
+                                        maxHeightClass="max-h-48"
+                                    />
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="grid gap-1.5"><Label className="font-bold text-muted-foreground mr-1">Branch</Label>
                                             <Select name="branch" defaultValue="Lahore Gulburg">
                                                 <SelectTrigger className="h-9"><SelectValue placeholder="Select Branch" /></SelectTrigger>
                                                 <SelectContent>
-                                                    {(policies?.find(p => p.key === "system_locations")?.value_json?.branches || ["Lahore Gulburg", "Lahore Raya", "Sialkot Welc", "Sialkot webexcels", "Gugrawala webexcels", "Faislabad webexcels"]).map((b: string) => (
+                                                    {locationOptions.branches.map((b: string) => (
                                                         <SelectItem key={b} value={b}>{b}</SelectItem>
                                                     ))}
                                                 </SelectContent>
@@ -342,7 +512,7 @@ export default function SuperAdminDashboard() {
                                             <Select name="country" defaultValue="Pakistan">
                                                 <SelectTrigger className="h-9"><SelectValue placeholder="Select Country" /></SelectTrigger>
                                                 <SelectContent>
-                                                    {(policies?.find(p => p.key === "system_locations")?.value_json?.countries || ["UAE", "USA", "Pakistan"]).map((c: string) => (
+                                                    {locationOptions.countries.map((c: string) => (
                                                         <SelectItem key={c} value={c}>{c}</SelectItem>
                                                     ))}
                                                 </SelectContent>
@@ -357,18 +527,19 @@ export default function SuperAdminDashboard() {
                 </div>
             </div>
 
-            <Tabs defaultValue="overview" className="space-y-4">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
                 <TabsList className="bg-card border shadow-sm">
                     <TabsTrigger value="overview">Overview</TabsTrigger>
                     <TabsTrigger value="users">User Management</TabsTrigger>
                     <TabsTrigger value="settings">System Settings</TabsTrigger>
                 </TabsList>
 
+                {activeTab === "overview" && (
                 <TabsContent value="overview" className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                         <Card className="shadow-sm border-slate-200 dark:border-zinc-800">
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Total Users</CardTitle><Users className="h-4 w-4 text-muted-foreground" /></CardHeader>
-                            <CardContent><div className="text-2xl font-bold">{users?.length || 0}</div></CardContent>
+                            <CardContent><div className="text-2xl font-bold">{userStats?.totalUsers ?? "—"}</div></CardContent>
                         </Card>
                         <Card className="shadow-sm border-slate-200 dark:border-zinc-800">
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-sm font-medium">Active Roles</CardTitle><Shield className="h-4 w-4 text-muted-foreground" /></CardHeader>
@@ -384,7 +555,9 @@ export default function SuperAdminDashboard() {
                         </Card>
                     </div>
                 </TabsContent>
+                )}
 
+                {activeTab === "users" && (
                 <TabsContent value="users" className="space-y-4">
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                         {/* LEFT COLUMN: Create Admin */}
@@ -430,18 +603,12 @@ export default function SuperAdminDashboard() {
                                                 </Button>
                                             </div>
                                         </div>
-                                        <div className="grid gap-2">
-                                            <Label className="uppercase text-xs font-semibold">Roles</Label>
-                                            <div className="grid grid-cols-2 gap-2 border rounded-md p-3 bg-slate-50/50 dark:bg-zinc-900">
-                                                {rolesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> :
-                                                    roles?.map(r => (
-                                                        <div key={r.id} className="flex items-center space-x-2">
-                                                            <Checkbox id={`create_role_${r.name}`} name={`role_${r.name}`} />
-                                                            <Label htmlFor={`create_role_${r.name}`} className="text-[10px] font-normal cursor-pointer uppercase">{r.name.replace(/_/g, ' ')}</Label>
-                                                        </div>
-                                                    ))}
-                                            </div>
-                                        </div>
+                                        <RoleMultiSelect
+                                            roles={roles || []}
+                                            value={createUserRoles}
+                                            onChange={setCreateUserRoles}
+                                            loading={rolesLoading}
+                                        />
                                         {/* Hidden defaults for required fields in schema */}
 
                                         <input type="hidden" name="branch" value="Lahore Gulburg" />
@@ -476,14 +643,17 @@ export default function SuperAdminDashboard() {
                             </div>
 
                             <div className="space-y-4">
-                                {usersLoading ? <div className="flex justify-center p-8"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div> : (
-                                    filteredUsers?.length === 0 ? (
+                                {usersLoading ? (
+                                    <div className="flex justify-center p-8"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div>
+                                ) : users.length === 0 ? (
                                         <div className="text-center p-12 border-2 border-dashed rounded-lg bg-slate-50/50 dark:bg-zinc-900">
                                             <p className="text-muted-foreground">No users found matching "{searchQuery}"</p>
                                             <Button variant="ghost" onClick={() => setSearchQuery("")} className="mt-2 text-indigo-600 hover:text-indigo-700">Clear search</Button>
                                         </div>
                                     ) : (
-                                        filteredUsers?.map((user) => (
+                                        <>
+                                        <div className={cn("space-y-4", usersFetching && "opacity-70 pointer-events-none")}>
+                                        {users.map((user) => (
                                             <UserCard
                                                 key={user.id}
                                                 user={user}
@@ -492,14 +662,40 @@ export default function SuperAdminDashboard() {
                                                 onDelete={(id) => deleteMutation.mutate(id)}
                                                 isUpdating={updateMutation.isPending && editingUser?.id === user.id}
                                             />
-                                        ))
-                                    )
-                                )}
+                                        ))}
+                                        </div>
+                                        <div className="flex items-center justify-between pt-2 border-t">
+                                            <p className="text-xs text-muted-foreground">
+                                                Showing {usersPage * USERS_PAGE_SIZE + 1}–{Math.min(usersTotal, (usersPage + 1) * USERS_PAGE_SIZE)} of {usersTotal}
+                                            </p>
+                                            <div className="flex gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    disabled={usersPage <= 0 || usersFetching}
+                                                    onClick={() => setUsersPage((p) => Math.max(0, p - 1))}
+                                                >
+                                                    Previous
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    disabled={usersPage >= usersPageCount - 1 || usersFetching}
+                                                    onClick={() => setUsersPage((p) => p + 1)}
+                                                >
+                                                    Next
+                                                </Button>
+                                            </div>
+                                        </div>
+                                        </>
+                                    )}
                             </div>
                         </div>
                     </div>
                 </TabsContent>
+                )}
 
+                {activeTab === "settings" && (
                 <TabsContent value="settings">
                     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                         <Card className="hover:border-primary cursor-pointer transition-all shadow-sm" onClick={() => setSettingsView("roles")}><CardHeader><CardTitle className="flex items-center gap-2"><Shield className="h-5 w-5 text-primary" /> Roles</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">Manage system roles and descriptions.</p></CardContent></Card>
@@ -608,6 +804,7 @@ export default function SuperAdminDashboard() {
                         </DialogContent>
                     </Dialog>
                 </TabsContent>
+                )}
             </Tabs>
 
             {/* Sub-Dialogs for Settings */}
@@ -658,28 +855,20 @@ export default function SuperAdminDashboard() {
                             <DialogHeader><DialogTitle className="text-[14px] font-bold">Edit User: {editingUser.fullName}</DialogTitle></DialogHeader>
                             <div className="grid gap-4 py-4">
                                 <div className="grid gap-1.5"><Label className="text-[12px] font-bold text-muted-foreground mr-1">Full Name</Label><Input name="fullName" defaultValue={editingUser.fullName} className="text-[12px] h-9" /></div>
-                                <div className="grid gap-1.5">
-                                    <Label className="text-[12px] font-bold text-muted-foreground mr-1">Roles</Label>
-                                    <div className="grid grid-cols-2 gap-2 border rounded-md p-3 bg-slate-50/50 dark:bg-zinc-900 max-h-[160px] overflow-y-auto">
-                                        {roles?.map(r => (
-                                            <div key={r.id} className="flex items-center space-x-2">
-                                                <Checkbox
-                                                    id={`edit_role_${r.name}`}
-                                                    name={`role_${r.name}`}
-                                                    defaultChecked={editingUser.roles?.includes(r.name) || editingUser.role === r.name}
-                                                />
-                                                <Label htmlFor={`edit_role_${r.name}`} className="text-[11px] font-normal cursor-pointer uppercase">{r.name.replace(/_/g, ' ')}</Label>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <input type="hidden" name="role" defaultValue={editingUser.role} />
-                                </div>
+                                <RoleMultiSelect
+                                    roles={roles || []}
+                                    value={editUserRoles}
+                                    onChange={setEditUserRoles}
+                                    loading={rolesLoading}
+                                    label="Roles"
+                                />
+                                <input type="hidden" name="role" value={editUserRoles[0] || editingUser.role} readOnly />
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="grid gap-1.5"><Label className="text-[12px] font-bold text-muted-foreground mr-1">Branch</Label>
                                         <Select name="branch" defaultValue={editingUser.branch || "Lahore Gulburg"}>
                                             <SelectTrigger className="text-[12px] h-9"><SelectValue placeholder="Select Branch" /></SelectTrigger>
                                             <SelectContent>
-                                                {(policies?.find(p => p.key === "system_locations")?.value_json?.branches || ["Lahore Gulburg", "Lahore Raya", "Sialkot Welc", "Sialkot webexcels", "Gugrawala webexcels", "Faislabad webexcels"]).map((b: string) => (
+                                                {locationOptions.branches.map((b: string) => (
                                                     <SelectItem key={b} value={b} className="text-[12px]">{b}</SelectItem>
                                                 ))}
                                             </SelectContent>
@@ -689,7 +878,7 @@ export default function SuperAdminDashboard() {
                                         <Select name="country" defaultValue={editingUser.country || "Pakistan"}>
                                             <SelectTrigger className="text-[12px] h-9"><SelectValue placeholder="Select Country" /></SelectTrigger>
                                             <SelectContent>
-                                                {(policies?.find(p => p.key === "system_locations")?.value_json?.countries || ["UAE", "USA", "Pakistan"]).map((c: string) => (
+                                                {locationOptions.countries.map((c: string) => (
                                                     <SelectItem key={c} value={c} className="text-[12px]">{c}</SelectItem>
                                                 ))}
                                             </SelectContent>
@@ -709,6 +898,7 @@ export default function SuperAdminDashboard() {
 }
 
 const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User, roles: Role[], onUpdate: (id: string, data: any) => void, onDelete: (id: string) => void, isUpdating: boolean }) => {
+    const { toast } = useToast();
     const [formData, setFormData] = useState({
         fullName: user.fullName || "",
         email: user.email || "",
@@ -717,7 +907,6 @@ const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User,
         password: user.password || ""
     });
     const [showPassword, setShowPassword] = useState(false);
-
     useEffect(() => {
         setFormData({
             fullName: user.fullName || "",
@@ -733,10 +922,14 @@ const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User,
     };
 
     const handleSave = () => {
-        // Sync the legacy role field with the first selected role
+        if (formData.roles.length === 0) {
+            toast({ title: "Select at least one role", variant: "destructive" });
+            return;
+        }
         const dataToSend = {
             ...formData,
-            role: formData.roles.length > 0 ? formData.roles[0] : formData.role,
+            roles: [...formData.roles],
+            role: formData.roles[0],
         };
         onUpdate(user.id, dataToSend);
     };
@@ -765,33 +958,20 @@ const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User,
                     </div>
                 </div>
 
-                <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground uppercase">Roles</Label>
-                    <div className="grid grid-cols-2 gap-2 border rounded-md p-2 bg-slate-50/50 dark:bg-zinc-900">
-                        {roles.map(r => (
-                            <div key={r.id} className="flex items-center space-x-2">
-                                <Checkbox
-                                    id={`card_role_${user.id}_${r.name}`}
-                                    checked={formData.roles.includes(r.name)}
-                                    onCheckedChange={(checked) => {
-                                        const newRoles = checked
-                                            ? [...formData.roles, r.name]
-                                            : formData.roles.filter(role => role !== r.name);
-                                        setFormData(prev => ({ ...prev, roles: newRoles }));
-                                    }}
-                                />
-                                <Label htmlFor={`card_role_${user.id}_${r.name}`} className="text-[10px] font-normal cursor-pointer uppercase">{r.name.replace(/_/g, ' ')}</Label>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+                <RoleMultiSelect
+                    roles={roles}
+                    value={formData.roles}
+                    onChange={(next) => setFormData((prev) => ({ ...prev, roles: next }))}
+                    label="Roles"
+                    triggerLabel="Assign multiple roles"
+                />
 
                 <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Password</Label>
                     <div className="relative">
                         <Input
                             type={showPassword ? "text" : "password"}
-                            placeholder="Leave blank to keep current password"
+                            placeholder={user.password ? "Edit password or leave as-is" : "Leave blank to keep current password"}
                             value={formData.password}
                             onChange={e => handleChange("password", e.target.value)}
                             className="h-9 pr-10"

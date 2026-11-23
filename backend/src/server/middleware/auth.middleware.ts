@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction, CookieOptions } from "express";
 import { authService, type TokenPayload } from "../services/auth.service.js";
-import { normalizeRole } from "../utils/role-utils";
+import { looksLikeLegacyRoleCsv, normalizeRole, resolveActiveRoleId } from "../utils/role-utils";
 
 // Extend Express Request to include user
 declare global {
@@ -108,7 +108,18 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
     const payload = authService.verifyToken(tokenInfo.token);
     const userId = resolveUserId(payload);
-    const normalizedRoleId = normalizeRole(resolveRoleId(payload));
+    const rawRoleFromToken = String(resolveRoleId(payload) ?? "");
+    const tokenRoles = Array.isArray((payload as any).roles)
+      ? (payload as any).roles.map((r: string) => normalizeRole(r))
+      : looksLikeLegacyRoleCsv(rawRoleFromToken)
+        ? []
+        : [normalizeRole(rawRoleFromToken)];
+    const resolvedActiveRoleId = resolveActiveRoleId(
+      (payload as any).activeRoleId,
+      rawRoleFromToken,
+      tokenRoles.length > 0 ? tokenRoles : undefined,
+    );
+    const roleIdForRequest = resolvedActiveRoleId;
     if (!userId) {
       console.warn(
         `[AUTH] 401 ${req.method} ${req.originalUrl} reason=missing-user-id header=${tokenInfo.hasAuthHeader ? "y" : "n"} cookie=${tokenInfo.hasAuthCookie ? "y" : "n"} userId=none`,
@@ -120,20 +131,24 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     req.user = {
       ...payload,
       userId,
-      roleId: normalizedRoleId,
-      roles: (payload as any).roles || [normalizedRoleId],
-      activeRoleId: (payload as any).activeRoleId ?? normalizedRoleId,
+      roleId: roleIdForRequest,
+      roles: tokenRoles.length ? tokenRoles : [roleIdForRequest],
+      activeRoleId: resolvedActiveRoleId,
     };
     // --------------------------------------------------------------
     // 👇 NEW: Ensure per‑executive tables exist and expose the target table name
     // --------------------------------------------------------------
-    try {
-      const { ensureSalesTables } = await import("../utils/sales-tables.js");
-      const salesTable = await ensureSalesTables(userId, normalizedRoleId);
-      (req as any).salesTable = salesTable;
-    } catch (e) {
-      console.warn("[AUTH] Failed to ensure per‑executive sales tables:", e);
-      (req as any).salesTable = "sales_executives"; // fallback
+    if (process.env.SKIP_SCHEMA_ENSURE !== "true") {
+      try {
+        const { ensureSalesTables } = await import("../utils/sales-tables.js");
+        const salesTable = await ensureSalesTables(userId, roleIdForRequest);
+        (req as any).salesTable = salesTable;
+      } catch (e) {
+        console.warn("[AUTH] Failed to ensure per‑executive sales tables:", e);
+        (req as any).salesTable = "sales_executives"; // fallback
+      }
+    } else {
+      (req as any).salesTable = "sales_executives";
     }
     if (process.env.DEBUG_AUTH === "true") {
       console.log(

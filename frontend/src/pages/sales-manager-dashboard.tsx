@@ -52,6 +52,7 @@ import {
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { cn } from "@/lib/utils";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type KpiKey = "totalRevenue" | "new" | "renew" | "expire" | "vm" | "kwa" | "psa" | "sponsorBrand";
 
@@ -691,16 +692,21 @@ export default function SalesManagerDashboard() {
                                     </div>
                                 </div>
                                 <div className="flex items-center w-full">
-                                    <Select value={activityUser} onValueChange={(val) => { setActivityUser(val); setActivityPage(1); }}>
-                                        <SelectTrigger className="w-[150px] border-border h-8 text-xs">
-                                            <SelectValue placeholder="Apply Filter: All Users" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {availableActivityUsers.map((user) => (
-                                                <SelectItem key={user} value={user}>{user}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
+                                    <RoleGroupedUserSelect
+                                        grouped={false}
+                                        users={availableActivityUsers
+                                            .filter((name) => name !== "All Users")
+                                            .map((name) => ({
+                                                id: name,
+                                                fullName: name,
+                                                isDeactive: assignedUsers.find((u: any) => (u.name || u.fullName) === name)?.isDeactive,
+                                            }))}
+                                        value={activityUser}
+                                        onChange={(val) => { setActivityUser(val); setActivityPage(1); }}
+                                        extraOptions={[{ value: "All Users", label: "All Users" }]}
+                                        placeholder="Apply Filter: All Users"
+                                        className="w-[150px] border-border h-8 text-xs"
+                                    />
                                 </div>
                             </CardHeader>
                             <CardContent className={denseTableContent}>
@@ -1114,17 +1120,16 @@ export default function SalesManagerDashboard() {
                                 <div className="flex items-center h-8 rounded-md border border-slate-200 bg-white px-2 py-1 shadow-sm transition-colors overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
                                     <input type="date" value={followUpDateTo} onChange={e => setFollowUpDateTo(e.target.value)} className="bg-transparent border-none outline-none focus:ring-0 text-slate-600 dark:text-zinc-300 text-xs w-[110px]" />
                                 </div>
-                                <Select value={followUpUser} onValueChange={setFollowUpUser}>
-                                    <SelectTrigger className="w-[120px] h-8 text-xs border-slate-200 dark:border-zinc-800">
-                                        <SelectValue placeholder="All Users" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="All Users">All Users</SelectItem>
-                                        {assignedUsers.map((u: any) => (
-                                            <SelectItem key={u.id} value={u.name || u.fullName}>{u.name || u.fullName}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                <RoleGroupedUserSelect
+                                    grouped={false}
+                                    users={assignedUsers}
+                                    value={followUpUser}
+                                    onChange={setFollowUpUser}
+                                    getValue={(u) => String(u.name || u.fullName || "")}
+                                    extraOptions={[{ value: "All Users", label: "All Users" }]}
+                                    placeholder="All Users"
+                                    className="w-[120px] h-8 text-xs border-slate-200 dark:border-zinc-800"
+                                />
                             </div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 w-full h-10 shadow-sm rounded-md overflow-hidden font-bold text-sm text-white">

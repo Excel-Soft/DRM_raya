@@ -1,13 +1,15 @@
 import { useState, useMemo } from "react";
-import { Eye, Loader2, ArrowUp, ArrowDown, ArrowUpDown, CheckCircle2, XCircle, ClipboardCheck } from "lucide-react";
+import { Eye, Link2, Loader2, ArrowUp, ArrowDown, ArrowUpDown, CheckCircle2, XCircle, ClipboardCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequestJson } from "@/lib/queryClient";
+import { normalizeTaskLinkKey } from "@/lib/task-link-utils";
+import { departmentTypeInQaPipeline, departmentTypeMatchesFamily } from "@/lib/project-department-variants";
 import { useToast } from "@/hooks/use-toast";
 
 interface TaskStatusHistoryRecord {
@@ -24,6 +26,7 @@ interface TaskStatusHistoryRecord {
     currentStatus?: string | null;
     qaComment?: string | null;
     vmComment?: string | null;
+    needsChanging?: boolean;
     departmentType?: string | null;
     linkApprovedQty?: number;
     linkTotalQty?: number;
@@ -51,6 +54,8 @@ interface PendingReviewTask {
     departmentType: string | null;
     submittedAt: string | null;
     submissionNotes: string | null;
+    /** Old-DRM task the executive ended but the manager hasn't approved (approve it in the old DRM). */
+    legacyReadOnly?: boolean;
 }
 
 interface SubmittedFileEntry {
@@ -65,10 +70,13 @@ interface SubmittedFileEntry {
 const TASK_HISTORY_KEY = "/api/pms/task-history";
 const PENDING_REVIEW_KEY = "/api/pms/tasks/pending-review";
 
-// Departments that actually run through the QA -> Verification pipeline.
-// Everything else (IT, Software, Service) has no QA step at all — its
-// manager's own approval is the final word ("Closed Task").
-const QA_PIPELINE_DEPARTMENTS = ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"];
+interface TaskHistoryPage {
+    items: TaskStatusHistoryRecord[];
+    total: number;
+    page: number;
+    pageSize: number;
+    hasMore: boolean;
+}
 
 function extractSubmittedLinks(notes: string | null): string[] {
     if (!notes) return [];
@@ -83,23 +91,156 @@ function extractSubmittedLinks(notes: string | null): string[] {
     return [];
 }
 
+const URL_IN_TEXT_RE = /https?:\/\/[^\s<>"']+/gi;
+
+function extractUrlsFromText(text: string | null | undefined): string[] {
+    if (!text || text === "N/A") return [];
+    const hits = text.match(URL_IN_TEXT_RE) || [];
+    const lines = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => /^https?:\/\//i.test(l));
+    const merged = [...hits, ...lines].map((u) => u.replace(/[.,;)]+$/, "").trim());
+    return Array.from(new Set(merged.filter(Boolean)));
+}
+
+function commentPreviewWithoutUrls(text: string | null | undefined): string {
+    if (!text || text === "N/A") return "";
+    let t = text;
+    for (const u of extractUrlsFromText(text)) {
+        t = t.replace(u, " ");
+    }
+    return t.replace(/\s+/g, " ").trim();
+}
+
+function normalizeHref(url: string): string {
+    const t = url.trim();
+    return /^https?:\/\//i.test(t) ? t : `https://${t}`;
+}
+
+function uniqueSubmittedLinkUrls(urls: string[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of urls) {
+        const trimmed = raw.trim();
+        if (!trimmed) continue;
+        const key = normalizeTaskLinkKey(trimmed);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(trimmed);
+    }
+    return out;
+}
+
+function linkSubmissionsFromFiles(files: SubmittedFileEntry[]): string[] {
+    return uniqueSubmittedLinkUrls(
+        files.filter((f) => !f.fileUrl && f.description?.trim()).map((f) => f.description!.trim()),
+    );
+}
+
+type LinksModalState = {
+    title: string;
+    taskId?: string;
+    staticUrls?: string[];
+} | null;
+
+function CommentCell({
+    label,
+    fullText,
+    onOpenLinks,
+}: {
+    label: string;
+    fullText: string;
+    onOpenLinks: (title: string, urls: string[], taskId?: string) => void;
+}) {
+    if (!fullText || fullText === "N/A") {
+        return <span className="text-[11px] text-gray-400">N/A</span>;
+    }
+    const urls = extractUrlsFromText(fullText);
+    const preview = commentPreviewWithoutUrls(fullText);
+    const shortPreview = preview.length > 72 ? `${preview.slice(0, 72)}…` : preview;
+
+    if (urls.length > 0) {
+        return (
+            <div className="flex flex-col gap-1 max-w-[130px]">
+                {shortPreview ? (
+                    <span className="text-[10px] text-[#6c757d] line-clamp-2 leading-snug" title={preview}>
+                        {shortPreview}
+                    </span>
+                ) : null}
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[10px] gap-1 w-fit border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                    onClick={() => onOpenLinks(`${label} (${urls.length})`, urls)}
+                >
+                    <Link2 className="w-3 h-3" />
+                    Links ({urls.length})
+                </Button>
+            </div>
+        );
+    }
+
+    const plain = shortPreview || fullText;
+    const display = plain.length > 120 ? `${plain.slice(0, 120)}…` : plain;
+    return (
+        <span className="text-[11px] text-[#6c757d] line-clamp-3 max-w-[130px] break-words" title={fullText}>
+            {display}
+        </span>
+    );
+}
+
 export default function PmsTaskHistory() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
+    const [historyPageSize, setHistoryPageSize] = useState(50);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [statusFilter, setStatusFilter] = useState("all");
+
     const {
-        data: historyRecords = [],
+        data: historyPages,
+        fetchNextPage,
+        hasNextPage,
+        isFetchingNextPage,
         isLoading,
         isError,
         error,
-    } = useQuery<TaskStatusHistoryRecord[]>({
-        queryKey: [TASK_HISTORY_KEY],
-        queryFn: () => apiRequestJson<TaskStatusHistoryRecord[]>("GET", TASK_HISTORY_KEY),
+    } = useInfiniteQuery({
+        queryKey: [TASK_HISTORY_KEY, historyPageSize, statusFilter],
+        queryFn: async ({ pageParam }) => {
+            const filterQs = statusFilter === "changing" ? "&filter=changing" : "";
+            const res = await apiRequestJson<TaskHistoryPage | TaskStatusHistoryRecord[]>(
+                "GET",
+                `${TASK_HISTORY_KEY}?page=${pageParam}&pageSize=${historyPageSize}${filterQs}`,
+            );
+            if (Array.isArray(res)) {
+                return {
+                    items: res,
+                    total: res.length,
+                    page: 1,
+                    pageSize: historyPageSize,
+                    hasMore: false,
+                };
+            }
+            return res;
+        },
+        initialPageParam: 1,
+        getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.page + 1 : undefined),
     });
+
+    const historyRecords = useMemo(
+        () => historyPages?.pages.flatMap((p) => p.items) ?? [],
+        [historyPages],
+    );
+    const historyTotal = historyPages?.pages[0]?.total ?? historyRecords.length;
 
     // Server-gated (GET /api/pms/tasks/pending-review returns [] for any
     // non-managerial role) — the client-side isManager check below only
     // decides whether to render the section at all, it isn't the real gate.
+    const PENDING_PAGE_SIZE = 20;
+    const [pendingPage, setPendingPage] = useState(1);
     const { data: pendingReview = [], isLoading: isPendingReviewLoading } = useQuery<PendingReviewTask[]>({
         queryKey: [PENDING_REVIEW_KEY],
         queryFn: () => apiRequestJson<PendingReviewTask[]>("GET", PENDING_REVIEW_KEY),
@@ -124,9 +265,17 @@ export default function PmsTaskHistory() {
         queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
     };
 
+    // Old-DRM task: move it into the new flow first (a real task, READY_FOR_QA), then approve /
+    // reject it like any task — Send to QA, QA, VM and close then work as usual.
+    const resolveReviewTaskId = async (taskId: string): Promise<string> => {
+        if (!taskId.startsWith("legacy-assign-")) return taskId;
+        const r = await apiRequestJson<{ taskId: string }>("POST", `/api/pms/legacy-tasks/${taskId}/open`, {});
+        return r.taskId;
+    };
+
     const approveMutation = useMutation({
         mutationFn: async (taskId: string) =>
-            apiRequestJson("PATCH", `/api/pms/task/${taskId}/status`, { status: "Completed" }),
+            apiRequestJson("PATCH", `/api/pms/task/${await resolveReviewTaskId(taskId)}/status`, { status: "Completed" }),
         onSuccess: () => {
             invalidateReview();
             toast({ title: "Approved", description: "The task is complete — finish it from Completed Projects below." });
@@ -195,7 +344,7 @@ export default function PmsTaskHistory() {
     const rejectMutation = useMutation({
         mutationFn: async () => {
             if (!rejectingTask) return;
-            return apiRequestJson("PATCH", `/api/pms/task/${rejectingTask.id}/status`, { status: "Blocked", reason: rejectReason.trim() });
+            return apiRequestJson("PATCH", `/api/pms/task/${await resolveReviewTaskId(rejectingTask.id)}/status`, { status: "Blocked", reason: rejectReason.trim() });
         },
         onSuccess: () => {
             invalidateReview();
@@ -209,14 +358,36 @@ export default function PmsTaskHistory() {
         },
     });
 
-    const [searchQuery, setSearchQuery] = useState("");
-    const [statusFilter, setStatusFilter] = useState("all");
-
     const [viewingTask, setViewingTask] = useState<PendingReviewTask | null>(null);
+    const [linksModal, setLinksModal] = useState<LinksModalState>(null);
+
+    const openLinksModal = (title: string, urls: string[], taskId?: string) => {
+        setLinksModal({ title, staticUrls: urls, taskId });
+    };
+
+    const { data: linksModalFilesRes, isLoading: isLinksModalLoading } = useQuery<{
+        success: boolean;
+        data: SubmittedFileEntry[];
+    }>({
+        queryKey: [`/api/tasks/${linksModal?.taskId}/files`, "links-modal"],
+        enabled: !!linksModal?.taskId,
+        queryFn: () => apiRequestJson("GET", `/api/tasks/${linksModal!.taskId}/files`),
+    });
+
+    const linksModalUrls = useMemo(() => {
+        if (!linksModal) return [];
+        const fromApi = (linksModalFilesRes?.data || [])
+            .map((f) => (f.description || f.fileUrl || "").trim())
+            .filter(Boolean);
+        const merged = [...(linksModal.staticUrls || []), ...fromApi];
+        return Array.from(new Set(merged));
+    }, [linksModal, linksModalFilesRes]);
     const { data: viewingFilesRes, isLoading: isViewingFilesLoading, isError: isViewingFilesError, error: viewingFilesError } = useQuery<{ success: boolean; data: SubmittedFileEntry[] }>({
         queryKey: [`/api/tasks/${viewingTask?.id}/files`],
         enabled: !!viewingTask,
-        queryFn: () => apiRequestJson("GET", `/api/tasks/${viewingTask!.id}/files`),
+        queryFn: () => apiRequestJson("GET", viewingTask!.legacyReadOnly
+            ? `/api/pms/legacy-tasks/${viewingTask!.id}/files`
+            : `/api/tasks/${viewingTask!.id}/files`),
         retry: 1,
     });
     const viewingFiles = viewingFilesRes?.data || [];
@@ -254,23 +425,52 @@ export default function PmsTaskHistory() {
             // this stays visible even after the executive fixes it and
             // resubmits, since it's the reason context a manager still wants
             // before deciding to send it back to QA again.
-            const qaCommentText = record.qaComment || "N/A";
+            const qaCommentRaw = record.qaComment || "";
+            const vmCommentRaw = record.vmComment || "";
+            const qaCommentText = qaCommentRaw.trim() ? qaCommentRaw : "N/A";
+            const vmCommentText = vmCommentRaw.trim() ? vmCommentRaw : "N/A";
 
             // The backend already collapses this feed to one row per task
             // (its latest transition) and only includes tasks currently at
             // rest in Completed or Blocked — so `currentStatus` here IS this
             // row's status; no separate "is this stale" check needed.
             const isQaReturn = record.currentStatus === "Blocked";
+            const qaNote = qaCommentRaw.trim();
+            const vmNote = vmCommentRaw.trim();
+            const isChanging =
+                record.needsChanging === true ||
+                isQaReturn ||
+                Boolean(qaNote && qaNote !== "N/A") ||
+                Boolean(vmNote && vmNote !== "N/A") ||
+                (record.notes
+                    ? (() => {
+                          try {
+                              const p = JSON.parse(record.notes);
+                              return Boolean(p.qaReturn || p.verificationReturn);
+                          } catch {
+                              return false;
+                          }
+                      })()
+                    : false);
+
+            const legacyTaskId = record.task?.id || record.taskId;
+            const isLegacyReadOnly =
+                String(legacyTaskId || "").startsWith("legacy-assign-") ||
+                (record as { legacyReadOnly?: boolean }).legacyReadOnly === true;
 
             return {
                 no: idx + 1,
-                taskId: record.task?.id || record.taskId,
+                taskId: legacyTaskId,
+                isLegacyReadOnly,
                 name: userName,
                 avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}`,
                 company: record.company || "—",
                 qa: qaCommentText,
+                vm: vmCommentText,
+                qaUrls: extractUrlsFromText(qaCommentRaw),
+                vmUrls: extractUrlsFromText(vmCommentRaw),
                 isQaReturn,
-                vm: record.vmComment || "N/A",
+                isChanging,
                 project: record.task?.title || "—",
                 taskDesc: record.fromStatus
                     ? `${record.fromStatus} → ${record.toStatus ?? ""}`
@@ -281,7 +481,9 @@ export default function PmsTaskHistory() {
                 status: record.toStatus || "",
                 run: "",
                 spent: formatDuration(record.timeSpentMinutes || 0),
+                changedAtRaw: record.changedAt,
                 changedAt: record.changedAt ? new Date(record.changedAt).toLocaleString() : "",
+                taskLinksCount: Number(record.linkTotalQty) || 0,
                 links: parsedLinks,
                 sentToQaAt: record.sentToQaAt || null,
                 qaReviewedAt: record.qaReviewedAt || null,
@@ -297,7 +499,7 @@ export default function PmsTaskHistory() {
     const filteredHistory = useMemo(() => {
         let current = history;
         if (statusFilter === "changing") {
-            current = current.filter(row => row.isQaReturn);
+            current = current.filter((row) => row.isChanging);
         }
         if (!searchQuery.trim()) return current;
         const lowerSearch = searchQuery.toLowerCase();
@@ -369,13 +571,22 @@ export default function PmsTaskHistory() {
                                 Nothing waiting on your review right now.
                             </div>
                         ) : (
+                            <>
                             <div className="divide-y divide-gray-100 dark:divide-zinc-800">
-                                {pendingReview.map((task) => {
+                                {pendingReview
+                                    .slice((Math.min(pendingPage, Math.max(1, Math.ceil(pendingReview.length / PENDING_PAGE_SIZE))) - 1) * PENDING_PAGE_SIZE,
+                                           Math.min(pendingPage, Math.max(1, Math.ceil(pendingReview.length / PENDING_PAGE_SIZE))) * PENDING_PAGE_SIZE)
+                                    .map((task) => {
                                     const links = extractSubmittedLinks(task.submissionNotes);
                                     return (
                                         <div key={task.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
                                             <div className="min-w-0">
-                                                <p className="text-[14px] font-bold text-[#343a40] dark:text-zinc-100">{task.title}</p>
+                                                <p className="text-[14px] font-bold text-[#343a40] dark:text-zinc-100">
+                                                    {task.title}
+                                                    {task.legacyReadOnly && (
+                                                        <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 align-middle text-[10px] font-semibold uppercase text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">Old DRM</span>
+                                                    )}
+                                                </p>
                                                 <p className="text-[12px] text-[#6c757d] mt-0.5">
                                                     {task.project || "—"} <span className="opacity-60">·</span> {task.company || "—"}
                                                     <span className="opacity-60"> · submitted by </span>
@@ -435,6 +646,23 @@ export default function PmsTaskHistory() {
                                     );
                                 })}
                             </div>
+                            {pendingReview.length > PENDING_PAGE_SIZE && (() => {
+                                const pages = Math.ceil(pendingReview.length / PENDING_PAGE_SIZE);
+                                const cur = Math.min(pendingPage, pages);
+                                return (
+                                    <div className="flex items-center justify-between gap-2 border-t border-gray-100 px-4 py-2 text-[12px] text-[#6c757d] dark:border-zinc-800">
+                                        <span>
+                                            Showing {(cur - 1) * PENDING_PAGE_SIZE + 1}–{Math.min(cur * PENDING_PAGE_SIZE, pendingReview.length)} of {pendingReview.length.toLocaleString()}
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <Button size="sm" variant="outline" className="h-7" disabled={cur <= 1} onClick={() => setPendingPage(cur - 1)}>Previous</Button>
+                                            <span>Page {cur} of {pages}</span>
+                                            <Button size="sm" variant="outline" className="h-7" disabled={cur >= pages} onClick={() => setPendingPage(cur + 1)}>Next</Button>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+                            </>
                         )}
                     </CardContent>
                 </Card>
@@ -464,11 +692,15 @@ export default function PmsTaskHistory() {
                             />
                         </div>
 
-                        <Select defaultValue="50">
+                        <Select
+                            value={String(historyPageSize)}
+                            onValueChange={(v) => setHistoryPageSize(Number(v))}
+                        >
                             <SelectTrigger className="h-9 w-[80px] text-[13px] bg-white border-gray-200 dark:bg-zinc-900 dark:border-zinc-800">
                                 <SelectValue placeholder="50" />
                             </SelectTrigger>
                             <SelectContent>
+                                <SelectItem value="25">25</SelectItem>
                                 <SelectItem value="50">50</SelectItem>
                                 <SelectItem value="100">100</SelectItem>
                             </SelectContent>
@@ -581,19 +813,36 @@ export default function PmsTaskHistory() {
                                     <td className="px-4 py-3">
                                         <span className="text-[12.5px] font-medium text-[#495057] uppercase tracking-wide dark:text-zinc-400">{row.company}</span>
                                     </td>
-                                    <td className="px-4 py-3">
-                                        <span className="text-[13px] text-[#6c757d]">{row.qa}</span>
+                                    <td className="px-4 py-3 align-top">
+                                        <CommentCell label="QA Comment" fullText={row.qa} onOpenLinks={openLinksModal} />
                                     </td>
-                                    <td className="px-4 py-3">
-                                        <span className="text-[13px] text-[#6c757d]">{row.vm}</span>
+                                    <td className="px-4 py-3 align-top">
+                                        <CommentCell label="VM Comment" fullText={row.vm} onOpenLinks={openLinksModal} />
                                     </td>
                                     <td className="px-4 py-3">
                                         <div className="flex items-start gap-2 py-1">
                                             <div className="flex flex-col">
                                                 <span className="text-[14px] font-bold text-[#343a40] leading-tight dark:text-zinc-100">{row.project}</span>
                                                 <span className="text-[11.5px] font-semibold text-[#6c757d] mt-1"><span className="opacity-80">Task:</span> {row.taskDesc}</span>
-                                                <span className="text-[11.5px] font-semibold text-[#878a99]"><span className="opacity-80">Detail:</span> {row.detail}</span>
+                                                {row.detail ? (
+                                                    <span className="text-[11.5px] font-semibold text-[#878a99] line-clamp-2 max-w-[220px]">
+                                                        <span className="opacity-80">Detail:</span> {row.detail.length > 80 ? `${row.detail.slice(0, 80)}…` : row.detail}
+                                                    </span>
+                                                ) : null}
                                             </div>
+                                            <div className="flex flex-col gap-1 flex-shrink-0">
+                                            {row.taskLinksCount > 0 ? (
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-6 px-2 text-[10px] gap-1 border-emerald-200 text-emerald-700"
+                                                    onClick={() => openLinksModal(`Task links (${row.taskLinksCount})`, [], String(row.taskId))}
+                                                >
+                                                    <Link2 className="w-3 h-3" />
+                                                    Links ({row.taskLinksCount})
+                                                </Button>
+                                            ) : null}
                                             {/* The executive's submitted links/files were only viewable
                                                 while a task sat in "Pending My Review" — once approved
                                                 and moved down here, the manager (and QA, which reuses
@@ -613,13 +862,14 @@ export default function PmsTaskHistory() {
                                                     project: row.project,
                                                     company: row.company,
                                                     departmentType: row.departmentType ?? null,
-                                                    submittedAt: row.changedAt,
+                                                    submittedAt: row.changedAtRaw || row.changedAt || null,
                                                     submissionNotes: null,
                                                 })}
-                                                className="flex-shrink-0 w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                                                className="w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors dark:bg-zinc-800 dark:hover:bg-zinc-700"
                                             >
                                                 <Eye className="w-3.5 h-3.5 text-slate-500" />
                                             </button>
+                                            </div>
                                         </div>
                                     </td>
                                     <td className="px-4 py-3 text-center">
@@ -630,9 +880,15 @@ export default function PmsTaskHistory() {
                                     </td>
                                     <td className="px-4 py-3 text-center">
                                         <span
-                                            className={`inline-flex text-white text-[10.5px] px-2.5 py-1 rounded-[4px] font-bold shadow-sm leading-none ${row.status === 'Blocked' ? 'bg-rose-500' : 'bg-[#2bc18c]'}`}
+                                            className={`inline-flex text-white text-[10.5px] px-2.5 py-1 rounded-[4px] font-bold shadow-sm leading-none ${
+                                                row.isChanging
+                                                    ? "bg-amber-500"
+                                                    : row.status === "Blocked"
+                                                      ? "bg-rose-500"
+                                                      : "bg-[#2bc18c]"
+                                            }`}
                                         >
-                                            {row.status}
+                                            {row.isChanging && row.status !== "Blocked" ? "Changing" : row.status}
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-center">
@@ -644,7 +900,11 @@ export default function PmsTaskHistory() {
                                         <span className="text-[12.5px] font-medium text-[#495057] tracking-wide dark:text-zinc-400">{row.spent}</span>
                                     </td>
                                     <td className="px-4 py-3 text-center min-w-[200px]">
-                                        {row.isQaReturn ? (
+                                        {row.isLegacyReadOnly ? (
+                                            <span className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400" title="Legacy migrated task — view only">
+                                                Legacy
+                                            </span>
+                                        ) : row.isQaReturn ? (
                                             <Button
                                                 size="sm"
                                                 className="h-7 px-3 text-[11px] border border-amber-400 text-amber-600 bg-amber-50 hover:bg-amber-100"
@@ -653,10 +913,9 @@ export default function PmsTaskHistory() {
                                             >
                                                 Assign to Exec
                                             </Button>
-                                        ) : row.status !== 'Completed' ? null : !QA_PIPELINE_DEPARTMENTS.includes(row.departmentType || '') ? (
-                                            // IT/Software/Service have no QA/Verification pipeline
-                                            // at all — this is their manager's own deliberate final
-                                            // hand-off, straight to Complete and Closed Project.
+                                        ) : row.status !== 'Completed' ? null : !departmentTypeInQaPipeline(row.departmentType) ? (
+                                            // IT / Software / Service (e.g. LEGACY-13) — no QA pipeline;
+                                            // D&D / SEO / P&P use Send to QA below (LEGACY-8/9/10 included).
                                             <Button
                                                 size="sm"
                                                 className="h-7 px-3 text-[11px] bg-[#2bc18c] hover:bg-[#25a87a] text-white"
@@ -696,7 +955,10 @@ export default function PmsTaskHistory() {
                                         ) : (() => {
                                             // Product Posting: whole-task Send to QA stays locked
                                             // until every submitted link is QA-approved.
-                                            const isProductPosting = row.departmentType === "PRODUCT_POSTING";
+                                            const isProductPosting = departmentTypeMatchesFamily(
+                                                row.departmentType,
+                                                "product_posting",
+                                            );
                                             const linkTotal = Number(row.linkTotalQty) || 0;
                                             const linkApproved = Number(row.linkApprovedQty) || 0;
                                             const linkPending = Number(row.linkPendingQty) || Math.max(0, linkTotal - linkApproved);
@@ -743,6 +1005,33 @@ export default function PmsTaskHistory() {
                             ))}
                         </tbody>
                     </table>
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 py-3 border-t border-gray-100 text-[12px] text-[#495057] dark:border-zinc-800 dark:text-zinc-400">
+                    <div>
+                        Loaded {historyRecords.length} of {historyTotal} entries
+                        {searchQuery ? ` (search filters loaded rows only)` : ""}
+                    </div>
+                    {hasNextPage ? (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-[12px]"
+                            disabled={isFetchingNextPage}
+                            onClick={() => fetchNextPage()}
+                        >
+                            {isFetchingNextPage ? (
+                                <>
+                                    <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                                    Loading…
+                                </>
+                            ) : (
+                                `Load more (${historyPageSize})`
+                            )}
+                        </Button>
+                    ) : (
+                        <span className="text-emerald-600 font-semibold">All loaded</span>
+                    )}
                 </div>
             </div>
 
@@ -794,30 +1083,46 @@ export default function PmsTaskHistory() {
                         <DialogTitle className="text-[17px] font-bold text-[#495057] dark:text-zinc-400">{viewingTask?.title}</DialogTitle>
                         <DialogDescription className="text-sm text-[#6c757d]">
                             Submitted by <span className="font-semibold">{viewingTask?.assigneeName || "Unknown"}</span>
-                            {viewingTask?.submittedAt && ` on ${new Date(viewingTask.submittedAt).toLocaleString()}`}
+                            {viewingTask?.submittedAt &&
+                            !Number.isNaN(new Date(viewingTask.submittedAt).getTime())
+                                ? ` on ${new Date(viewingTask.submittedAt).toLocaleString()}`
+                                : ""}
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-5 py-2 max-h-[60vh] overflow-y-auto">
                         <div>
                             <h4 className="text-[13px] font-bold text-[#495057] dark:text-zinc-400 mb-1.5">Submitted Links</h4>
                             {(() => {
-                                const links = extractSubmittedLinks(viewingTask?.submissionNotes ?? null);
+                                const fromFiles = linkSubmissionsFromFiles(viewingFiles);
+                                const fromNotes = uniqueSubmittedLinkUrls([
+                                    ...extractSubmittedLinks(viewingTask?.submissionNotes ?? null),
+                                    ...extractUrlsFromText(viewingTask?.submissionNotes),
+                                ]);
+                                const fileKeys = new Set(fromFiles.map((u) => normalizeTaskLinkKey(u)));
+                                const extraFromNotes = fromNotes.filter(
+                                    (u) => !fileKeys.has(normalizeTaskLinkKey(u)),
+                                );
+                                const links = [...fromFiles, ...extraFromNotes];
+                                if (isViewingFilesLoading && links.length === 0) {
+                                    return <p className="text-[13px] text-gray-400">Loading links…</p>;
+                                }
                                 return links.length === 0 ? (
                                     <p className="text-[13px] text-gray-400">No links submitted.</p>
                                 ) : (
-                                    <div className="space-y-1">
+                                    <ol className="space-y-2 list-decimal list-inside text-[13px]">
                                         {links.map((link, i) => (
-                                            <a
-                                                key={i}
-                                                href={link.startsWith("http") ? link : `https://${link}`}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="block text-[13px] text-indigo-500 hover:text-indigo-700 underline truncate"
-                                            >
-                                                {link}
-                                            </a>
+                                            <li key={i} className="break-all">
+                                                <a
+                                                    href={normalizeHref(link)}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-indigo-500 hover:text-indigo-700 underline"
+                                                >
+                                                    {link}
+                                                </a>
+                                            </li>
                                         ))}
-                                    </div>
+                                    </ol>
                                 );
                             })()}
                         </div>
@@ -849,37 +1154,77 @@ export default function PmsTaskHistory() {
                                     <h4 className="text-[13px] font-bold text-[#495057] dark:text-zinc-400 mb-1.5">Description</h4>
                                     {isViewingFilesLoading ? (
                                         <p className="text-[13px] text-gray-400">Loading...</p>
-                                    ) : viewingFiles.filter((f) => f.description).length === 0 ? (
-                                        <p className="text-[13px] text-gray-400">No description submitted.</p>
-                                    ) : (
-                                        <div className="space-y-2">
-                                            {/* Product Posting's link-only submissions (no file — see
-                                                AddLinksModal on Task System) land here as a description
-                                                with no fileUrl; render those as clickable links instead
-                                                of plain text so the manager/QA can actually open them. */}
-                                            {viewingFiles.filter((f) => f.description).map((f) =>
-                                                !f.fileUrl && /^https?:\/\//i.test(f.description || "") ? (
-                                                    <a
-                                                        key={f.id}
-                                                        href={f.description!}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="block text-[13px] text-indigo-500 hover:text-indigo-700 underline truncate"
-                                                    >
-                                                        {f.description}
-                                                    </a>
-                                                ) : (
-                                                    <p key={f.id} className="text-[13px] text-gray-600 dark:text-zinc-400">{f.description}</p>
-                                                )
-                                            )}
-                                        </div>
-                                    )}
+                                    ) : (() => {
+                                        const noteText = commentPreviewWithoutUrls(viewingTask?.submissionNotes);
+                                        const fileNotes = viewingFiles
+                                            .filter((f) => f.description?.trim())
+                                            .filter((f) => f.fileUrl || !/^https?:\/\//i.test(f.description || ""))
+                                            .map((f) => f.description!.trim());
+                                        const hasContent = noteText || fileNotes.length > 0;
+                                        if (!hasContent) {
+                                            return <p className="text-[13px] text-gray-400">No description submitted.</p>;
+                                        }
+                                        return (
+                                            <div className="space-y-2">
+                                                {noteText ? (
+                                                    <p className="text-[13px] text-gray-600 dark:text-zinc-400 whitespace-pre-wrap">
+                                                        {noteText}
+                                                    </p>
+                                                ) : null}
+                                                {fileNotes.map((text, i) => (
+                                                    <p key={i} className="text-[13px] text-gray-600 dark:text-zinc-400 whitespace-pre-wrap">
+                                                        {text}
+                                                    </p>
+                                                ))}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             </>
                         )}
                     </div>
                     <div className="flex items-center justify-end pt-2">
                         <Button variant="secondary" onClick={() => setViewingTask(null)}>Close</Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!linksModal} onOpenChange={(open) => { if (!open) setLinksModal(null); }}>
+                <DialogContent className="max-w-lg bg-white dark:bg-zinc-900">
+                    <DialogHeader>
+                        <DialogTitle className="text-[16px] font-bold text-[#495057] dark:text-zinc-400">
+                            {linksModal?.title || "Links"}
+                        </DialogTitle>
+                        <DialogDescription className="text-[12px] text-[#6c757d]">
+                            {linksModalUrls.length} link(s) — open in new tab
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-[50vh] overflow-y-auto py-2">
+                        {isLinksModalLoading && linksModalUrls.length === 0 ? (
+                            <p className="text-[13px] text-gray-400 flex items-center gap-2">
+                                <Loader2 className="w-4 h-4 animate-spin" /> Loading from webxl_task_links…
+                            </p>
+                        ) : linksModalUrls.length === 0 ? (
+                            <p className="text-[13px] text-gray-400">No links found.</p>
+                        ) : (
+                            <ol className="space-y-2 list-decimal list-inside text-[13px]">
+                                {linksModalUrls.map((link, i) => (
+                                    <li key={i} className="break-all pr-2">
+                                        <a
+                                            href={normalizeHref(link)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-indigo-600 hover:text-indigo-800 underline"
+                                        >
+                                            {link}
+                                        </a>
+                                    </li>
+                                ))}
+                            </ol>
+                        )}
+                    </div>
+                    <div className="flex justify-end pt-2">
+                        <Button variant="secondary" onClick={() => setLinksModal(null)}>Close</Button>
                     </div>
                 </DialogContent>
             </Dialog>

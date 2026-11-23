@@ -19,6 +19,11 @@ import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { ActivityLogService } from "./services/activity-service";
 import { safePage, safePageSize } from "../utils/sql-safety";
 import { ensureSocialAccountsTable } from "./social-accounts-routes";
+import {
+  fetchLegacyTodayPostSessions,
+  legacyTodayPostAvailable,
+  type LegacyTodayPostSession,
+} from "../utils/today-post-legacy";
 
 const TODAY_POST_STATUSES = ["pending", "completed"] as const;
 
@@ -30,6 +35,23 @@ const httpUrl = z
   .trim()
   .url("post_url must be a valid http(s) URL")
   .refine((v) => /^https?:\/\//i.test(v), "post_url must be a valid http(s) URL");
+
+const PLATFORMS = ["Facebook", "Instagram", "Linkedin", "Youtube", "Tiktok"] as const;
+
+const legacyBundleSchema = z
+  .object({
+    entity: z.string().trim().min(1, "entity is required"),
+    urls: z
+      .object({
+        Facebook: z.string().trim().optional(),
+        Instagram: z.string().trim().optional(),
+        Linkedin: z.string().trim().optional(),
+        Youtube: z.string().trim().optional(),
+        Tiktok: z.string().trim().optional(),
+      })
+      .strict(),
+  })
+  .strict();
 
 const createTodayPostSchema = z.object({
   platform: z.string().trim().min(1, "platform is required"),
@@ -167,6 +189,111 @@ async function canMutate(req: Request, postedBy: string | null): Promise<boolean
   return false;
 }
 
+function parseLegacyDateRange(req: Request): { start: Date | null; end: Date | null } {
+  const startStr = (req.query.startDate ?? req.query.dateFrom) as string | undefined;
+  const endStr = (req.query.endDate ?? req.query.dateTo) as string | undefined;
+  let start: Date | null = null;
+  let end: Date | null = null;
+  if (startStr) {
+    const d = new Date(startStr);
+    if (!Number.isNaN(d.getTime())) {
+      d.setHours(0, 0, 0, 0);
+      start = d;
+    }
+  }
+  if (endStr) {
+    const d = new Date(endStr);
+    if (!Number.isNaN(d.getTime())) {
+      d.setHours(23, 59, 59, 999);
+      end = d;
+    }
+  }
+  return { start, end };
+}
+
+function defaultLastMonthRange(): { start: Date; end: Date } {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 30);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
+}
+
+function normalizeEntityForStorage(entity: string): string {
+  const t = entity.trim();
+  if (t.toLowerCase() === "ceo") return "CEO";
+  return t;
+}
+
+export async function ensureSocialAccountPostsTable(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS drm.social_account_posts (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      account_type text NOT NULL,
+      url_fb text,
+      insta_url text,
+      linkedin_url text,
+      youtube_url text,
+      tiktok_url text,
+      posted_by uuid REFERENCES drm.users(id) ON DELETE SET NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS social_account_posts_created_at_idx ON drm.social_account_posts (created_at DESC)`,
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS social_account_posts_account_type_idx ON drm.social_account_posts (account_type)`,
+  );
+}
+
+async function fetchModernTodayPostSessions(
+  start: Date,
+  end: Date,
+): Promise<LegacyTodayPostSession[]> {
+  const { rows } = await pool.query(
+    `
+    SELECT id, account_type, created_at, url_fb, insta_url, linkedin_url, youtube_url, tiktok_url
+    FROM drm.social_account_posts
+    WHERE created_at >= $1 AND created_at <= $2
+    ORDER BY created_at DESC
+    `,
+    [start, end],
+  );
+  const columnMap: Record<string, string> = {
+    Facebook: "url_fb",
+    Instagram: "insta_url",
+    Linkedin: "linkedin_url",
+    Youtube: "youtube_url",
+    Tiktok: "tiktok_url",
+  };
+  return rows.map((row) => {
+    const id = String(row.id);
+    const createdAt = row.created_at ? new Date(row.created_at).toISOString() : null;
+    const dateKey = row.created_at
+      ? new Date(row.created_at).toISOString().slice(0, 10)
+      : "unknown";
+    const platforms = PLATFORMS.map((platform) => {
+      const col = columnMap[platform];
+      const raw = row[col];
+      const postUrl =
+        raw != null && String(raw).trim() && String(raw).trim() !== "-"
+          ? String(raw).trim()
+          : null;
+      return { platform, postUrl, likes: "0", shares: "0", comments: "0" };
+    });
+    return {
+      id,
+      entity: normalizeEntityForStorage(String(row.account_type ?? "")),
+      createdAt,
+      dateKey,
+      platforms,
+      source: "modern" as const,
+    };
+  });
+}
+
 export async function ensureTodayPostsTable(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS drm.today_posts (
@@ -252,11 +379,37 @@ async function getPostRaw(id: string): Promise<any | null> {
 
 export async function registerTodayPostRoutes(app: Express) {
   await ensureTodayPostsTable();
+  await ensureSocialAccountPostsTable();
 
-  // GET /api/drm/today-posts — paginated, filtered list (scoped to caller)
+  // GET /api/drm/today-posts — legacy statistics sessions or paginated today_posts list
   app.get("/api/drm/today-posts", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+      const legacyFormat = String(req.query.format ?? "") === "sessions";
+      const useLegacy = await legacyTodayPostAvailable(pool);
+      if (legacyFormat && useLegacy) {
+        let { start, end } = parseLegacyDateRange(req);
+        if (!start || !end) {
+          const defaults = defaultLastMonthRange();
+          start = defaults.start;
+          end = defaults.end;
+        }
+        const legacySessions = await fetchLegacyTodayPostSessions(pool, { start, end, limit: 500 });
+        const modernSessions = await fetchModernTodayPostSessions(start, end);
+        const sessions: LegacyTodayPostSession[] = [...modernSessions, ...legacySessions].sort((a, b) => {
+          const ta = a.createdAt ? new Date(a.createdAt.replace(" ", "T")).getTime() : 0;
+          const tb = b.createdAt ? new Date(b.createdAt.replace(" ", "T")).getTime() : 0;
+          return tb - ta;
+        });
+        return res.json({
+          sessions,
+          total: sessions.length,
+          startDate: start.toISOString().slice(0, 10),
+          endDate: end.toISOString().slice(0, 10),
+          source: "legacy",
+        });
+      }
 
       const page = safePage(req.query.page, 1);
       const pageSize = safePageSize(req.query.pageSize, 25, 100);
@@ -329,7 +482,76 @@ export async function registerTodayPostRoutes(app: Express) {
     }
   });
 
-  // POST /api/drm/today-posts — create
+  // POST /api/drm/today-posts/bundle — one row per account per day (legacy parity)
+  app.post("/api/drm/today-posts/bundle", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+
+      const b = parseBody(res, legacyBundleSchema, req.body);
+      if (!b) return;
+
+      const entity = normalizeEntityForStorage(b.entity);
+      const allowedEntities = ["Webexcels", "Welc", "CEO"];
+      if (!allowedEntities.some((e) => e.toLowerCase() === entity.toLowerCase())) {
+        return badRequest(res, `entity must be one of: ${allowedEntities.join(", ")}`);
+      }
+
+      const urlFields = {
+        url_fb: (b.urls.Facebook ?? "").trim() || null,
+        insta_url: (b.urls.Instagram ?? "").trim() || null,
+        linkedin_url: (b.urls.Linkedin ?? "").trim() || null,
+        youtube_url: (b.urls.Youtube ?? "").trim() || null,
+        tiktok_url: (b.urls.Tiktok ?? "").trim() || null,
+      };
+      const hasAny = Object.values(urlFields).some((v) => v && isHttpUrl(v));
+      if (!hasAny) return badRequest(res, "Enter at least one post URL");
+
+      for (const [key, val] of Object.entries(urlFields)) {
+        if (val && !isHttpUrl(val)) {
+          return badRequest(res, `${key} must be a valid http(s) URL`);
+        }
+      }
+
+      const dup = await pool.query(
+        `SELECT id FROM drm.social_account_posts
+         WHERE lower(btrim(account_type)) = lower(btrim($1))
+           AND (created_at AT TIME ZONE 'Asia/Karachi')::date = (now() AT TIME ZONE 'Asia/Karachi')::date
+         LIMIT 1`,
+        [entity],
+      );
+      if (dup.rows.length) {
+        return res.status(409).json({
+          error: "Conflict",
+          message: "Today Post Already Add",
+        });
+      }
+
+      const postedBy = getUserId(req);
+      const { rows } = await pool.query(
+        `INSERT INTO drm.social_account_posts
+           (account_type, url_fb, insta_url, linkedin_url, youtube_url, tiktok_url, posted_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, account_type, created_at, url_fb, insta_url, linkedin_url, youtube_url, tiktok_url`,
+        [
+          entity,
+          urlFields.url_fb,
+          urlFields.insta_url,
+          urlFields.linkedin_url,
+          urlFields.youtube_url,
+          urlFields.tiktok_url,
+          postedBy ?? null,
+        ],
+      );
+
+      await audit(req, "drm.today_post.bundle_create", rows[0]?.id, { entity });
+      res.status(201).json({ success: true, message: "done", id: rows[0]?.id });
+    } catch (err) {
+      console.error("[today-post] bundle create error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to save post bundle" });
+    }
+  });
+
+  // POST /api/drm/today-posts — create single platform row
   app.post("/api/drm/today-posts", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });

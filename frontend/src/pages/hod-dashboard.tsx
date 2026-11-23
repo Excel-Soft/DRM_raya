@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProductPostingApprovalsWidget } from "@/components/product-posting-approvals-widget";
+import { DashboardPromotionAside } from "@/components/dashboard-promotion-aside";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -61,6 +62,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 interface ApprovalItem {
   id: string;
@@ -770,6 +772,10 @@ export default function HodDashboard() {
   // edited mid-decision.
   const [hodDiscountTouched, setHodDiscountTouched] = useState(false);
   const [gmPage, setGmPage] = useState(1);
+  // Client-side paging (10 per page) for the Quick Approvals tabs that load a full list.
+  const [qaPage, setQaPage] = useState(1);
+  useEffect(() => { setQaPage(1); }, [verificationTab]);
+  const qaSlice = (arr: any[] | undefined) => (arr ?? []).slice((qaPage - 1) * ITEMS_PER_PAGE, qaPage * ITEMS_PER_PAGE);
   const ITEMS_PER_PAGE = 10;
   // Whether the HOD has tried to approve this entry at least once — inline
   // "Please fill this" errors only appear after a real attempt, not while
@@ -1621,7 +1627,7 @@ export default function HodDashboard() {
                                 </TableCell>
                               </TableRow>
                             )}
-                            {quotationsItems.map((item: any) => (
+                            {qaSlice(quotationsItems).map((item: any) => (
                               <TableRow key={item.id} data-testid={`row-quotation-${item.id}`}>
                                 <TableCell>{getTypeBadge("Quotation")}</TableCell>
                                 <TableCell>
@@ -1678,7 +1684,7 @@ export default function HodDashboard() {
                                 </TableCell>
                               </TableRow>
                             ) : leaveRequestsQuery.data?.data && leaveRequestsQuery.data.data.length > 0 ? (
-                              leaveRequestsQuery.data.data.map((leave: any) => (
+                              qaSlice(leaveRequestsQuery.data.data).map((leave: any) => (
                                 <TableRow key={leave.id}>
                                   <TableCell>{leave.userName || leave.userEmail || "-"}</TableCell>
                                   <TableCell>
@@ -1830,7 +1836,7 @@ export default function HodDashboard() {
                                 </TableCell>
                               </TableRow>
                             ) : tempGmQuery.data?.data && tempGmQuery.data.data.length > 0 ? (
-                              tempGmQuery.data.data.map((entry: any) => (
+                              qaSlice(tempGmQuery.data.data).map((entry: any) => (
                                 <TableRow key={entry.id}>
                                   <TableCell className="font-medium text-blue-600">{entry.companyName || "-"}</TableCell>
                                   <TableCell>{entry.personName || entry.requestedBy || "-"}</TableCell>
@@ -1910,7 +1916,7 @@ export default function HodDashboard() {
                                 </TableCell>
                               </TableRow>
                             ) : updateRequestsQuery.data?.data && updateRequestsQuery.data.data.length > 0 ? (
-                              updateRequestsQuery.data.data.map((entry: any, idx: number) => (
+                              qaSlice(updateRequestsQuery.data.data).map((entry: any, idx: number) => (
                                 <TableRow key={idx}>
                                   <TableCell>{getTypeBadge(entry.type || "GM")}</TableCell>
                                   <TableCell className="font-medium text-blue-600">{entry.companyName || "-"}</TableCell>
@@ -1986,7 +1992,7 @@ export default function HodDashboard() {
                                 </TableCell>
                               </TableRow>
                             ) : withdrawalsQuery.data?.data && withdrawalsQuery.data.data.length > 0 ? (
-                              withdrawalsQuery.data.data.map((entry: any, idx: number) => (
+                              qaSlice(withdrawalsQuery.data.data).map((entry: any, idx: number) => (
                                 <TableRow key={idx}>
                                   <TableCell>{getTypeBadge(entry.type)}</TableCell>
                                   <TableCell className="font-medium text-blue-600">{entry.company || "-"}</TableCell>
@@ -2033,6 +2039,30 @@ export default function HodDashboard() {
                       </TableBody>
                     </Table>
                   </div>
+                  {/* Pagination (10 per page) for Quotation / Leave Form / Temp GM / Update Request / GM Withdrawal */}
+                  {(() => {
+                    const list: any[] =
+                      verificationTab === "quotation" ? quotationsItems
+                      : verificationTab === "leave-form" ? (leaveRequestsQuery.data?.data ?? [])
+                      : verificationTab === "temp-gm" ? (tempGmQuery.data?.data ?? [])
+                      : verificationTab === "update-request" ? (updateRequestsQuery.data?.data ?? [])
+                      : verificationTab === "gm-withdrawal" ? (withdrawalsQuery.data?.data ?? [])
+                      : [];
+                    if (list.length <= ITEMS_PER_PAGE) return null;
+                    const pages = Math.ceil(list.length / ITEMS_PER_PAGE);
+                    return (
+                      <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
+                        <div>
+                          Showing {(qaPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(qaPage * ITEMS_PER_PAGE, list.length)} of {list.length} entries
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" onClick={() => setQaPage(p => Math.max(1, p - 1))} disabled={qaPage === 1}>Prev</Button>
+                          <div className="flex items-center justify-center px-2 text-sm font-medium">Page {qaPage} of {pages}</div>
+                          <Button variant="outline" size="sm" onClick={() => setQaPage(p => Math.min(pages, p + 1))} disabled={qaPage >= pages}>Next</Button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {/* Pagination for GM Approval */}
                   {verificationTab === "gm-approval" && gmsQuery.data?.data && gmsQuery.data.data.length > ITEMS_PER_PAGE && (
                     <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
@@ -2391,6 +2421,11 @@ export default function HodDashboard() {
                 </CardContent>
               </Card>
 
+              <DashboardPromotionAside
+                className="mb-6"
+                titleClassName="text-[16px] text-[#495057] dark:text-zinc-400"
+              />
+
               {/* Important Section (Redesigned) */}
               <div className="bg-white rounded border border-gray-100 shadow-sm p-4 mb-6 dark:bg-zinc-900 dark:border-zinc-800">
                 <h2 className="text-[16px] font-bold text-[#495057] mb-4 dark:text-zinc-400">Important</h2>
@@ -2421,8 +2456,8 @@ export default function HodDashboard() {
                       { label: "Sale & Service Report", value: ">", nav: "/reports/sale-service" },
                       { label: "Increment", value: ">", nav: "/drm/increment" },
                       { label: "Update Sale And Service Report", value: ">", nav: "/reports/sale-service/update" },
-                      { label: "Roles Details", value: ">", nav: "/users" },
-                      { label: "Annual Leaves Reports", value: ">", nav: "/hr/attendance" },
+                      { label: "Roles Details", value: ">", nav: "/drm/users/list" },
+                      { label: "Annual Leaves Reports", value: ">", nav: "/hr/leave-request" },
                       { label: "Daily Added GM Report", value: ">", nav: "/daily-reports/added-gm" },
                       { label: "Follow Up Report", value: ">", nav: "/reports/hod-follow-up" },
                       { label: "Follow-Up Meeting Report", value: ">", nav: "/reports/hod-meeting" },
@@ -2757,18 +2792,14 @@ export default function HodDashboard() {
               <label htmlFor="user" className="text-sm font-medium">
                 User
               </label>
-              <Select value={meetingUser} onValueChange={setMeetingUser}>
-                <SelectTrigger id="user">
-                  <SelectValue placeholder={usersListQuery.isLoading ? "Loading users..." : "Choose ..."} />
-                </SelectTrigger>
-                <SelectContent>
-                  {(usersListQuery.data?.users ?? []).map((u: any) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.fullName || u.email}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <RoleGroupedUserSelect
+                grouped={false}
+                users={usersListQuery.data?.users ?? []}
+                value={meetingUser}
+                onChange={setMeetingUser}
+                getLabel={(u) => String(u.fullName || u.email || "")}
+                placeholder={usersListQuery.isLoading ? "Loading users..." : "Choose ..."}
+              />
             </div>
 
             {/* Detail Textarea */}

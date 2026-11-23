@@ -4,6 +4,8 @@ import { pool } from "../db";
 import { authService } from "../auth.service";
 import { getDepartmentFilterUserIds } from "../controllers/dashboard.controller";
 import { normalizeRole, ROLES } from "../utils/role-utils";
+import { LEGACY_ROLE_KEYS } from "@shared/legacy-role-keys";
+import { loadRoleTitles, userRoleInfo } from "../utils/user-role-titles";
 import { errorEnvelope, sendError, badRequest, conflict, notFound } from "../utils/api-error";
 import { recordAuditLog } from "../services/activity-service";
 const safeUserAudit = (u: any) => u;
@@ -91,44 +93,136 @@ export const createGroupSchema = z.object({
   description: z.string().optional(),
   members: z.array(z.string()).optional()
 });
+function resolveAdminVisiblePassword(row: { password?: string | null; legacy_password?: string | null }) {
+  const drm = row.password != null ? String(row.password).trim() : "";
+  if (drm) return drm;
+  const legacy = row.legacy_password != null ? String(row.legacy_password).trim() : "";
+  return legacy;
+}
+
+const LEGACY_LOGIN_PASSWORD_JOIN = `
+  left join migration_meta.migration_legacy_ids m
+    on m.legacy_table = 'webxl_user' and m.modern_id = u.id::text
+  left join lateral (
+    select trim(wl.password) as legacy_password
+    from legacy_archive.webxl_login wl
+    where trim(wl.user_id) = m.legacy_id
+      and nullif(trim(wl.password), '') is not null
+    order by wl.updated_at desc nulls last, wl._legacy_pk desc
+    limit 1
+  ) leg on true
+`;
+
 export class UsersController {
 static async listUsers(req: Request | any, res: Response | any) {
   try {
-    const { search, role, assigned } = req.query;
-    console.log("GET /api/users called with query:", req.query);
-    let query = "select * from drm.users where (is_active = true or is_active is null)";
-    const params = [];
+    const { search, role, assigned, limit: limitRaw, offset: offsetRaw, includePassword } = req.query;
+    // ?withProfile=true (User List page): add the old-DRM listing columns - photo,
+    // Degree/Cheque, joining date, office id, net salary, city, contact, address.
+    const withProfile = req.query.withProfile === "true";
+    const whereParts = ["(u.is_active = true or u.is_active is null)"];
+    const params: unknown[] = [];
     let counter = 1;
     if (assigned === "true") {
       const allowedIds = await getDepartmentFilterUserIds(req);
       if (allowedIds) {
-        query += ` and id = ANY($${counter}::uuid[])`;
+        whereParts.push(`u.id = ANY($${counter}::uuid[])`);
         params.push(allowedIds);
         counter++;
       }
     }
     if (role && role !== "all") {
-      query += ` and (role_id = $${counter} or role = $${counter})`;
-      params.push(role);
+      const roleStr = String(role);
+      const roleNorm = normalizeRole(roleStr);
+      const legacyIds = Object.entries(LEGACY_ROLE_KEYS)
+        .filter(([, key]) => normalizeRole(key) === roleNorm || key === roleStr)
+        .map(([id]) => id);
+      const roleIdx = counter;
+      params.push(roleStr);
+      counter++;
+      const legacyIdx = legacyIds.length > 0 ? counter : 0;
+      if (legacyIdx) {
+        params.push(legacyIds);
+        counter++;
+      }
+      const legacySql = legacyIdx
+        ? ` OR EXISTS (
+            SELECT 1
+              FROM unnest(string_to_array(regexp_replace(coalesce(u.role_id::text, ''), '\\s', '', 'g'), ',')) AS rid
+             WHERE rid = ANY($${legacyIdx}::text[])
+          )`
+        : "";
+      const rolesArraySql = ` OR EXISTS (
+          SELECT 1 FROM unnest(coalesce(u.roles, ARRAY[]::text[])) AS rk
+           WHERE lower(trim(rk)) = lower($${roleIdx})
+        )`;
+      whereParts.push(`(
+        u.role_id::text = $${roleIdx}
+        OR u.role::text = $${roleIdx}
+        ${rolesArraySql}
+        ${legacySql}
+      )`);
+    }
+    if (search && String(search).trim()) {
+      whereParts.push(
+        `(u.name ilike $${counter} or u.full_name ilike $${counter} or u.email ilike $${counter} or u.phone ilike $${counter} or u.role_id ilike $${counter} or u.role ilike $${counter} or u.department ilike $${counter} or u.designation ilike $${counter})`,
+      );
+      params.push(`%${String(search).trim()}%`);
       counter++;
     }
-    if (search) {
-      query += ` and (name ilike $${counter} or full_name ilike $${counter} or email ilike $${counter} or phone ilike $${counter} or role_id ilike $${counter} or role ilike $${counter} or department ilike $${counter} or designation ilike $${counter})`;
-      params.push(`%${search}%`);
-      counter++;
+    const whereSql = whereParts.join(" and ");
+
+    const limit = limitRaw !== undefined ? Math.min(100, Math.max(1, Number(limitRaw) || 25)) : 0;
+    const offset = Math.max(0, Number(offsetRaw) || 0);
+
+    let total: number | undefined;
+    if (limit > 0) {
+      const countResult = await pool.query(
+        `select count(*)::int as total from drm.users u where ${whereSql}`,
+        params,
+      );
+      total = countResult.rows[0]?.total ?? 0;
     }
-    query += " order by created_at desc";
+
+    const profileJoin = withProfile
+      ? `left join lateral (
+           select l.user_id as legacy_user_id, l.picture as legacy_picture, l.doc as legacy_doc,
+                  l."netSalary" as legacy_net_salary, l.att_id as legacy_att_id,
+                  l.branch as legacy_city, l."officeNumber" as legacy_office_number,
+                  l.fname as legacy_fname, l."joinDate" as legacy_join_date, l.address as legacy_address
+             from migration_meta.migration_legacy_ids m
+             join legacy_archive.webxl_user l on l.user_id = m.legacy_id
+            where m.entity_type = 'user' and m.legacy_table = 'webxl_user' and m.modern_id = u.id::text
+            limit 1
+         ) lp on true`
+      : "";
+    let query = `
+      select u.*, leg.legacy_password${withProfile ? ", lp.*" : ""}
+      from drm.users u
+      ${LEGACY_LOGIN_PASSWORD_JOIN}
+      ${profileJoin}
+      where ${whereSql}
+      order by ${withProfile ? "nullif(lp.legacy_user_id, '')::int asc nulls last, " : ""}u.created_at desc`;
+    if (limit > 0) {
+      query += ` limit $${counter} offset $${counter + 1}`;
+      params.push(limit, offset);
+    }
     const result = await pool.query(query, params);
     const requesterRole = normalizeRole((req.user as any)?.activeRoleId || req.user?.roleId || "");
     const isRequesterAdmin = requesterRole === ROLES.ADMIN || requesterRole === ROLES.SUPER_HOD;
+    const sendPasswords =
+      isRequesterAdmin && (limit > 0 || includePassword === "true");
+    const titles = await loadRoleTitles();
     const sanitized = result.rows.map((u) => ({
       id: u.id,
       fullName: u.name || u.full_name,
       email: u.email,
       role: normalizeRole(u.role_id || u.role),
       rawRole: u.role_id || u.role,
-      // actual DB role, not normalized
       roles: u.roles || [],
+      // roleIds/roleTitles: every legacy role the user holds (for role-grouped
+      // employee pickers); isDeactive: holds role 54 "Deactive" (disabled profile).
+      ...userRoleInfo(u, titles),
       branch: u.branch,
       country: u.country,
       department: u.department,
@@ -137,19 +231,60 @@ static async listUsers(req: Request | any, res: Response | any) {
       isActive: u.is_active !== false,
       status: u.is_active === false ? "inactive" : "active",
       createdAt: u.created_at || u.createdAt,
-      // Plaintext password, only for admin-tier requesters (Super Admin panel) —
-      // never sent to any other caller of this widely-shared endpoint.
-      ...(isRequesterAdmin ? { password: u.password || "" } : {}),
+      ...(sendPasswords ? { password: resolveAdminVisiblePassword(u) } : {}),
+      ...(withProfile
+        ? (() => {
+            const num = (v: unknown) => Number(v) || 0;
+            const computedNet =
+              num(u.basic_salary) + num(u.daily_allowance) + num(u.mobile_allowance) +
+              num(u.admin_allowance) + num(u.conveyance_allowance);
+            const clean = (v: unknown) => {
+              const t = String(v ?? "").trim();
+              return t && t.toLowerCase() !== "null" ? t : null;
+            };
+            return {
+              fatherHusbandName: clean(u.father_husband_name) ?? clean(u.legacy_fname),
+              attendanceId: clean(u.attendance_id) ?? clean(u.legacy_att_id),
+              joinDate: clean(u.join_date) ?? clean(u.legacy_join_date),
+              netSalary: num(u.legacy_net_salary) || computedNet || null,
+              city: clean(u.legacy_city) ?? clean(u.branch),
+              contactNo: clean(u.phone) ?? clean(u.legacy_office_number),
+              address: clean(u.address) ?? clean(u.legacy_address),
+              picture: clean(u.legacy_picture), // legacy assets/images/user/<file>
+              securityDoc: clean(u.legacy_doc), // "Cheque" / "Degree" deposited
+            };
+          })()
+        : {}),
     }));
-    res.json({ users: sanitized });
+    res.json(limit > 0 ? { users: sanitized, total, limit, offset } : { users: sanitized });
   } catch (error) {
     console.error("Error fetching users:", error);
     res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch users"));
   }
 }
+
+static async statsSummary(req: Request | any, res: Response | any) {
+  try {
+    const result = await pool.query(
+      `select count(*)::int as total from drm.users where (is_active = true or is_active is null)`,
+    );
+    res.json({ totalUsers: result.rows[0]?.total ?? 0 });
+  } catch (error) {
+    console.error("Error fetching user stats:", error);
+    res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch user stats"));
+  }
+}
 static async createUser(req: Request | any, res: Response | any) {
   try {
     const data = createUserSchema.parse(req.body);
+    if (data.roles && Array.isArray(data.roles)) {
+      data.roles = [
+        ...new Set(
+          data.roles.map((r: string) => normalizeRole(String(r)) || String(r)).filter(Boolean),
+        ),
+      ];
+      if (data.roles.length > 0) data.role = data.roles[0];
+    }
     const moneyError = normalizeMoneyFields(data, true);
     if (moneyError) {
       return sendError(res, badRequest(moneyError));
@@ -282,7 +417,14 @@ static async getUser(req: Request | any, res: Response | any) {
   try {
     const { id: id3 } = req.params;
     if (id3 === "groups") return sendError(res, notFound("Not found"));
-    const result = await pool.query("select * from drm.users where id = $1 limit 1", [id3]);
+    const result = await pool.query(
+      `select u.*, leg.legacy_password
+       from drm.users u
+       ${LEGACY_LOGIN_PASSWORD_JOIN}
+       where u.id = $1
+       limit 1`,
+      [id3],
+    );
     if (result.rows.length === 0) {
       return sendError(res, notFound("User not found"));
     }
@@ -293,7 +435,7 @@ static async getUser(req: Request | any, res: Response | any) {
       user: {
         id: u.id,
         fullName: u.name || u.full_name,
-        ...(isRequesterAdmin ? { password: u.password || "" } : {}),
+        ...(isRequesterAdmin ? { password: resolveAdminVisiblePassword(u) } : {}),
         firstName: u.first_name || u.name || u.full_name || "",
         fatherHusbandName: u.father_husband_name || "",
         attendanceId: u.attendance_id || "",
@@ -335,6 +477,14 @@ static async updateUser(req: Request | any, res: Response | any) {
   try {
     const { id: id3 } = req.params;
     const data = updateUserSchema.parse(req.body);
+    if (data.roles && Array.isArray(data.roles)) {
+      data.roles = [
+        ...new Set(
+          data.roles.map((r: string) => normalizeRole(String(r)) || String(r)).filter(Boolean),
+        ),
+      ];
+      if (data.roles.length > 0) data.role = data.roles[0];
+    }
     const moneyError = normalizeMoneyFields(data, false);
     if (moneyError) {
       return sendError(res, badRequest(moneyError));
@@ -560,6 +710,11 @@ static async updateStatus(req: Request | any, res: Response | any) {
 }
 static async deleteUser(req: Request | any, res: Response | any) {
   try {
+    // User List: delete is admin-only (super_admin normalizes to admin).
+    const requesterRole = normalizeRole((req.user as any)?.activeRoleId || req.user?.roleId || "");
+    if (requesterRole !== ROLES.ADMIN) {
+      return res.status(403).json(errorEnvelope("FORBIDDEN", "Only admin can delete users"));
+    }
     const { id: id3 } = req.params;
     const prev = await pool.query("select email, is_active from drm.users where id = $1 limit 1", [id3]);
     if (!prev.rows[0]) {
@@ -585,6 +740,49 @@ static async deleteUser(req: Request | any, res: Response | any) {
     res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to delete user"));
   }
 }
+/**
+ * Old-DRM "Group List" (drm/groups): the role groups - Role Id, Role Title,
+ * Department, Description, Date - plus how many users hold each role.
+ * Roles live in drm.roles as "Title [L<legacy id>]"; description/department/date come
+ * from the old webxl_role row (drm.roles.description only kept "dept=...").
+ */
+static async getRoleGroups(req: Request | any, res: Response | any) {
+  try {
+    const { rows } = await pool.query(`
+      WITH r AS (
+        SELECT ro.id, ro.name, ro.description, ro.created_at,
+               substring(ro.name from '\\[L(\\d+)\\]\\s*$') AS legacy_id,
+               btrim(regexp_replace(ro.name, '\\s*\\[L\\d+\\]\\s*$', '')) AS title
+          FROM drm.roles ro
+      )
+      SELECT r.id, r.legacy_id, COALESCE(NULLIF(btrim(l.name), ''), r.title) AS title,
+             COALESCE(NULLIF(btrim(l.department), ''), NULLIF(substring(r.description from '^dept=(.*)$'), '')) AS department,
+             CASE WHEN r.description LIKE 'dept=%' THEN NULLIF(btrim(l.des), '') ELSE COALESCE(NULLIF(btrim(l.des), ''), r.description) END AS description,
+             COALESCE(NULLIF(l.create_date, '0000-00-00'), to_char(r.created_at, 'YYYY-MM-DD')) AS created,
+             (SELECT count(*)::int FROM drm.users u
+               WHERE (u.is_active = true OR u.is_active IS NULL)
+                 AND r.legacy_id IS NOT NULL
+                 AND r.legacy_id = ANY(string_to_array(regexp_replace(COALESCE(u.role_id, ''), '\\s', '', 'g'), ','))) AS members
+        FROM r
+        LEFT JOIN legacy_archive.webxl_role l ON l.id = r.legacy_id
+       ORDER BY NULLIF(r.legacy_id, '')::int DESC NULLS FIRST, r.title`);
+    res.json({
+      roles: rows.map((r: any) => ({
+        id: r.id,
+        roleId: r.legacy_id,
+        title: r.title,
+        department: r.department,
+        description: r.description,
+        date: r.created,
+        members: r.members,
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching role groups:", error);
+    res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch role groups"));
+  }
+}
+
 static async getGroups(req: Request | any, res: Response | any) {
   try {
     await usersRepository.findAll();

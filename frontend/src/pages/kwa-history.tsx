@@ -8,6 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
@@ -33,17 +35,8 @@ export default function KwaHistory() {
     },
   });
 
-  const groupedUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    users.forEach((u: any) => {
-      const role = u.role || "Unassigned Role";
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(u);
-    });
-    return Object.entries(grouped)
-      .map(([role, users]) => ({ role, users }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [users]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedUsers = useMemo(() => groupUsersByRoleTitle(users), [users]);
 
   const [selectedUser, setSelectedUser] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -119,23 +112,14 @@ export default function KwaHistory() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
             <div>
               <label className="block text-sm mb-2 text-gray-700 font-medium dark:text-zinc-400">Select User</label>
-              <Select value={selectedUser} onValueChange={setSelectedUser}>
-                <SelectTrigger className="h-10 border-gray-300 dark:border-zinc-800">
-                  <SelectValue placeholder="Choose ..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {groupedUsers.map(({ role, users }) => (
-                    <SelectGroup key={role}>
-                      <SelectLabel>{role}</SelectLabel>
-                      {users.filter((u) => u.fullName || u.username).map((u) => (
-                        <SelectItem key={u.id} value={u.fullName || u.username}>
-                          {u.fullName || u.username}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  ))}
-                </SelectContent>
-              </Select>
+              <RoleGroupedUserSelect
+                users={users}
+                value={selectedUser}
+                onChange={setSelectedUser}
+                getValue={(u) => String(u.fullName || u.username || "")}
+                placeholder="Choose ..."
+                className="h-10 border-gray-300 dark:border-zinc-800"
+              />
             </div>
 
             <div>

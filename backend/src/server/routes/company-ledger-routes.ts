@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db } from "../db";
+import { db, pool } from "../db";
 import { ledgerEntries, invoices, customers, users } from "../../shared/schema";
 import { eq, desc, sql, and, ilike, or, gte, lte, inArray } from "drizzle-orm";
 import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES, FINANCIAL_VOID_ROLES } from "./middleware/financial-permission";
@@ -7,218 +7,243 @@ import { tryAutoCreateProjectAfterPayment } from "../services/invoice-project-th
 
 export const companyLedgerRouter = Router();
 
+// Shared SQL for the Company Ledger (old drm "Invoices List", allCompinesLedgers()).
+// Invoices copied from the old DRM (mapping rows) hold PKR amounts although they were
+// stored with currency 'USD'; they are reported as PKR. Their Pay = old webxl_invoice.pay
+// + payments saved later from Make Invoice. App invoices: Invoice Payment ledger credits
+// (converted to the invoice currency), else the full total once status is Paid.
+const LEDGER_NUM = (col: string) =>
+  `coalesce(nullif(regexp_replace(coalesce(${col}, ''), '[^0-9.]', '', 'g'), '')::numeric, 0)`;
+const LEDGER_INVOICES_CTE = `
+  inv AS (
+    SELECT i.id, i.customer_id, i.customer_name, i.subtotal, i.total, i.currency, i.dollar_rate,
+           i.status::text AS status, i.created_at, i.created_by_user_id, m.legacy_id,
+           CASE WHEN m.legacy_id IS NOT NULL THEN 'PKR' ELSE i.currency END AS cur
+      FROM drm.invoices i
+      LEFT JOIN migration_meta.migration_legacy_ids m
+             ON m.modern_table = 'invoices' AND m.modern_id = i.id AND m.entity_type = 'invoice'
+  ),
+  inv_pay AS (
+    SELECT inv.*,
+      CASE WHEN inv.legacy_id IS NOT NULL THEN
+             ${LEDGER_NUM("l.pay")} + coalesce((
+               SELECT sum(x.amount) FROM drm.legacy_invoice_item_payments x
+                WHERE x.legacy_invoice_id = inv.legacy_id
+                  AND NOT EXISTS (SELECT 1 FROM migration_meta.migration_legacy_ids mm
+                                   WHERE mm.modern_table = 'legacy_invoice_item_payments' AND mm.modern_id = x.id::text)), 0)
+             -- + payments recorded later from the ledger's Make Payment (stored in PKR)
+             + coalesce((SELECT sum(p.amount) FROM drm.ledger_entries p
+                          WHERE p.reference_id = inv.id AND p.category = 'Invoice Payment' AND p.entry_type = 'Credit'), 0)
+           ELSE coalesce(nullif((
+               SELECT sum(CASE WHEN p.currency IS NULL OR p.currency = inv.currency THEN p.amount
+                               WHEN inv.currency = 'USD' AND p.currency = 'PKR' THEN p.amount / coalesce(nullif(inv.dollar_rate, 0), 280)
+                               WHEN inv.currency = 'PKR' AND p.currency = 'USD' THEN p.amount * coalesce(nullif(inv.dollar_rate, 0), 280)
+                               ELSE p.amount END)
+                 FROM drm.ledger_entries p
+                WHERE p.reference_id = inv.id AND p.category = 'Invoice Payment' AND p.entry_type = 'Credit'), 0),
+             CASE WHEN inv.status = 'Paid' THEN inv.total ELSE 0 END)
+      END AS pay
+      FROM inv
+      LEFT JOIN legacy_archive.webxl_invoice l ON l._source_table = 'webxl_invoice' AND l._legacy_pk = inv.legacy_id
+  )`;
+
 // GET /api/reports/ledger (Company Ledger Summary)
+// One row per company: sum of its invoices' sub total / discount / grand total / pay,
+// Due = grand total - pay, Date = latest invoice, sale person = latest invoice's creator.
 companyLedgerRouter.get("/api/reports/ledger", requireFinancialPermission(FINANCIAL_ACTIONS.accountLedgerView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
   try {
-    const { company, contact, ntn, from, page = "1", pageSize = "15" } = req.query;
-
-    const pageNum = parseInt(page as string, 10);
-    const limit = parseInt(pageSize as string, 10);
+    const { company, contact, ntn, from } = req.query as Record<string, string | undefined>;
+    const pageNum = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(String(req.query.pageSize ?? "15"), 10) || 15));
     const offset = (pageNum - 1) * limit;
 
-    // Fetch invoices grouped by company
-    // In PostgreSQL we would use GROUP BY, but let's just fetch all and group them or use Drizzle grouped query
-    
-    let conditions = [];
-    if (company) {
-      conditions.push(ilike(invoices.customerName, `%${company}%`));
+    const params: any[] = [];
+    const where: string[] = ["coalesce(btrim(ip.customer_name), '') <> ''"];
+    if (company && company.trim()) {
+      params.push(`%${company.trim()}%`);
+      where.push(`(ip.customer_name ILIKE $${params.length} OR c.company_name ILIKE $${params.length})`);
     }
-    if (from) {
-      conditions.push(gte(invoices.createdAt, new Date(from as string)));
+    if (contact && contact.trim()) {
+      params.push(`%${contact.trim().replace(/\s+/g, "")}%`);
+      where.push(`(replace(coalesce(c.phone, ''), ' ', '') ILIKE $${params.length}
+                   OR replace(coalesce(c.mobile, ''), ' ', '') ILIKE $${params.length}
+                   OR coalesce(c.phone_normalized, '') ILIKE $${params.length})`);
     }
-
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-    const allInvoices = await db.query.invoices.findMany({
-      where: whereClause,
-      orderBy: [desc(invoices.createdAt)]
-    });
-
-    const allCustomers = await db.select({
-      companyName: customers.companyName,
-      accountName: customers.accountName
-    }).from(customers);
-
-    const customerMap = new Map<string, string>();
-    for (const c of allCustomers) {
-      if (c.companyName) {
-        customerMap.set(c.companyName.toLowerCase().trim(), c.accountName || "N/A");
-      }
+    if (ntn && ntn.trim()) {
+      params.push(`%${ntn.trim()}%`);
+      where.push(`(c.ntn ILIKE $${params.length} OR c.cnic ILIKE $${params.length})`);
+    }
+    if (from && /^\d{4}-\d{2}-\d{2}$/.test(String(from))) {
+      params.push(from);
+      where.push(`ip.created_at >= $${params.length}::date`);
     }
 
-    // Grouping by company name
-    const companyTotals = new Map<string, { companyName: string, accountName: string, subTotal: number, discount: number, grandTotal: number, pay: number, due: number, date: Date, invoiceId: string }>();
+    const sqlText = `
+      WITH ${LEDGER_INVOICES_CTE},
+      grp AS (
+        SELECT coalesce(ip.customer_id::text, 'name:' || lower(btrim(ip.customer_name))) AS gkey,
+               (array_agg(ip.customer_name ORDER BY ip.created_at DESC))[1] AS company_name,
+               (array_agg(ip.id ORDER BY ip.created_at DESC))[1] AS last_invoice_id,
+               (array_agg(ip.created_by_user_id ORDER BY ip.created_at DESC))[1] AS last_user_id,
+               max(ip.customer_id::text) AS customer_id,
+               sum(ip.subtotal) AS sub_total,
+               sum(greatest(ip.subtotal - ip.total, 0)) AS discount,
+               sum(ip.total) AS grand_total,
+               sum(ip.pay) AS pay,
+               max(ip.created_at) AS last_date,
+               count(*)::int AS invoice_count
+          FROM inv_pay ip
+          LEFT JOIN drm.customers c ON c.id = ip.customer_id
+         WHERE ${where.join(" AND ")}
+         GROUP BY 1
+      )
+      SELECT g.*, g.grand_total - g.pay AS due,
+             coalesce(c.account_name, c.person_name) AS account_name,
+             coalesce(u.full_name, u.username) AS sale_person,
+             count(*) OVER ()::int AS total_rows,
+             sum(g.grand_total) OVER () AS all_grand_total,
+             sum(g.pay) OVER () AS all_pay,
+             sum(g.grand_total - g.pay) OVER () AS all_due
+        FROM grp g
+        LEFT JOIN drm.customers c ON c.id::text = g.customer_id
+        LEFT JOIN drm.users u ON u.id = g.last_user_id
+       ORDER BY g.last_date DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    const { rows } = await pool.query(sqlText, [...params, limit, offset]);
 
-    for (const inv of allInvoices) {
-      const cname = inv.customerName;
-      if (!cname) continue;
-      if (!companyTotals.has(cname)) {
-        const accName = customerMap.get(cname.toLowerCase().trim()) || "Unknown Account Holder";
-        companyTotals.set(cname, { companyName: cname, accountName: accName, subTotal: 0, discount: 0, grandTotal: 0, pay: 0, due: 0, date: inv.createdAt, invoiceId: inv.id });
-      }
-      
-      const curr = companyTotals.get(cname)!;
-      const total = Number(inv.total || 0);
-      const subtotal = Number(inv.subtotal || 0);
-      const discount = subtotal - total > 0 ? subtotal - total : 0;
-      
-      curr.subTotal += subtotal;
-      curr.discount += discount;
-      curr.grandTotal += total;
-      
-      if (inv.createdAt > curr.date) {
-        curr.date = inv.createdAt;
-      }
+    let totalRows = rows[0]?.total_rows ?? 0;
+    let summaryRow = rows[0];
+    if (!rows.length && offset > 0) {
+      // Page past the end: still report totals.
+      const r2 = await pool.query(sqlText, [...params, 1, 0]);
+      totalRows = r2.rows[0]?.total_rows ?? 0;
+      summaryRow = r2.rows[0];
     }
 
-    const allInvoiceIds = allInvoices.map(i => i.id);
-    let payments: any[] = [];
-    
-    if (allInvoiceIds.length > 0) {
-      payments = await db.select().from(ledgerEntries).where(and(eq(ledgerEntries.category, 'Invoice Payment'), eq(ledgerEntries.entryType, 'Credit')));
-      
-      // Calculate pay and due. Real ledger_entries always win when they
-      // exist — status==='Paid' alone no longer means "fully paid" now that
-      // approval can record a partial amount (D-019); it only falls back to
-      // the full total for legacy invoices marked Paid before any ledger
-      // entry was ever written for them. A payment entry's currency can
-      // differ from its invoice's (the approval flow always records PKR,
-      // regardless of invoice currency) — convert here, at read time in full
-      // float precision, rather than pre-rounding to 2dp at insert time,
-      // which is what previously turned a round 30,000 PKR payment into
-      // 29,999 once it round-tripped through a 2-decimal USD column.
-      companyTotals.forEach((curr, cname) => {
-        const companyInvoices = allInvoices.filter(i => i.customerName === cname);
-
-        let totalPaid = 0;
-        for (const inv of companyInvoices) {
-          const invPayments = payments.filter((p: any) => p.referenceId === inv.id);
-          const rate = Number(inv.dollarRate) || 280;
-          const realPaid = invPayments.reduce((sum, p) => {
-            const amt = Number(p.amount);
-            if (!p.currency || p.currency === inv.currency) return sum + amt;
-            if (inv.currency === 'USD' && p.currency === 'PKR') return sum + amt / rate;
-            if (inv.currency === 'PKR' && p.currency === 'USD') return sum + amt * rate;
-            return sum + amt;
-          }, 0);
-          totalPaid += realPaid > 0 ? realPaid : (inv.status === 'Paid' ? Number(inv.total || 0) : 0);
-        }
-        curr.pay = totalPaid;
-        curr.due = curr.grandTotal - totalPaid;
-      });
-    }
-
-    // Convert map to LedgerResponse format expected by frontend
-    const results = Array.from(companyTotals.values()).map(c => {
-      return {
-        id: c.companyName,
-        entryType: "Credit" as const,
-        amount: c.subTotal.toString(),
-        currency: "USD",
-        description: c.companyName,
-        category: "Company",
-        referenceId: c.invoiceId,
-        referenceType: "Invoice",
-        balanceAfter: "0",
-        entryDate: c.date.toISOString(),
-        createdAt: c.date.toISOString(),
-        accountName: c.accountName,
-        grandTotal: c.grandTotal.toString(),
-        pay: c.pay.toString(),
-        due: c.due.toString(),
-      };
-    });
-
-    const paginated = results.slice(offset, offset + limit);
+    const results = rows.map((r: any) => ({
+      id: r.gkey,
+      entryType: "Credit" as const,
+      amount: String(r.sub_total ?? 0),
+      currency: "PKR",
+      description: r.company_name,
+      category: "Company",
+      referenceId: r.last_invoice_id,
+      referenceType: "Invoice",
+      balanceAfter: "0",
+      entryDate: new Date(r.last_date).toISOString(),
+      createdAt: new Date(r.last_date).toISOString(),
+      accountName: r.account_name || null,
+      salePerson: r.sale_person || null,
+      subTotal: String(r.sub_total ?? 0),
+      discount: String(r.discount ?? 0),
+      grandTotal: String(r.grand_total ?? 0),
+      pay: String(r.pay ?? 0),
+      due: String(r.due ?? 0),
+      invoiceCount: r.invoice_count,
+    }));
 
     res.json({
-      data: paginated,
-      total: results.length,
+      data: results,
+      total: totalRows,
       page: pageNum,
       pageSize: limit,
       summary: {
-        totalGM: results.reduce((acc, r) => acc + Number(r.pay), 0),
+        totalGM: Number(summaryRow?.all_pay ?? 0),
         totalRefund: 0,
-        totalInvoice: results.reduce((acc, r) => acc + Number(r.grandTotal), 0),
+        totalInvoice: Number(summaryRow?.all_grand_total ?? 0),
         totalDonation: 0,
-        outstandingDues: results.reduce((acc, r) => acc + Number(r.due), 0)
-      }
+        outstandingDues: Number(summaryRow?.all_due ?? 0),
+      },
     });
-
   } catch (err) {
     console.error("Error fetching company ledger report:", err);
     res.status(500).json({ error: "Failed to fetch company ledger report" });
   }
 });
 
-// GET /api/account/history/:companyId
+// GET /api/account/history/:companyId  (company name; old: account-history=<com_id>)
+// Invoices of the company + their receipts (Invoice Payment credits, and the old-DRM
+// payments copied into the ledger as category 'Invoice').
 companyLedgerRouter.get("/api/account/history/:companyId", requireFinancialPermission(FINANCIAL_ACTIONS.accountLedgerView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
   try {
-    const { companyId } = req.params; // Using company name as ID for now since that's how it's linked
+    const companyName = String(req.params.companyId || "").trim();
 
-    // Invoices for this company
-    const companyInvoices = await db.query.invoices.findMany({
-      where: eq(invoices.customerName, companyId),
-      orderBy: [desc(invoices.createdAt)]
-    });
-
-    // Payments for this company
-    // Usually tied via referenceId = invoice.id
+    // Explicit columns: drm.invoices has no quotation_id although the drizzle schema does.
+    const invRes = await pool.query(
+      `SELECT i.id, i.invoice_number AS "invoiceNumber", i.customer_id AS "customerId",
+              i.customer_name AS "customerName", i.customer_email AS "customerEmail",
+              i.customer_address AS "customerAddress", i.subtotal, i.tax, i.total,
+              CASE WHEN m.legacy_id IS NOT NULL THEN 'PKR' ELSE i.currency END AS currency,
+              i.status, i.issue_date AS "issueDate", i.due_date AS "dueDate", i.paid_at AS "paidAt",
+              i.notes, i.items, i.created_by_user_id AS "createdByUserId", i.created_at AS "createdAt",
+              i.updated_at AS "updatedAt", i.payment_method AS "paymentMethod", i.dollar_rate AS "dollarRate",
+              m.legacy_id AS "legacyInvoiceId",
+              coalesce(u.full_name, u.username, '-') AS "createdByName"
+         FROM drm.invoices i
+         LEFT JOIN migration_meta.migration_legacy_ids m
+                ON m.modern_table = 'invoices' AND m.modern_id = i.id AND m.entity_type = 'invoice'
+         LEFT JOIN drm.users u ON u.id = i.created_by_user_id
+        WHERE lower(btrim(i.customer_name)) = lower($1)
+        ORDER BY i.created_at DESC`,
+      [companyName],
+    );
+    const companyInvoices = invRes.rows;
     const invoiceIds = companyInvoices.map((i: any) => i.id);
+    const legacyIds = new Set(companyInvoices.filter((i: any) => i.legacyInvoiceId).map((i: any) => i.id));
+
     let payments: any[] = [];
-
     if (invoiceIds.length > 0) {
-      // Drizzle OR inArray is not imported, let's just use a loop for now or simple filtering if not many.
-      payments = await db.select().from(ledgerEntries).where(and(eq(ledgerEntries.category, 'Invoice Payment'), eq(ledgerEntries.entryType, 'Credit')));
-      payments = payments.filter((p: any) => invoiceIds.includes(p.referenceId));
-
-      // Pull an optional receipt screenshot back out of `description` (see
-      // POST /api/account/payment, which has nowhere else to put one), and
-      // fall back to the invoice's own notes.receiptImage for entries the
-      // approval flow created — that flow uploads straight to the invoice's
-      // notes rather than this marker, so it would otherwise go missing now
-      // that approved invoices get a real ledger entry of their own.
-      payments = payments.map((p: any) => {
+      const payRes = await pool.query(
+        `SELECT id, entry_type AS "entryType", amount, currency, description, category, date,
+                reference_id AS "referenceId", reference_type AS "referenceType", entry_date AS "entryDate",
+                remarks, created_at AS "createdAt", status
+           FROM drm.ledger_entries
+          WHERE reference_id = ANY($1::text[]) AND entry_type = 'Credit'
+            AND category IN ('Invoice Payment', 'Invoice')
+          ORDER BY entry_date`,
+        [invoiceIds],
+      );
+      payments = payRes.rows.map((p: any) => {
+        // Receipt screenshot is stored in the description by POST /api/account/payment;
+        // fall back to the invoice's own notes.receiptImage (approval flow).
         const match = typeof p.description === "string" ? p.description.match(/\s*\[receipt:(.+?)\]/) : null;
         let receiptImage = match ? match[1] : null;
         const description = match ? p.description.replace(match[0], "") : p.description;
         if (!receiptImage) {
-          const relatedInvoice = companyInvoices.find((inv) => inv.id === p.referenceId);
+          const relatedInvoice = companyInvoices.find((inv: any) => inv.id === p.referenceId);
           try {
             const parsedNotes = relatedInvoice?.notes ? JSON.parse(relatedInvoice.notes) : null;
             receiptImage = parsedNotes?.receiptImage || null;
           } catch {
-            // notes wasn't JSON — no receipt image to backfill.
+            // notes wasn't JSON
           }
         }
-        return { ...p, description, receiptImage };
+        // Old-DRM payments: PKR amounts, method in "(...)", receipt number in the text.
+        const legacy = legacyIds.has(p.referenceId);
+        const method = typeof description === "string" ? description.match(/\(([^()]*)\)\s*$/)?.[1] : null;
+        const recNo = typeof description === "string" ? description.match(/receipt (\S+)/)?.[1] : null;
+        return {
+          ...p,
+          currency: legacy ? "PKR" : p.currency,
+          description,
+          receiptImage,
+          receiptNumber: recNo && recNo !== "0" ? recNo : null,
+          remarks: legacy ? (method || p.remarks) : p.remarks,
+        };
       });
     }
 
-    const customerRow = await db.query.customers.findFirst({
-      where: ilike(customers.companyName, companyId)
-    });
+    const custRes = await pool.query(
+      `SELECT phone, ntn FROM drm.customers WHERE lower(btrim(company_name)) = lower($1) LIMIT 1`,
+      [companyName],
+    );
 
-    const creatorIds = Array.from(new Set(companyInvoices.map((i) => i.createdByUserId).filter(Boolean)));
-    let creatorNameById: Record<string, string> = {};
-    if (creatorIds.length > 0) {
-      const creatorRows = await db.select({ id: users.id, fullName: users.fullName, name: users.name, username: users.username })
-        .from(users)
-        .where(inArray(users.id, creatorIds as string[]));
-      creatorNameById = Object.fromEntries(creatorRows.map((u) => [u.id, u.fullName || u.name || u.username || "-"]));
-    }
-
-    // Invoices get marked status='Paid' directly by the Account Manager's
-    // approve action (POST /api/account/pending-quotations/:id/approve),
-    // which stores payment_method + notes.receiptNumber on the invoice row
-    // itself and never writes a ledger_entries row. Without this, such
-    // invoices show Due=0 in the list (computed straight off status==='Paid')
-    // while their receipts/payment-list view finds nothing, since that only
-    // ever reads ledger_entries.
+    // Invoices marked Paid by the Account Manager's approve action never got a ledger row:
+    // show a synthetic receipt for them so Due and the receipts list agree.
     const paidInvoiceIds = new Set(payments.map((p: any) => p.referenceId));
     const syntheticReceipts = companyInvoices
-      .filter((inv) => inv.status === "Paid" && !paidInvoiceIds.has(inv.id))
-      .map((inv) => {
+      .filter((inv: any) => inv.status === "Paid" && !paidInvoiceIds.has(inv.id) && !inv.legacyInvoiceId)
+      .map((inv: any) => {
         let receiptNumber: string | null = null;
         let receiptImage: string | null = null;
         try {
@@ -226,7 +251,7 @@ companyLedgerRouter.get("/api/account/history/:companyId", requireFinancialPermi
           receiptNumber = parsedNotes?.receiptNumber || null;
           receiptImage = parsedNotes?.receiptImage || null;
         } catch {
-          // notes wasn't JSON — no receipt number/image to extract.
+          // notes wasn't JSON
         }
         return {
           id: receiptNumber || inv.id,
@@ -244,13 +269,10 @@ companyLedgerRouter.get("/api/account/history/:companyId", requireFinancialPermi
     res.json({
       success: true,
       data: {
-        invoices: companyInvoices.map((inv) => ({
-          ...inv,
-          createdByName: inv.createdByUserId ? (creatorNameById[inv.createdByUserId] || "-") : "-"
-        })),
+        invoices: companyInvoices,
         receipts: [...payments, ...syntheticReceipts],
-        customer: customerRow ? { phone: customerRow.phone, ntn: customerRow.ntn } : null
-      }
+        customer: custRes.rows[0] ? { phone: custRes.rows[0].phone, ntn: custRes.rows[0].ntn } : null,
+      },
     });
   } catch (err) {
     console.error("Error fetching account history:", err);
@@ -271,9 +293,12 @@ companyLedgerRouter.post("/api/account/payment", requireFinancialPermission(FINA
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const inv = await db.query.invoices.findFirst({
-      where: eq(invoices.id, invoiceId)
-    });
+    // Explicit columns (drm.invoices has no quotation_id although the drizzle schema does).
+    const invRes = await pool.query(
+      `SELECT id, invoice_number AS "invoiceNumber" FROM drm.invoices WHERE id = $1`,
+      [invoiceId],
+    );
+    const inv = invRes.rows[0] as { id: string; invoiceNumber: string } | undefined;
 
     if (!inv) {
       return res.status(404).json({ error: "Invoice not found" });

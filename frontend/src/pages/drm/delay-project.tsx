@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,19 +15,84 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
+const DELAY_SECTIONS: { id: string; label: string }[] = [
+    { id: "ab-doc", label: "Ab-Doc" },
+    { id: "vas-doc", label: "Vas-Doc" },
+    { id: "hod", label: "Hod" },
+    { id: "dep-not-assign", label: "Dep Not Assign" },
+    { id: "not-start", label: "Not Start" },
+    { id: "qa-dep", label: "Qa-Dep" },
+    { id: "vf-dep", label: "Vf-Dep" },
+    { id: "all", label: "All" },
+];
+
 export default function DelayProjectPage() {
     const [searchQuery, setSearchQuery] = useState("");
+    const [section, setSection] = useState("ab-doc");
+    const [departmentId, setDepartmentId] = useState("all");
+    const [userFilter, setUserFilter] = useState("all");
+    const [startDate, setStartDate] = useState("");
+    const [endDate, setEndDate] = useState("");
+    const [page, setPage] = useState(1);
+    const pageSize = 50;
     const { toast } = useToast();
 
     const handleBack = () => {
         window.history.back();
     };
 
-    const { data: response, isLoading } = useQuery<any>({
-        queryKey: ['/api/hod/projects/delayed'],
+    const { data: departments } = useQuery<{ id: string; name: string }[]>({
+        queryKey: ["/api/drm/delay-projects/departments"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/drm/delay-projects/departments");
+            return res.json();
+        },
+    });
+
+    const { data: persons } = useQuery<{ id: string; name: string }[]>({
+        queryKey: ["/api/drm/delay-projects/persons", departmentId],
+        queryFn: async () => {
+            const q =
+                departmentId !== "all"
+                    ? `?departmentId=${encodeURIComponent(departmentId)}`
+                    : "";
+            const res = await apiRequest("GET", `/api/drm/delay-projects/persons${q}`);
+            return res.json();
+        },
+    });
+
+    const { data: sectionCounts } = useQuery<Record<string, number>>({
+        queryKey: ["/api/drm/delay-projects/counts"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/drm/delay-projects?counts=1");
+            const json = await res.json();
+            return json.counts as Record<string, number>;
+        },
+    });
+
+    const buildQuery = () => {
+        const params = new URLSearchParams();
+        params.set("section", section);
+        params.set("page", String(page));
+        params.set("pageSize", String(pageSize));
+        if (departmentId !== "all") params.set("departmentId", departmentId);
+        if (userFilter !== "all") params.set("userId", userFilter);
+        if (startDate) params.set("startDate", startDate);
+        if (endDate) params.set("endDate", endDate);
+        if (searchQuery.trim()) params.set("search", searchQuery.trim());
+        return params.toString();
+    };
+
+    const { data: response, isLoading, refetch, isFetching } = useQuery<any>({
+        queryKey: ["/api/hod/projects/delayed", section, departmentId, userFilter, startDate, endDate, searchQuery, page],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/hod/projects/delayed?${buildQuery()}`);
+            return res.json();
+        },
     });
 
     const delayedProjects = response?.data || [];
+    const totalRecords = response?.total ?? delayedProjects.length;
 
     // Edit dialog state — reschedules the deadline (and/or leaves a note) on the
     // real project row via the existing, authorized PUT /api/pms/projects/:id
@@ -73,16 +138,12 @@ export default function DelayProjectPage() {
         updateProjectMutation.mutate(payload);
     };
 
-    const filteredData = useMemo(() => {
-        if (!searchQuery.trim()) return delayedProjects;
-        const lowerQuery = searchQuery.toLowerCase();
-        return delayedProjects.filter((row: any) =>
-            (row.company || "").toLowerCase().includes(lowerQuery) ||
-            (row.project || "").toLowerCase().includes(lowerQuery) ||
-            (row.id || "").toLowerCase().includes(lowerQuery) ||
-            ((row.createDate ? new Date(row.createDate).toLocaleDateString() : "")).includes(lowerQuery)
-        );
-    }, [searchQuery, delayedProjects]);
+    const filteredData = delayedProjects;
+
+    const applyFilters = () => {
+        setPage(1);
+        refetch();
+    };
 
     const generateTooltip = (label: string, row: any) => {
         const colKeyMap: Record<string, string> = {
@@ -173,12 +234,81 @@ export default function DelayProjectPage() {
             </div>
 
             <div className="bg-white rounded border border-gray-100 shadow-sm p-4 overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3 mb-4">
+                    <div>
+                        <label className="text-[11px] font-bold text-gray-500 uppercase mb-1 block">Department</label>
+                        <select
+                            value={departmentId}
+                            onChange={(e) => {
+                                setDepartmentId(e.target.value);
+                                setUserFilter("all");
+                            }}
+                            className="w-full h-10 text-sm border border-gray-200 rounded px-2 dark:bg-zinc-900 dark:border-zinc-800"
+                        >
+                            <option value="all">All</option>
+                            {(departments ?? []).map((d) => (
+                                <option key={d.id} value={d.id}>{d.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-[11px] font-bold text-gray-500 uppercase mb-1 block">Select Person</label>
+                        <select
+                            value={userFilter}
+                            onChange={(e) => setUserFilter(e.target.value)}
+                            className="w-full h-10 text-sm border border-gray-200 rounded px-2 dark:bg-zinc-900 dark:border-zinc-800"
+                        >
+                            <option value="all">All</option>
+                            {(persons ?? []).map((p) => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-[11px] font-bold text-gray-500 uppercase mb-1 block">Start Date</label>
+                        <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-10 text-sm" />
+                    </div>
+                    <div>
+                        <label className="text-[11px] font-bold text-gray-500 uppercase mb-1 block">End Date</label>
+                        <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-10 text-sm" />
+                    </div>
+                    <div className="md:col-span-2 xl:col-span-2 flex items-end">
+                        <Button
+                            type="button"
+                            onClick={applyFilters}
+                            className="w-full h-10 bg-[#0f8c5b] hover:bg-[#0d7a4f] text-white"
+                            disabled={isFetching}
+                        >
+                            {isFetching ? "Loading..." : "View"}
+                        </Button>
+                    </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mb-4 border-b border-gray-100 pb-3 dark:border-zinc-800">
+                    {DELAY_SECTIONS.map((s) => (
+                        <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => { setSection(s.id); setPage(1); }}
+                            className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                                section === s.id
+                                    ? "bg-[#0f8c5b] text-white border-[#0f8c5b]"
+                                    : "bg-gray-50 text-gray-600 border-gray-200 hover:border-[#0f8c5b] dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700"
+                            }`}
+                        >
+                            {s.label}
+                            {sectionCounts?.[s.id] != null ? ` (${sectionCounts[s.id]})` : ""}
+                        </button>
+                    ))}
+                </div>
+
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                     <Input
                         type="text"
-                        placeholder="Search by Company, Project, Project ID, or Create Date (d/m/Y)"
+                        placeholder="Search by Company, Project, Project ID..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") applyFilters(); }}
                         className="w-full text-[13px] border-gray-200 focus-visible:ring-0 focus-visible:border-gray-300 h-10 dark:border-zinc-800"
                     />
                 </div>
@@ -246,13 +376,15 @@ export default function DelayProjectPage() {
                                         <td className="px-2 py-4 text-center">{renderBadge(row, 'projectDeadLine', 'Project Dead Line')}</td>
                                         <td className="px-3 py-4 text-[13px] text-gray-600 text-center font-bold text-[#dd3b4a] dark:text-zinc-300">{row.days || 0}</td>
                                         <td className="px-3 py-4 text-center">
-                                            <button
-                                                onClick={() => openEdit(row)}
-                                                className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-[#0f8c5b] transition-colors dark:hover:bg-zinc-800"
-                                                title="Reschedule deadline / add note"
-                                            >
-                                                <Pencil size={15} />
-                                            </button>
+                                            {!row.legacySource && (
+                                                <button
+                                                    onClick={() => openEdit(row)}
+                                                    className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-[#0f8c5b] transition-colors dark:hover:bg-zinc-800"
+                                                    title="Reschedule deadline / add note"
+                                                >
+                                                    <Pencil size={15} />
+                                                </button>
+                                            )}
                                         </td>
                                     </tr>
                                 ))
@@ -263,17 +395,29 @@ export default function DelayProjectPage() {
 
                 <div className="mt-4 flex items-center justify-between">
                     <span className="text-[13px] text-[#828a96]">
-                        Showing 1 to {filteredData.length} of {delayedProjects.length} entries
+                        Showing {(page - 1) * pageSize + (filteredData.length ? 1 : 0)} to{" "}
+                        {(page - 1) * pageSize + filteredData.length} of {totalRecords} entries
+                        {response?.source === "legacy" ? " (legacy archive)" : ""}
                     </span>
-                    
+
                     <div className="flex gap-1 items-center">
-                        <button className="text-[13px] text-gray-400 cursor-not-allowed hover:bg-gray-50 px-2 py-1 rounded dark:hover:bg-zinc-800">
+                        <button
+                            type="button"
+                            disabled={page <= 1}
+                            onClick={() => setPage((p) => Math.max(1, p - 1))}
+                            className="text-[13px] text-gray-600 hover:bg-gray-50 px-2 py-1 rounded disabled:opacity-40 dark:hover:bg-zinc-800"
+                        >
                             ‹
                         </button>
-                        <button className="text-[13px] text-white bg-[#0f8c5b] rounded-full w-7 h-7 flex items-center justify-center font-bold">
-                            1
-                        </button>
-                        <button className="text-[13px] text-gray-400 cursor-not-allowed hover:bg-gray-50 px-2 py-1 rounded dark:hover:bg-zinc-800">
+                        <span className="text-[13px] text-white bg-[#0f8c5b] rounded-full min-w-7 h-7 px-2 flex items-center justify-center font-bold">
+                            {page}
+                        </span>
+                        <button
+                            type="button"
+                            disabled={page * pageSize >= totalRecords}
+                            onClick={() => setPage((p) => p + 1)}
+                            className="text-[13px] text-gray-600 hover:bg-gray-50 px-2 py-1 rounded disabled:opacity-40 dark:hover:bg-zinc-800"
+                        >
                             ›
                         </button>
                     </div>

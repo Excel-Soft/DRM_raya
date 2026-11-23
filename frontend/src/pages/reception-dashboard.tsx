@@ -26,7 +26,9 @@ export default function ReceptionDashboard() {
     const [activeMeetingTab, setActiveMeetingTab] = useState("in-process");
     const [meetingSearch, setMeetingSearch] = useState("");
     const [meetingPage, setMeetingPage] = useState(1);
+    const [inProcessPage, setInProcessPage] = useState(1);
     const meetingPageSize = 10;
+    const inProcessPageSize = 10;
     const [isMeetingModalOpen, setIsMeetingModalOpen] = useState(false);
     const [meetingFile, setMeetingFile] = useState<File | null>(null);
     const [lastMeetingId, setLastMeetingId] = useState<string | null>(null);
@@ -35,12 +37,17 @@ export default function ReceptionDashboard() {
     const [selectedCompany, setSelectedCompany] = useState<string>("");
     const [selectedPerson, setSelectedPerson] = useState<string>("");
     const [selectedService, setSelectedService] = useState<string>("");
-    const [clientFilter, setClientFilter] = useState("expected");
-
     const [topSellingFilter, setTopSellingFilter] = useState<string>("ld");
     const [expectedClientFilter, setExpectedClientFilter] = useState<string>("expected");
     const [expectedClientPage, setExpectedClientPage] = useState(1);
     const expectedClientPageSize = 10;
+
+    const clientPanelPath =
+        expectedClientFilter === "monthly"
+            ? "/api/reception/monthly-visits"
+            : expectedClientFilter === "event"
+              ? "/api/reception/event-attendance"
+              : "/api/reception/expected-clients";
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -96,7 +103,22 @@ export default function ReceptionDashboard() {
     };
 
     const { data: meetingsData } = useQuery({
-        queryKey: ['/api/reception/meetings'],
+        queryKey: ['/api/reception/meetings', { limit: 5000 }],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/reception/meetings?limit=5000");
+            return await res.json();
+        },
+    });
+
+    const { data: clientPanelData, isLoading: clientPanelLoading } = useQuery({
+        queryKey: [clientPanelPath, expectedClientPage, expectedClientPageSize],
+        queryFn: async () => {
+            const res = await apiRequest(
+                "GET",
+                `${clientPanelPath}?page=${expectedClientPage}&limit=${expectedClientPageSize}`,
+            );
+            return await res.json();
+        },
     });
 
     const { data: customersData } = useQuery({
@@ -123,6 +145,15 @@ export default function ReceptionDashboard() {
         if (!isoString) return "-";
         return new Date(isoString).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + formatTime(isoString);
     };
+
+    const formatDateShort = (isoString: string) => {
+        if (!isoString) return "-";
+        const d = new Date(isoString);
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const yyyy = d.getFullYear();
+        return `${dd}-${mm}-${yyyy}`;
+    };
     
     const formatDuration = (seconds: number) => {
         if (!seconds) return "-";
@@ -132,14 +163,26 @@ export default function ReceptionDashboard() {
         return `${h}:${m}:${s}`;
     };
 
-    const expectedClients = meetingsList
-        .filter((m: any) => m.status === 'expected')
-        .map((m: any, idx: number) => ({
-        ...m, no: idx + 1, company: m.companyName || m.personName || "UNKNOWN", meeting: m.personName, time: formatTime(m.meetingDate), date: formatDate(m.meetingDate)
+    const clientPanelRows = ((clientPanelData as any)?.data || []).map((row: any) => ({
+        ...row,
+        company: row.company || "UNKNOWN",
+        meeting: row.meeting || "-",
+        time: row.time ? formatTime(row.time) : "-",
+        date: row.lastContact ? formatDate(row.lastContact) : "-",
+        visitDate: row.visitDate ? formatDateShort(row.visitDate) : "-",
+        service: row.service || "-",
     }));
+    const clientPanelTotal = (clientPanelData as any)?.metadata?.total ?? 0;
+    const clientPanelTotalPages = Math.max(1, Math.ceil(clientPanelTotal / expectedClientPageSize));
+
     const inProcessClients = meetingsList.filter((m: any) => m.status === 'in_progress').map((m: any, idx: number) => ({
         ...m, no: idx + 1, company: m.companyName || m.personName || "UNKNOWN", service: m.meetingType, meeting: m.personName, time: formatTime(m.startTime)
     }));
+    const inProcessTotalPages = Math.max(1, Math.ceil(inProcessClients.length / inProcessPageSize));
+    const paginatedInProcessClients = inProcessClients.slice(
+        (inProcessPage - 1) * inProcessPageSize,
+        inProcessPage * inProcessPageSize,
+    );
     const endClients = meetingsList.filter((m: any) => m.status === 'ended').map((m: any, idx: number) => ({
         ...m, no: idx + 1, company: m.companyName || m.personName || "UNKNOWN", service: m.meetingType, meeting: m.personName, start: formatTime(m.startTime), end: formatTime(m.endTime), total: formatDuration(m.totalDurationSeconds)
     }));
@@ -152,12 +195,6 @@ export default function ReceptionDashboard() {
                (row.meeting || "").toLowerCase().includes(q);
     });
     
-    const visitedClients = meetingsList.filter((m: any) => m.status === 'in_progress' || m.status === 'ended').map((m: any, idx: number) => ({
-        ...m, no: idx + 1, company: m.companyName || m.personName || "UNKNOWN", meeting: m.personName, time: formatTime(m.startTime || m.meetingDate), date: formatDate(m.startTime || m.meetingDate)
-    }));
-
-    const displayExpectedClients = expectedClientFilter === "expected" ? expectedClients : visitedClients;
-
     const startMeetingMutation = useMutation({
         mutationFn: async (id: string) => {
             await apiRequest("PATCH", `/api/reception/meetings/${id}/start`);
@@ -219,8 +256,48 @@ export default function ReceptionDashboard() {
         }
     });
 
+    const startLegacyExpectedMeeting = useMutation({
+        mutationFn: async (client: any) => {
+            const res = await apiRequest("POST", "/api/reception/meetings", {
+                companyId: client.companyId || undefined,
+                personName: client.meeting,
+                meetingType: "Inform",
+            });
+            const body = await res.json();
+            const meetingId = body?.data?.id;
+            if (!meetingId) throw new Error("Could not create meeting");
+            await apiRequest("PATCH", `/api/reception/meetings/${meetingId}/start`);
+            return meetingId;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["/api/reception/meetings"] });
+            queryClient.invalidateQueries({ queryKey: [clientPanelPath] });
+            toast({ title: "Status Updated", description: "Meeting moved to In Process." });
+        },
+        onError: (error: any) => {
+            toast({
+                title: "Error",
+                description: error?.message || "Could not start meeting.",
+                variant: "destructive",
+            });
+        },
+    });
+
     const moveToInProcess = (client: any) => {
-        startMeetingMutation.mutate(client.id);
+        if (expectedClientFilter !== "expected") return;
+        if (String(client.id).startsWith("lf-") || client.source === "legacy") {
+            if (!client.companyId) {
+                toast({
+                    title: "Error",
+                    description: "This company is not mapped in CRM yet — start the meeting from Create Meeting.",
+                    variant: "destructive",
+                });
+                return;
+            }
+            startLegacyExpectedMeeting.mutate(client);
+        } else {
+            startMeetingMutation.mutate(client.id);
+        }
         setActiveMeetingTab('in-process');
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
@@ -325,13 +402,13 @@ export default function ReceptionDashboard() {
                             <h2 className="text-[15px] font-bold text-slate-700 w-1/3 dark:text-zinc-400">Meeting Detail</h2>
                             <div className="flex gap-6 justify-center w-1/3">
                                 <button
-                                    onClick={() => setActiveMeetingTab('in-process')}
+                                    onClick={() => { setActiveMeetingTab('in-process'); setInProcessPage(1); }}
                                     className={`text-[13px] font-bold px-8 py-2 rounded transition-colors ${activeMeetingTab === 'in-process' ? 'bg-[#059669] text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:bg-zinc-900'}`}
                                 >
                                     In Process
                                 </button>
                                 <button
-                                    onClick={() => setActiveMeetingTab('end')}
+                                    onClick={() => { setActiveMeetingTab('end'); setMeetingPage(1); }}
                                     className={`text-[13px] font-bold px-8 py-2 rounded transition-colors ${activeMeetingTab === 'end' ? 'bg-[#059669] text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:bg-zinc-900'}`}
                                 >
                                     End
@@ -341,35 +418,69 @@ export default function ReceptionDashboard() {
                         </div>
 
                         {activeMeetingTab === 'in-process' ? (
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 border-b border-white">
-                                            <th className="py-3 px-4 text-[13px] font-bold text-slate-600 rounded-tl dark:text-zinc-300">No#</th>
-                                            <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Company</th>
-                                            <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Service</th>
-                                            <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Meeting</th>
-                                            <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Time</th>
-                                            <th className="py-3 px-4 text-[13px] font-bold text-slate-600 rounded-tr w-16 dark:text-zinc-300">Action</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {inProcessClients.map((row: any, idx: number) => (
-                                            <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors dark:border-zinc-800">
-                                                <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{idx + 1}</td>
-                                                <td className="py-4 px-4 text-[13px] font-semibold text-slate-600 uppercase dark:text-zinc-300">{row.company}</td>
-                                                <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{row.service}</td>
-                                                <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{row.meeting}</td>
-                                                <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{row.time}</td>
-                                                <td className="py-4 px-4">
-                                                    <button onClick={() => moveToEnd(row)} className="h-6 w-8 bg-[#ef4444] rounded flex flex-col items-center justify-center hover:bg-[#dc2626] transition-colors relative overflow-hidden group dark:bg-zinc-900 dark:hover:bg-zinc-800">
-                                                        <ChevronRight className="h-5 w-5 text-white stroke-[3] group-hover:scale-110 transition-transform" />
-                                                    </button>
-                                                </td>
+                            <div className="flex flex-col gap-4">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead>
+                                            <tr className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 border-b border-white">
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 rounded-tl dark:text-zinc-300">No#</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Company</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Service</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Meeting</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Time</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 rounded-tr w-16 dark:text-zinc-300">Action</th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            {inProcessClients.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={6} className="py-8 text-center text-slate-500 text-[13px]">
+                                                        No in-process meetings.
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                paginatedInProcessClients.map((row: any, idx: number) => (
+                                                    <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors dark:border-zinc-800">
+                                                        <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{(inProcessPage - 1) * inProcessPageSize + idx + 1}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-semibold text-slate-600 uppercase dark:text-zinc-300">{row.company}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{row.service}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{row.meeting}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{row.time}</td>
+                                                        <td className="py-4 px-4">
+                                                            <button onClick={() => moveToEnd(row)} className="h-6 w-8 bg-[#ef4444] rounded flex flex-col items-center justify-center hover:bg-[#dc2626] transition-colors relative overflow-hidden group dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                                                                <ChevronRight className="h-5 w-5 text-white stroke-[3] group-hover:scale-110 transition-transform" />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {inProcessClients.length > 0 && (
+                                    <div className="flex items-center justify-between mt-1">
+                                        <span className="text-[13px] text-slate-500 dark:text-zinc-400">
+                                            Showing {(inProcessPage - 1) * inProcessPageSize + 1} to {Math.min(inProcessPage * inProcessPageSize, inProcessClients.length)} of {inProcessClients.length} entries
+                                            {inProcessTotalPages > 1 ? ` (page ${inProcessPage} of ${inProcessTotalPages})` : ""}
+                                        </span>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => setInProcessPage((p) => Math.max(1, p - 1))}
+                                                disabled={inProcessPage === 1}
+                                                className="px-4 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                                            >
+                                                Previous
+                                            </button>
+                                            <button
+                                                onClick={() => setInProcessPage((p) => Math.min(inProcessTotalPages, p + 1))}
+                                                disabled={inProcessPage >= inProcessTotalPages}
+                                                className="px-6 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                                            >
+                                                Next
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="flex flex-col gap-4">
@@ -452,7 +563,11 @@ export default function ReceptionDashboard() {
                     <div className="bg-white rounded-[10px] shadow-sm border border-slate-100 p-6 dark:bg-zinc-900 dark:border-zinc-800">
                         <div className="flex justify-between items-center mb-6 pt-2 border-t border-slate-100 mt-[-10px] dark:border-zinc-800">
                             <h2 className="text-[15px] font-bold text-slate-700 mt-2 dark:text-zinc-400">
-                                {expectedClientFilter === 'expected' ? 'Daily Expected Client' : 'Event Attendance'}
+                                {expectedClientFilter === 'expected'
+                                    ? 'Daily Expected Client'
+                                    : expectedClientFilter === 'monthly'
+                                      ? 'Monthly Visit'
+                                      : 'Event Attendance'}
                             </h2>
                             <Select value={expectedClientFilter} onValueChange={(v) => { setExpectedClientFilter(v); setExpectedClientPage(1); }}>
                                 <SelectTrigger className="w-[160px] h-9 text-[13px] font-semibold border-slate-200 focus:ring-0 text-slate-600 mt-2 dark:text-zinc-300 dark:border-zinc-800">
@@ -460,6 +575,7 @@ export default function ReceptionDashboard() {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="expected">Expected Client</SelectItem>
+                                    <SelectItem value="monthly">Monthly Visit</SelectItem>
                                     <SelectItem value="event">Event Attendance</SelectItem>
                                 </SelectContent>
                             </Select>
@@ -471,44 +587,87 @@ export default function ReceptionDashboard() {
                                     <tr className="border-b border-slate-100 dark:border-zinc-800">
                                         <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">No#</th>
                                         <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Company</th>
-                                        <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Meeting</th>
-                                        <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Time</th>
-                                        <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Last Contact</th>
-                                        <th className="py-3 px-4 text-[13px] font-bold text-slate-600 text-center dark:text-zinc-300">Action</th>
+                                        {expectedClientFilter === "monthly" ? (
+                                            <>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Service</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Meeting By</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Time</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Date</th>
+                                            </>
+                                        ) : expectedClientFilter === "event" ? (
+                                            <>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Event</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Person</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Status</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Created</th>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Meeting</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Time</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Last Contact</th>
+                                                <th className="py-3 px-4 text-[13px] font-bold text-slate-600 text-center dark:text-zinc-300">Action</th>
+                                            </>
+                                        )}
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {displayExpectedClients.length === 0 ? (
+                                    {clientPanelLoading ? (
                                         <tr>
                                             <td colSpan={6} className="py-8 text-center text-slate-500 text-[13px]">
-                                                No {expectedClientFilter} clients found.
+                                                Loading…
+                                            </td>
+                                        </tr>
+                                    ) : clientPanelRows.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={6} className="py-8 text-center text-slate-500 text-[13px]">
+                                                No {expectedClientFilter === "monthly" ? "monthly visits" : expectedClientFilter === "event" ? "event attendance" : "expected clients"} found.
                                             </td>
                                         </tr>
                                     ) : (
-                                        displayExpectedClients
-                                            .slice((expectedClientPage - 1) * expectedClientPageSize, expectedClientPage * expectedClientPageSize)
-                                            .map((row: any, idx: number) => (
+                                        clientPanelRows.map((row: any, idx: number) => (
                                             <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
                                                 <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{(expectedClientPage - 1) * expectedClientPageSize + idx + 1}</td>
                                                 <td className="py-4 px-4 text-[13px] font-bold text-slate-600 uppercase dark:text-zinc-300">{row.company}</td>
-                                                <td className="py-4 px-4 text-[13px] font-medium text-slate-600 w-[140px] dark:text-zinc-300">{row.meeting}</td>
-                                                <td className="py-4 px-4 text-[13px] font-medium text-slate-500 w-[90px] dark:text-zinc-400">{row.time}</td>
-                                                <td className="py-4 px-4 text-[13px] font-medium text-slate-500 w-[160px] dark:text-zinc-400">{row.date}</td>
-                                                <td className="py-4 px-4 w-16 text-center">
-                                                    <button onClick={() => moveToInProcess(row)} className="mx-auto h-6 w-8 bg-transparent flex flex-col items-center justify-center group">
-                                                        <ChevronRight className="h-6 w-6 text-emerald-600 stroke-[3] group-hover:scale-110 transition-transform" />
-                                                    </button>
-                                                </td>
+                                                {expectedClientFilter === "monthly" ? (
+                                                    <>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{row.service}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{row.meeting}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{row.time}</td>
+                                                        <td className="py-4 px-4">
+                                                            <span className="inline-block px-2 py-0.5 rounded bg-slate-100 text-[12px] text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">{row.visitDate}</span>
+                                                        </td>
+                                                    </>
+                                                ) : expectedClientFilter === "event" ? (
+                                                    <>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{row.meeting}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{row.service}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">Absent</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{row.date}</td>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-600 w-[140px] dark:text-zinc-300">{row.meeting}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-500 w-[90px] dark:text-zinc-400">{row.time}</td>
+                                                        <td className="py-4 px-4 text-[13px] font-medium text-slate-500 w-[160px] dark:text-zinc-400">{row.date}</td>
+                                                        <td className="py-4 px-4 w-16 text-center">
+                                                            <button onClick={() => moveToInProcess(row)} className="mx-auto h-6 w-8 bg-transparent flex flex-col items-center justify-center group">
+                                                                <ChevronRight className="h-6 w-6 text-emerald-600 stroke-[3] group-hover:scale-110 transition-transform" />
+                                                            </button>
+                                                        </td>
+                                                    </>
+                                                )}
                                             </tr>
                                         ))
                                     )}
                                 </tbody>
                             </table>
                         </div>
-                        {displayExpectedClients.length > expectedClientPageSize && (
+                        {clientPanelTotal > 0 && (
                             <div className="flex items-center justify-between mt-3">
                                 <span className="text-[13px] text-slate-500 dark:text-zinc-400">
-                                    Showing {(expectedClientPage - 1) * expectedClientPageSize + 1} to {Math.min(expectedClientPage * expectedClientPageSize, displayExpectedClients.length)} of {displayExpectedClients.length} entries
+                                    Showing {(expectedClientPage - 1) * expectedClientPageSize + 1} to {Math.min(expectedClientPage * expectedClientPageSize, clientPanelTotal)} of {clientPanelTotal} entries
+                                    {clientPanelTotalPages > 1 ? ` (page ${expectedClientPage} of ${clientPanelTotalPages})` : ""}
                                 </span>
                                 <div className="flex gap-2">
                                     <button
@@ -519,8 +678,8 @@ export default function ReceptionDashboard() {
                                         Previous
                                     </button>
                                     <button
-                                        onClick={() => setExpectedClientPage((p) => (p * expectedClientPageSize < displayExpectedClients.length ? p + 1 : p))}
-                                        disabled={expectedClientPage * expectedClientPageSize >= displayExpectedClients.length}
+                                        onClick={() => setExpectedClientPage((p) => Math.min(clientPanelTotalPages, p + 1))}
+                                        disabled={expectedClientPage >= clientPanelTotalPages}
                                         className="px-6 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
                                     >
                                         Next

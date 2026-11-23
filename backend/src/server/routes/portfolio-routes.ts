@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db";
 import { portfolios } from "@shared/schema";
-import { sql, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import multer from "multer";
 import path from "path";
@@ -18,14 +17,52 @@ const router = Router();
 // being presented to a customer/company for booking.
 const RESERVATION_LOCK_HOURS = 48;
 
-let reservationInfraEnsured = false;
-async function ensurePortfolioReservationInfrastructure() {
-    if (reservationInfraEnsured) return;
-    reservationInfraEnsured = true;
+const LEGACY_PORTFOLIO_ASSET_BASE =
+    (process.env.LEGACY_PORTFOLIO_ASSET_BASE || "https://webexcels.pk/drm/assets/images/portfolio/").replace(/\/?$/, "/");
+
+function legacyPortfolioAssetUrl(fileName?: string | null): string {
+    if (!fileName || !String(fileName).trim()) return "";
+    const trimmed = String(fileName).trim();
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("/")) return trimmed;
+    return `${LEGACY_PORTFOLIO_ASSET_BASE}${trimmed}`;
+}
+
+function parseLegacySliderList(raw?: string | null): string[] {
+    if (!raw) return [];
+    return String(raw)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((name) => legacyPortfolioAssetUrl(name));
+}
+
+function normalizePortfolioStatus(raw?: string | null): string {
+    const s = (raw || "un-used").trim().toLowerCase();
+    if (s === "used") return "Used";
+    if (s === "un-used" || s === "unused") return "Un-Used";
+    if (s === "rejected") return "Rejected";
+    if (s === "changing") return "Changing";
+    if (s === "reserved") return "Reserved";
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+let portfolioInfraEnsured = false;
+async function ensurePortfolioInfrastructure() {
+    if (portfolioInfraEnsured) return;
+    portfolioInfraEnsured = true;
+
+    await pool.query(`
+        alter table drm.portfolios
+            add column if not exists created_by_user_id uuid references drm.users(id) on delete set null;
+        alter table drm.portfolios
+            add column if not exists status text default 'un-used';
+    `);
+
     await pool.query(`
         create table if not exists drm.portfolio_reservations (
             id uuid primary key default gen_random_uuid(),
-            portfolio_id uuid not null references drm.portfolios(id) on delete cascade,
+            portfolio_id uuid references drm.portfolios(id) on delete cascade,
+            portfolio_ref text,
             customer_id uuid references drm.customers(id) on delete set null,
             company_name text,
             status text not null default 'active',
@@ -42,9 +79,116 @@ async function ensurePortfolioReservationInfrastructure() {
             created_at timestamptz not null default now(),
             updated_at timestamptz not null default now()
         );
+        alter table drm.portfolio_reservations
+            add column if not exists portfolio_ref text;
+        alter table drm.portfolio_reservations
+            alter column portfolio_id drop not null;
+        alter table drm.portfolio_reservations
+            drop constraint if exists portfolio_reservations_portfolio_id_fkey;
+        alter table drm.portfolio_reservations
+            add constraint portfolio_reservations_portfolio_id_fkey
+                foreign key (portfolio_id) references drm.portfolios(id) on delete cascade;
         create index if not exists portfolio_reservations_portfolio_id_idx
             on drm.portfolio_reservations(portfolio_id);
+        create index if not exists portfolio_reservations_portfolio_ref_idx
+            on drm.portfolio_reservations(portfolio_ref);
+        update drm.portfolio_reservations
+           set portfolio_ref = portfolio_id::text
+         where portfolio_ref is null and portfolio_id is not null;
     `);
+}
+
+async function fetchMergedPortfolios(): Promise<any[]> {
+    const modernResult = await pool.query(`
+        select
+            p.id::text as id,
+            p.keyword,
+            p.main_category as "mainCategory",
+            p.sub_category as "subCategory",
+            p.server_link as "serverLink",
+            p.top_header_image as "topHeaderImage",
+            p.body_image as "bodyImage",
+            p.full_image as "fullImage",
+            p.sliders,
+            p.status,
+            p.created_at as "createdAt",
+            p.updated_at as "updatedAt",
+            p.created_by_user_id as "createdByUserId",
+            coalesce(u.full_name, u.name) as "designBy",
+            false as "legacyReadOnly",
+            null::text as "legacyPk"
+        from drm.portfolios p
+        left join drm.users u on u.id = p.created_by_user_id
+        order by p.created_at desc
+    `);
+
+    const legacyResult = await pool.query(`
+        with cats as (
+            select
+                _legacy_pk::text as id,
+                trim(name) as name,
+                trim(coalesce(ref_id, '0')) as ref_id
+            from legacy_archive.webxl_portfolio_categories
+        )
+        select
+            ('legacy-portfolio-' || p._legacy_pk) as id,
+            trim(p.keyword) as keyword,
+            coalesce(mc.name, 'Uncategorized') as "mainCategory",
+            nullif(trim(sc.name), '') as "subCategory",
+            nullif(trim(p.server_link), '') as "serverLink",
+            nullif(trim(p.top_header_img), '') as "topHeaderImageRaw",
+            nullif(trim(p.body_img), '') as "bodyImageRaw",
+            nullif(trim(p.main_img), '') as "fullImageRaw",
+            nullif(trim(p.main_sliders), '') as "mainSlidersRaw",
+            trim(p.status) as status,
+            coalesce(nullif(trim(p.create_date), '')::timestamptz, now()) as "createdAt",
+            coalesce(nullif(trim(p.create_date), '')::timestamptz, now()) as "updatedAt",
+            m.modern_id::text as "createdByUserId",
+            coalesce(u.full_name, u.name, 'Staff #' || trim(p.user_id)) as "designBy",
+            true as "legacyReadOnly",
+            p._legacy_pk::text as "legacyPk"
+        from legacy_archive.webxl_portfolio p
+        left join cats mc on mc.id = trim(p.category)
+        left join cats sc on sc.id = trim(p.sub_cate)
+        left join migration_meta.migration_legacy_ids m
+            on m.legacy_table = 'webxl_user' and m.legacy_id = trim(p.user_id)
+        left join drm.users u on u.id = m.modern_id::uuid
+        order by coalesce(nullif(trim(p.create_date), '')::timestamptz, now()) desc
+    `);
+
+    const modern = modernResult.rows.map((row) => ({
+        ...row,
+        status: normalizePortfolioStatus(row.status),
+        sliders: Array.isArray(row.sliders) ? row.sliders : [],
+    }));
+
+    const legacy = legacyResult.rows.map((row) => ({
+        id: row.id,
+        keyword: row.keyword,
+        mainCategory: row.mainCategory,
+        subCategory: row.subCategory,
+        serverLink: row.serverLink,
+        topHeaderImage: legacyPortfolioAssetUrl(row.topHeaderImageRaw),
+        bodyImage: legacyPortfolioAssetUrl(row.bodyImageRaw),
+        fullImage: legacyPortfolioAssetUrl(row.fullImageRaw),
+        sliders: parseLegacySliderList(row.mainSlidersRaw),
+        status: normalizePortfolioStatus(row.status),
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        createdByUserId: row.createdByUserId,
+        designBy: row.designBy,
+        legacyReadOnly: true,
+        legacyPk: row.legacyPk,
+    }));
+
+    const combined = [...modern, ...legacy];
+    combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return combined;
+}
+
+async function fetchPortfolioById(id: string): Promise<any | null> {
+    const all = await fetchMergedPortfolios();
+    return all.find((p) => p.id === id) ?? null;
 }
 
 // Live-computed status: the DB row only ever stores a human decision
@@ -63,7 +207,7 @@ function isLockingStatus(liveStatus: string): boolean {
 
 router.use(async (_req, _res, next) => {
     try {
-        await ensurePortfolioReservationInfrastructure();
+        await ensurePortfolioInfrastructure();
         next();
     } catch (err) {
         next(err);
@@ -83,9 +227,11 @@ const storage = multer.diskStorage({
     },
 });
 
+const PORTFOLIO_MAX_IMAGE_BYTES = 40 * 1024 * 1024; // 40MB per image (matches legacy DRM uploads)
+
 const upload = multer({
     storage,
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB per file
+    limits: { fileSize: PORTFOLIO_MAX_IMAGE_BYTES },
     fileFilter: (_req, file, cb) => {
         if (!file.mimetype.startsWith("image/")) {
             cb(new Error("Only image files are allowed"));
@@ -104,10 +250,10 @@ const portfolioUpload = upload.fields([
 
 const toPublicUrl = (file?: Express.Multer.File) => (file ? `/uploads/portfolio/${file.filename}` : "");
 
-// GET all portfolios
-router.get("/", async (req, res) => {
+// GET all portfolios (modern + legacy archive)
+router.get("/", async (_req, res) => {
     try {
-        const results = await db.select().from(portfolios).orderBy(desc(portfolios.createdAt));
+        const results = await fetchMergedPortfolios();
         res.json(results);
     } catch (err: any) {
         console.error("Error fetching portfolios:", err);
@@ -117,12 +263,49 @@ router.get("/", async (req, res) => {
 
 router.get("/test", (req, res) => res.json({ ok: true }));
 
+// Main / sub categories from legacy portfolio taxonomy (webxl_portfolio_categories)
+router.get("/categories", async (_req, res) => {
+    try {
+        const { rows } = await pool.query<{
+            _legacy_pk: string;
+            name: string;
+            ref_id: string | null;
+        }>(`
+          SELECT _legacy_pk, trim(name) AS name, trim(coalesce(ref_id, '0')) AS ref_id
+            FROM legacy_archive.webxl_portfolio_categories
+           ORDER BY _legacy_pk::int
+        `);
+
+        const mainCategories = rows
+            .filter((r) => !r.ref_id || r.ref_id === "0")
+            .map((r) => ({ id: String(r._legacy_pk), name: r.name }));
+
+        const subCategoriesByMainId: Record<string, { id: string; name: string }[]> = {};
+        for (const main of mainCategories) {
+            subCategoriesByMainId[main.id] = rows
+                .filter((r) => r.ref_id === main.id)
+                .map((r) => ({ id: String(r._legacy_pk), name: r.name }));
+        }
+
+        res.json({ mainCategories, subCategoriesByMainId });
+    } catch (error) {
+        console.error("Error fetching portfolio categories:", error);
+        res.status(500).json({ error: "Failed to fetch portfolio categories" });
+    }
+});
+
 // POST new portfolio — real multer-backed image upload (disk storage), replacing the previous mock that
 // discarded the uploaded files and stored empty strings.
 router.post("/", (req, res, next) => {
     portfolioUpload(req, res, (err: any) => {
         if (err) {
             console.error("Error uploading portfolio images:", err);
+            if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+                return res.status(413).json({
+                    success: false,
+                    message: "Each image must be 40MB or smaller.",
+                });
+            }
             return res.status(400).json({ success: false, message: err.message || "Failed to upload images" });
         }
         next();
@@ -146,7 +329,18 @@ router.post("/", (req, res, next) => {
             bodyImage,
             fullImage,
             sliders,
+            createdByUserId: req.user?.userId ?? null,
+            status: "un-used",
         }).returning();
+
+        let designBy: string | null = null;
+        if (req.user?.userId) {
+            const nameRow = await pool.query(
+                `select coalesce(full_name, name) as name from drm.users where id = $1`,
+                [req.user.userId],
+            );
+            designBy = nameRow.rows[0]?.name ?? null;
+        }
 
         await ActivityLogService.log({
             userId: req.user?.userId || "SYSTEM",
@@ -156,7 +350,15 @@ router.post("/", (req, res, next) => {
             details: `Keyword: ${newPortfolio.keyword}, Category: ${newPortfolio.mainCategory}`,
         });
 
-        res.json({ success: true, data: newPortfolio });
+        res.json({
+            success: true,
+            data: {
+                ...newPortfolio,
+                status: normalizePortfolioStatus(newPortfolio.status),
+                designBy,
+                legacyReadOnly: false,
+            },
+        });
     } catch (err: any) {
         console.error("Error creating portfolio:", err);
         res.status(500).json({ success: false, message: err?.message || "Failed to create portfolio" });
@@ -170,7 +372,9 @@ router.get("/reservations", async (req, res) => {
     try {
         const result = await pool.query(`
             select
-                r.id, r.portfolio_id as "portfolioId", r.customer_id as "customerId",
+                r.id,
+                coalesce(r.portfolio_ref, r.portfolio_id::text) as "portfolioId",
+                r.customer_id as "customerId",
                 r.company_name as "companyName", r.status,
                 r.reserved_by_user_id as "reservedByUserId", ru.full_name as "reservedByName",
                 r.reserved_at as "reservedAt", r.expires_at as "expiresAt",
@@ -201,14 +405,27 @@ router.post("/:portfolioId/reserve", async (req, res) => {
         const { portfolioId } = req.params;
         const { customerId, companyName } = req.body || {};
 
-        const portfolioCheck = await pool.query(`select id from drm.portfolios where id = $1`, [portfolioId]);
-        if (portfolioCheck.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Portfolio not found" });
+        const isLegacy = portfolioId.startsWith("legacy-portfolio-");
+        if (isLegacy) {
+            const legacyPk = portfolioId.slice("legacy-portfolio-".length);
+            const legacyCheck = await pool.query(
+                `select _legacy_pk from legacy_archive.webxl_portfolio where _legacy_pk = $1`,
+                [legacyPk],
+            );
+            if (legacyCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "Portfolio not found" });
+            }
+        } else {
+            const portfolioCheck = await pool.query(`select id from drm.portfolios where id = $1`, [portfolioId]);
+            if (portfolioCheck.rows.length === 0) {
+                return res.status(404).json({ success: false, message: "Portfolio not found" });
+            }
         }
 
         const existing = await pool.query(
             `select id, status, expires_at as "expiresAt" from drm.portfolio_reservations
-             where portfolio_id = $1 order by reserved_at desc limit 1`,
+             where coalesce(portfolio_ref, portfolio_id::text) = $1
+             order by reserved_at desc limit 1`,
             [portfolioId]
         );
         if (existing.rows[0] && isLockingStatus(computeReservationLiveStatus(existing.rows[0] as any))) {
@@ -219,10 +436,20 @@ router.post("/:portfolioId/reserve", async (req, res) => {
         const expiresAt = new Date(reservedAt.getTime() + RESERVATION_LOCK_HOURS * 60 * 60 * 1000);
         const inserted = await pool.query(
             `insert into drm.portfolio_reservations
-                (portfolio_id, customer_id, company_name, status, reserved_by_user_id, reserved_at, expires_at)
-             values ($1, $2, $3, 'active', $4, $5, $6)
-             returning id, portfolio_id as "portfolioId", status, reserved_at as "reservedAt", expires_at as "expiresAt"`,
-            [portfolioId, customerId || null, companyName || null, req.user.userId, reservedAt, expiresAt]
+                (portfolio_id, portfolio_ref, customer_id, company_name, status, reserved_by_user_id, reserved_at, expires_at)
+             values ($1, $2, $3, $4, 'active', $5, $6, $7)
+             returning id,
+                      coalesce(portfolio_ref, portfolio_id::text) as "portfolioId",
+                      status, reserved_at as "reservedAt", expires_at as "expiresAt"`,
+            [
+                isLegacy ? null : portfolioId,
+                portfolioId,
+                customerId || null,
+                companyName || null,
+                req.user.userId,
+                reservedAt,
+                expiresAt,
+            ]
         );
         const reservation = inserted.rows[0];
 
@@ -391,6 +618,18 @@ router.post("/reservations/:id/extend", requireRole("verification_manager", "adm
     } catch (err: any) {
         console.error("Error extending portfolio reservation:", err);
         res.status(500).json({ success: false, message: err?.message || "Failed to extend reservation" });
+    }
+});
+
+// GET one portfolio by id (uuid or legacy-portfolio-{pk}) — must be last to avoid shadowing /categories, /reservations, etc.
+router.get("/:portfolioId", async (req, res) => {
+    try {
+        const item = await fetchPortfolioById(req.params.portfolioId);
+        if (!item) return res.status(404).json({ success: false, message: "Portfolio not found" });
+        res.json(item);
+    } catch (err: any) {
+        console.error("Error fetching portfolio:", err);
+        res.status(500).json({ success: false, message: "Failed to fetch portfolio" });
     }
 });
 

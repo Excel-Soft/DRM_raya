@@ -25,24 +25,46 @@ export const PENALTY_HEADS = [
   "Other",
 ];
 
-/** Penalty Head names + default amounts from DRM attributes (legacy master list). */
+/**
+ * Penalty Head names + default amounts — the same list DRM Setting -> Attributes ->
+ * Penalty Head shows: the old-DRM heads (legacy_archive.webxl_penalty_head) followed by
+ * heads added in the new app (drm.attributes, category "Penalty Head"). A new-app head
+ * with the same name overrides the old amount. The hard-coded list is only a fallback
+ * when both sources are empty.
+ */
 export async function getPenaltyHeadCatalog(): Promise<{ name: string; amount: number | null }[]> {
+  const toAmount = (v: string | null) => (v != null && String(v).trim() !== "" && !Number.isNaN(Number(v)) ? Number(v) : null);
+  const merged = new Map<string, { name: string; amount: number | null }>();
   try {
-    const { rows } = await pool.query(
-      `select name, amount from drm.attributes
-       where category = 'Penalty Head' and parent_id is null
-       order by created_at asc`,
+    const legacy = await pool.query(
+      `select trim(head) as name, nullif(trim(amount), '') as amount
+         from legacy_archive.webxl_penalty_head
+        where nullif(trim(head), '') is not null
+        order by _legacy_pk::int asc`,
     );
-    if (rows.length === 0) {
-      return PENALTY_HEADS.map((name) => ({ name, amount: null }));
+    for (const r of legacy.rows) {
+      const key = String(r.name).toLowerCase();
+      if (!merged.has(key)) merged.set(key, { name: r.name, amount: toAmount(r.amount) });
     }
-    return rows.map((r: { name: string; amount: string | null }) => ({
-      name: r.name,
-      amount: r.amount != null && r.amount !== "" ? Number(r.amount) : null,
-    }));
   } catch {
-    return PENALTY_HEADS.map((name) => ({ name, amount: null }));
+    /* archive not present in this database */
   }
+  try {
+    const modern = await pool.query(
+      `select trim(name) as name, amount from drm.attributes
+        where category = 'Penalty Head' and parent_id is null and nullif(trim(name), '') is not null
+        order by created_at asc`,
+    );
+    for (const r of modern.rows) {
+      const key = String(r.name).toLowerCase();
+      const prev = merged.get(key);
+      merged.set(key, { name: prev?.name ?? r.name, amount: toAmount(r.amount) ?? prev?.amount ?? null });
+    }
+  } catch {
+    /* ignore */
+  }
+  if (merged.size === 0) return PENALTY_HEADS.map((name) => ({ name, amount: null }));
+  return Array.from(merged.values());
 }
 
 // Columns selected for a penalty row, joined with employee/creator/approver names.

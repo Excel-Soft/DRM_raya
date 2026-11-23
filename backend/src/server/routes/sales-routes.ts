@@ -21,7 +21,7 @@ import { customers, targetSystemDailyTargets, targetSystemUserTargets, users, se
 import crypto from "crypto";
 import { ensureBvReportsSchema } from "../repositories/bv-reports.repository";
 import { generateDrmId, resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
-import { isManagerialRole, normalizeRole, ROLES, shouldSkipLeadAutoOwnership } from "../utils/role-utils";
+import { isLeadPoolOrgWideViewer, isManagerialRole, normalizeRole, ROLES, shouldSkipLeadAutoOwnership } from "../utils/role-utils";
 import { assertCanEditCustomer } from "../utils/ownership";
 import { sendError, ApiError } from "../utils/api-error";
 import { recordAssignment, getAssignmentHistory } from "../utils/assignment-history";
@@ -148,6 +148,57 @@ async function ensureCustomersSchema() {
 
 const periodSchema = z.enum(["TD", "WC", "MC", "QC", "YC", "ALL"]);
 const tracingGrades = ["A+", "A-", "B+", "B-", "B", "C+", "C", "D"] as const;
+
+const TRACING_MAIN_SERVICE_CODES = [
+  { key: "Alibaba_Membership", code: "ALIBABA_MEMBERSHIP", legacyId: "316" },
+  { key: "Alibaba_Services", code: "ALIBABA_SERVICES", legacyId: "317" },
+  { key: "Design_Development", code: "DESIGN_DEVELOPMENT", legacyId: "318" },
+  { key: "Domain_Hosting", code: "DOMAIN_HOSTING", legacyId: "319" },
+  { key: "AI_Services", code: "AI_SERVICES", legacyId: "332" },
+] as const;
+
+function customerHasFollowUpForMainServiceSql(legacyServiceId: string): string {
+  return `exists (
+    select 1
+      from drm.follow_up_service_lines l
+     where l.customer_id = c.id
+       and trim(coalesce(l.legacy_service_id, '')) = '${legacyServiceId}'
+  )`;
+}
+
+const TRACING_SERVICE_LABELS: Record<string, string> = {
+  "316": "Alibaba Membership",
+  "317": "Alibaba Services",
+  "318": "Design Development",
+  "319": "Domain Hosting",
+  "332": "AI Services",
+};
+
+function appendLeadPoolSelfOwnerScope(
+  conditions: string[],
+  addParam: (value: any) => string,
+  userId: string,
+): void {
+  const p = addParam(userId);
+  conditions.push(
+    `(c.owner_user_id = ${p} OR (c.owner_user_id IS NULL AND c.created_by = ${p}))`,
+  );
+}
+
+function resolveTracingLegacyServiceId(mainService: string): string | null {
+  const raw = String(mainService || "").trim();
+  if (!raw || raw.toLowerCase() === "all") return null;
+  const norm = raw.toLowerCase().replace(/\s+/g, "_");
+  const fromCode = TRACING_MAIN_SERVICE_CODES.find(
+    (s) => s.key.toLowerCase() === norm || s.code.toLowerCase() === norm,
+  );
+  if (fromCode) return fromCode.legacyId;
+  for (const [legacyId, label] of Object.entries(TRACING_SERVICE_LABELS)) {
+    if (label.toLowerCase() === raw.toLowerCase() || label.toUpperCase() === raw.toUpperCase()) return legacyId;
+  }
+  if (/^\d+$/.test(raw)) return raw;
+  return null;
+}
 
 interface SalesKpi {
   count: number;
@@ -457,35 +508,16 @@ async function fetchFollowupWithDetails(followupId: string, customerId?: string)
 
 async function buildLeadPoolSummary(userId: string, roleId?: string): Promise<LeadPoolSummary> {
   await syncGmBvPool();
+  await syncServicePool();
   const gmBvCount = await countGmBvEntries(userId, roleId);
-  const manager = isLeadPoolManager(roleId);
-  const isSalesManagerRole = normalizeRole(roleId || "") === ROLES.SALES_MANAGER;
-  const allowedUserIds = manager
-    ? await getDepartmentFilterUserIds({ user: { userId, roleId: roleId || "", activeRoleId: roleId || "" } })
-    : null;
+  const orgWide = isLeadPoolOrgWideViewer(roleId);
   const params: any[] = [];
   let scopeClause = "coalesce(c.is_deleted, false) = false";
-  if (isSalesManagerRole) {
+  if (!orgWide) {
     params.push(userId);
-    // Sales Manager: self-only scope, matching buildLeadPoolList's "public" case —
-    // no org-wide Public pool catch-all here (that's only for plain executives below).
     scopeClause += ` and (
       c.owner_user_id = $${params.length}
       or (c.owner_user_id IS NULL AND c.created_by = $${params.length})
-    )`;
-  } else if (!manager) {
-    params.push(userId);
-    // Include: customers owned by this user, OR (not owned by anyone AND created by this user), plus Public pool
-    scopeClause += ` and (
-      c.owner_user_id = $${params.length}
-      or (c.owner_user_id IS NULL AND c.created_by = $${params.length})
-      or c.pool_type = 'Public'
-    )`;
-  } else if (allowedUserIds) {
-    params.push(allowedUserIds);
-    scopeClause += ` and (
-      c.owner_user_id = ANY($${params.length}::uuid[])
-      or (c.owner_user_id IS NULL AND c.created_by = ANY($${params.length}::uuid[]))
       or c.pool_type = 'Public'
     )`;
   }
@@ -497,8 +529,8 @@ async function buildLeadPoolSummary(userId: string, roleId?: string): Promise<Le
       where ${scopeClause}
     )
     select
-      count(*) filter (where coalesce(lower(status), 'new') = 'new')::int as yet_to_contact,
-      count(*) filter (where coalesce(lower(status), 'new') <> 'new')::int as contacted,
+      count(*) filter (where coalesce(lower(status::text), 'new') = 'new')::int as yet_to_contact,
+      count(*) filter (where coalesce(lower(status::text), 'new') <> 'new')::int as contacted,
       0::int as invoice_sent,
       0::int as whatsapp,
       0::int as email,
@@ -552,6 +584,7 @@ async function buildLeadPoolList(
   },
 ): Promise<LeadPoolListResponse> {
   await syncGmBvPool();
+  await syncServicePool();
   await syncPublicPool();
   const poolParam = (query.pool || (query.grade ? "all" : "private")).toLowerCase();
   const page = Math.max(1, parseInt(query.page || "1", 10));
@@ -562,19 +595,7 @@ async function buildLeadPoolList(
   const statusFilter = query.statusFilter;
   const sourceFilter = query.sourceFilter;
 
-  const manager = isLeadPoolManager(roleId);
-  // Sales Manager sees only what they personally own/added in this pool —
-  // never their team's — regardless of the (broken/unscoped) manager branch
-  // below. Kept as a separate flag rather than folding into `manager` since
-  // `manager` also drives the "all" pool case, which this ask didn't touch.
-  const isSalesManagerRole = normalizeRole(roleId || "") === ROLES.SALES_MANAGER;
-  // Same gap as /api/sales/tracing/summary: a department manager (service_manager,
-  // sales_manager, ...) got zero scoping here, seeing every department's pool —
-  // not just their own team's. getDepartmentFilterUserIds only returns null for
-  // true global roles; a department manager gets their own team's user ids back.
-  const allowedUserIds = manager
-    ? await getDepartmentFilterUserIds({ user: { userId, roleId: roleId || "", activeRoleId: roleId || "" } })
-    : null;
+  const orgWide = isLeadPoolOrgWideViewer(roleId);
   const conditions: string[] = ["coalesce(c.is_deleted, false) = false"];
   const params: any[] = [];
   const addParam = (value: any) => {
@@ -584,55 +605,32 @@ async function buildLeadPoolList(
 
   switch (poolParam) {
     case "all":
-      if (!manager || isSalesManagerRole) {
+      if (!orgWide) {
         conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
-      } else if (allowedUserIds) {
-        const p = addParam(allowedUserIds);
-        conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
       }
       break;
     case "private":
       conditions.push("(c.pool_type = 'Private' OR c.pool_type = 'GMBV')");
-      if (!manager || isSalesManagerRole) {
-        // Show customers owned by this user OR (no owner set AND created by this user)
-        conditions.push(`(c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
-      } else if (allowedUserIds) {
-        const p = addParam(allowedUserIds);
-        conditions.push(`(c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
+      if (!orgWide) {
+        appendLeadPoolSelfOwnerScope(conditions, addParam, userId);
       }
       break;
     case "service":
       conditions.push("c.pool_type = 'Service'");
-      if (!manager || isSalesManagerRole) {
-        conditions.push(`(c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
-      } else if (allowedUserIds) {
-        const p = addParam(allowedUserIds);
-        conditions.push(`(c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
+      if (!orgWide) {
+        appendLeadPoolSelfOwnerScope(conditions, addParam, userId);
       }
       break;
     case "gm_bv":
     case "gmbv":
       conditions.push("c.pool_type = 'GMBV'");
-      if (!manager || isSalesManagerRole) {
-        conditions.push(`(c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
-      } else if (allowedUserIds) {
-        const p = addParam(allowedUserIds);
-        conditions.push(`(c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
+      if (!orgWide) {
+        appendLeadPoolSelfOwnerScope(conditions, addParam, userId);
       }
       break;
     case "public": {
       conditions.push("c.pool_type = 'Public'");
-      // Public Pool is a department-wide shared pool (e.g. any Sales Executive
-      // can pick up a lead another Sales Executive dropped here), but it must
-      // not leak across departments — a Service viewer should never see a
-      // Sales-originated public lead and vice versa. There's no explicit
-      // department column on customers, so department is inferred from the
-      // creator's role, same ad hoc "role contains service" convention used
-      // in App.tsx's DynamicPublicPool. True global roles see everything.
-      const isGlobalRole = ["admin", "super_admin", "hod", "super_hod", "account_manager"].includes(normalizeRole(roleId || ""));
-      if (isSalesManagerRole) {
-        conditions.push(`(c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
-      } else if (!isGlobalRole) {
+      if (!orgWide) {
         const viewerIsService = normalizeRole(roleId || "").includes("service");
         conditions.push(`not exists (
           select 1 from drm.users cb where cb.id = c.created_by
@@ -643,10 +641,8 @@ async function buildLeadPoolList(
     }
     case "expiring":
       conditions.push("c.expires_at between now() and now() + interval '7 day'");
-      if (!manager || isSalesManagerRole) {
+      if (!orgWide) {
         conditions.push(`c.owner_user_id = ${addParam(userId)}`);
-      } else if (allowedUserIds) {
-        conditions.push(`c.owner_user_id = ANY(${addParam(allowedUserIds)}::uuid[])`);
       }
       break;
     default:
@@ -661,10 +657,17 @@ async function buildLeadPoolList(
     }
   }
 
-  const canonicalServiceCodes = ["ALIBABA_MEMBERSHIP", "ALIBABA_SERVICES", "DESIGN_DEVELOPMENT", "DOMAIN_HOSTING"];
+  const canonicalServiceCodes = ["ALIBABA_MEMBERSHIP", "ALIBABA_SERVICES", "DESIGN_DEVELOPMENT", "DOMAIN_HOSTING", "AI_SERVICES"];
+  const legacyIdByCode: Record<string, string> = {
+    ALIBABA_MEMBERSHIP: "316",
+    ALIBABA_SERVICES: "317",
+    DESIGN_DEVELOPMENT: "318",
+    DOMAIN_HOSTING: "319",
+    AI_SERVICES: "332",
+  };
   if (serviceFilter && canonicalServiceCodes.includes(serviceFilter)) {
-    const codeParam = addParam(serviceFilter);
-    conditions.push(`exists (select 1 from drm.service_pool_entries spe where spe.customer_id = c.id and spe.service_code = ${codeParam} and spe.status not in ('dropout', 'refund'))`);
+  const legacyId = legacyIdByCode[serviceFilter];
+    conditions.push(customerHasFollowUpForMainServiceSql(legacyId));
   } else if (serviceFilter && serviceFilter !== "all") {
     // Map frontend values to more flexible database search patterns
     let searchPatterns: string[] = [];
@@ -693,7 +696,7 @@ async function buildLeadPoolList(
   }
 
   if (statusFilter) {
-    conditions.push(`lower(c.status) = lower(${addParam(statusFilter)})`);
+    conditions.push(`lower(c.status::text) = lower(${addParam(statusFilter)})`);
   }
 
   if (sourceFilter) {
@@ -806,31 +809,81 @@ async function syncGmBvPool() {
   }
 }
 
+let isSyncingServicePool = false;
+async function syncServicePool() {
+  if (isSyncingServicePool) return;
+  isSyncingServicePool = true;
+  try {
+    await pool.query(`
+      INSERT INTO drm.service_pool_entries (
+        customer_id, service_person_id, sales_person_id, status, started_at, updated_at, metadata
+      )
+      SELECT DISTINCT ON (ls.customer_id)
+        ls.customer_id,
+        ls.user_id,
+        COALESCE(c.owner_user_id, c.created_by),
+        'active'::drm.service_pool_status,
+        COALESCE(
+          NULLIF(trim(ls.payload->>'create_date'), '')::timestamptz,
+          ls.created_at,
+          now()
+        ),
+        now(),
+        jsonb_build_object('source', 'legacy_servicepool', 'legacy_id', ls.id::text)
+      FROM drm.legacy_servicepool ls
+      JOIN drm.customers c ON c.id = ls.customer_id
+      WHERE ls.customer_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM drm.service_pool_entries spe
+          WHERE spe.customer_id = ls.customer_id AND spe.status = 'active'
+        )
+      ORDER BY ls.customer_id, ls.created_at DESC
+    `);
+    await pool.query(`
+      UPDATE drm.customers c
+         SET pool_type = 'Service',
+             updated_at = now()
+       WHERE (
+         EXISTS (SELECT 1 FROM drm.legacy_servicepool ls WHERE ls.customer_id = c.id)
+         OR EXISTS (
+           SELECT 1 FROM drm.service_pool_entries spe
+           WHERE spe.customer_id = c.id AND spe.status = 'active'
+         )
+       )
+         AND COALESCE(c.pool_type, 'Private') <> 'Service'
+    `);
+  } catch (err) {
+    console.warn("Failed to sync Service pool", err);
+  } finally {
+    isSyncingServicePool = false;
+  }
+}
+
 let isSyncingPublicPool = false;
 async function syncPublicPool() {
   if (isSyncingPublicPool) return;
   isSyncingPublicPool = true;
   try {
+    // Private customer with no activity for 90 days -> Public pool. "Activity" includes
+    // follow-ups (old DRM follow-ups were copied into drm.follow_ups and the old
+    // last-follow-up date into customers.last_followup_date, never into lead_activities);
+    // counting only lead_activities swept every old private customer to Public.
     await pool.query(
       `update drm.customers c
           set pool_type = 'Public',
               owner_user_id = NULL,
               updated_at = now()
         where pool_type = 'Private'
-          and (
-            -- no activity AND old enough to be abandoned, not just newly created
-            (
-              not exists (
-                select 1 from drm.lead_activities ca
-                where ca.customer_id = c.id
-              )
-              and c.created_at < now() - interval '90 days'
-            )
-            -- OR the most recent activity is older than 90 days
-            or (
-              select max(ca.created_at) from drm.lead_activities ca 
-              where ca.customer_id = c.id
-            ) < now() - interval '90 days'
+          and c.created_at < now() - interval '90 days'
+          and coalesce(c.last_followup_date, '-infinity'::timestamp) < now() - interval '90 days'
+          and not exists (
+            select 1 from drm.lead_activities ca
+             where ca.customer_id = c.id and ca.created_at >= now() - interval '90 days'
+          )
+          and not exists (
+            select 1 from drm.follow_ups f
+             where f.customer_id = c.id and coalesce(f.is_deleted, false) = false
+               and f.created_at >= now() - interval '90 days'
           )`
     );
   } catch (err) {
@@ -998,11 +1051,33 @@ async function ensureTargetsTable() {
         );
         create index if not exists idx_targets_user_month_year on targets(user_id, year, month);
       `);
+    } catch (err: any) {
+      // drm.targets already exists with a different (target-definition) shape —
+      // no month/year columns — so the index above fails. Callers fall back to
+      // default targets via getMonthlyTarget(); never fail the request here.
+      console.warn("[sales] ensureTargetsTable skipped:", err?.message || err);
     } finally {
       client.release();
     }
   })();
   return ensureTargetsPromise;
+}
+
+// Monthly AB/VAS target for a user from drm.targets (month/year shape). Returns
+// null when the row/columns are missing so callers use their defaults.
+async function getMonthlyTarget(userId: string, field: "vas_target" | "ab_target"): Promise<number | null> {
+  const now = new Date();
+  try {
+    const r = await pool.query(
+      `select ${field} as target from drm.targets where user_id = $1 and month = $2 and year = $3 limit 1`,
+      [userId, now.getMonth() + 1, now.getFullYear()],
+    );
+    const v = r.rows[0]?.target;
+    return v == null ? null : parseFloat(v);
+  } catch (err: any) {
+    if (err?.code === "42703") return null; // undefined_column: legacy drm.targets shape
+    throw err;
+  }
 }
 
 export function registerSalesRoutes(app: Express) {
@@ -1402,13 +1477,8 @@ export function registerSalesRoutes(app: Express) {
       }));
 
       const achievedAmount = rows.reduce((sum, r) => sum + r.achievedAmount, 0);
-      const now = new Date();
       const targetField = type === "vas" ? "vas_target" : "ab_target";
-      const targetRes = await pool.query(
-        `select ${targetField} as target from drm.targets where user_id = $1 and month = $2 and year = $3 limit 1`,
-        [req.user.userId, now.getMonth() + 1, now.getFullYear()],
-      );
-      const targetAmount = parseFloat(targetRes.rows[0]?.target ?? (type === "vas" ? 45000 : 50000));
+      const targetAmount = (await getMonthlyTarget(req.user.userId, targetField)) ?? (type === "vas" ? 45000 : 50000);
       const percent = targetAmount > 0 ? (achievedAmount / targetAmount) * 100 : 0;
 
       return res.json({
@@ -1934,8 +2004,12 @@ export function registerSalesRoutes(app: Express) {
       const endOfDay = new Date(startOfDay);
       endOfDay.setDate(endOfDay.getDate() + 1);
 
-      // Get today's appointments from DB
-      const appointments = await appointmentsRepository.getTodayAppointments(req.user.userId);
+      let appointments: Awaited<ReturnType<typeof appointmentsRepository.getTodayAppointments>> = [];
+      try {
+        appointments = await appointmentsRepository.getTodayAppointments(req.user.userId);
+      } catch (aptErr) {
+        console.warn("[sales/appointments/today] appointments query failed:", (aptErr as Error)?.message ?? aptErr);
+      }
 
       // Format for frontend
       const formattedAppointments = appointments.map((apt) => {
@@ -1962,8 +2036,17 @@ export function registerSalesRoutes(app: Express) {
       const userCondition = isManager ? "" : "and coalesce(f.assigned_to, f.created_by) = $3";
       const queryParams = isManager ? [startOfDay, endOfDay] : [startOfDay, endOfDay, req.user.userId];
 
-      const followupRows = await pool.query(
-        `
+      let followupAppointments: Array<{
+        id: string;
+        company: string;
+        purpose: string;
+        time: string;
+        managerStatus: string;
+        managerComment: string;
+      }> = [];
+      try {
+        const followupRows = await pool.query(
+          `
           select f.id,
                  c.company_name,
                  coalesce(f.date_time, f.due_at, f.created_at) as dt,
@@ -1981,10 +2064,10 @@ export function registerSalesRoutes(app: Express) {
              and coalesce(f.date_time, f.due_at, f.created_at) < $2
              ${userCondition}
         `,
-        queryParams,
-      );
+          queryParams,
+        );
 
-      const followupAppointments = followupRows.rows.map((row: any) => {
+        followupAppointments = followupRows.rows.map((row: any) => {
         const time = row.dt
           ? new Date(row.dt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
           : "";
@@ -1996,7 +2079,10 @@ export function registerSalesRoutes(app: Express) {
           managerStatus: "Pending", // Follow-ups don't have manager status in the same way, but provide defaults
           managerComment: "",
         };
-      });
+        });
+      } catch (fuErr) {
+        console.warn("[sales/appointments/today] follow-ups query failed:", (fuErr as Error)?.message ?? fuErr);
+      }
 
       const combined = [...formattedAppointments, ...followupAppointments];
       logDebug("[sales/appointments/today]", { count: formattedAppointments.length });
@@ -2181,8 +2267,8 @@ export function registerSalesRoutes(app: Express) {
       // Dropout leads (using customers status if available)
       const dropoutRes = await pool.query(
         `select
-            count(*) filter (where coalesce(lower(c.status),'') = 'dropout')::int as dropout_all,
-            count(*) filter (where coalesce(lower(c.status),'') = 'dropout' and c.updated_at >= now() - interval '7 day')::int as dropout_7
+            count(*) filter (where coalesce(lower(c.status::text),'') = 'dropout')::int as dropout_all,
+            count(*) filter (where coalesce(lower(c.status::text),'') = 'dropout' and c.updated_at >= now() - interval '7 day')::int as dropout_7
          from drm.customers c
          ${whereCustomers}`,
         params,
@@ -2238,7 +2324,7 @@ export function registerSalesRoutes(app: Express) {
 
       // Complaints: open/pending tickets
       const complaintsRes = await pool.query(
-        `select count(*)::int as count from support_tickets where coalesce(status,'Open') not in ('Closed','Resolved')`,
+        `select count(*)::int as count from support_tickets where coalesce(status::text,'Open') not in ('Closed','Resolved')`,
       );
       const complaints = complaintsRes.rows[0]?.count ?? 0;
 
@@ -2582,16 +2668,32 @@ export function registerSalesRoutes(app: Express) {
     }
   });
 
-  // GET /api/posting/products?active=true
+  // GET /api/posting/products?active=true — Business Line / posting category catalog (legacy webxl_category).
   app.get("/api/posting/products", async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const active = req.query.active === "true";
       const result = await pool.query(
-        `select id, name, sku, price, stock from drm.products ${active ? "where stock > 0" : ""} order by name asc`,
+        `select _legacy_pk::text as id,
+                name,
+                name as sku,
+                0::numeric as price,
+                1 as stock
+           from legacy_archive.webxl_category
+          where name is not null and trim(name) <> ''
+            and coalesce(nullif(trim(root_id), ''), '0') = '0'
+          order by name asc`,
       );
 
-      res.json(result.rows.map(r => ({ ...r, isActive: Number(r.stock) > 0 })));
+      res.json(
+        result.rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          sku: r.sku,
+          price: r.price,
+          stock: r.stock,
+          isActive: true,
+        })),
+      );
     } catch (err) {
       console.error("Error fetching products:", err);
       res.status(500).json({ error: "InternalError", message: "Failed to fetch products" });
@@ -2897,14 +2999,8 @@ export function registerSalesRoutes(app: Express) {
       }
       await ensureCustomersSchema();
 
-      const roleIsManager = isManagerialRole(((req.user as any).activeRoleId || req.user.roleId));
-      // A department-level manager (service_manager, sales_manager, etc.) previously
-      // got NO scoping at all here — "manager" just skipped the owner/created_by
-      // filter entirely, so e.g. a service_manager saw every department's Private
-      // Pool customers, including sales_manager's team. getDepartmentFilterUserIds
-      // returns null only for true global roles (admin/super_admin/hod/...); for a
-      // department manager it returns their own team's user ids.
-      const allowedUserIds = roleIsManager ? await getDepartmentFilterUserIds(req) : null;
+      const activeRole = normalizeRole(((req.user as any).activeRoleId || req.user.roleId) || "");
+      const orgWide = isLeadPoolOrgWideViewer(activeRole);
 
       const poolParam = (req.query.pool as string || "private").toLowerCase();
       const statusFilter = req.query.statusFilter as string | undefined;
@@ -2918,20 +3014,14 @@ export function registerSalesRoutes(app: Express) {
 
       switch (poolParam) {
         case "all":
-          if (!roleIsManager) {
+          if (!orgWide) {
             conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ${addParam(req.user.userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(req.user.userId)}))`);
-          } else if (allowedUserIds) {
-            const p = addParam(allowedUserIds);
-            conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
           }
           break;
         case "private":
           conditions.push("(c.pool_type = 'Private' OR c.pool_type = 'GMBV')");
-          if (!roleIsManager) {
-            conditions.push(`(c.owner_user_id = ${addParam(req.user.userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(req.user.userId)}))`);
-          } else if (allowedUserIds) {
-            const p = addParam(allowedUserIds);
-            conditions.push(`(c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
+          if (!orgWide) {
+            appendLeadPoolSelfOwnerScope(conditions, addParam, req.user.userId);
           }
           break;
         case "service":
@@ -2960,56 +3050,229 @@ export function registerSalesRoutes(app: Express) {
         }
         case "expiring":
           conditions.push("c.expires_at between now() and now() + interval '7 day'");
-          if (!roleIsManager) {
+          if (!orgWide) {
             conditions.push(`c.owner_user_id = ${addParam(req.user.userId)}`);
-          } else if (allowedUserIds) {
-            conditions.push(`c.owner_user_id = ANY(${addParam(allowedUserIds)}::uuid[])`);
           }
           break;
       }
 
       if (statusFilter) {
-        conditions.push(`lower(c.status) = lower(${addParam(statusFilter)})`);
+        conditions.push(`lower(c.status::text) = lower(${addParam(statusFilter)})`);
       }
 
       const where = conditions.join(" AND ");
 
       const gradeSelects = tracingGrades
-        .map((g) => `count(*) filter (where lower(trim(c.grade)) = '${g.toLowerCase()}') as "${g}"`)
+        .map((g) => `count(*) filter (where lower(trim(s.grade)) = '${g.toLowerCase()}') as "${g}"`)
         .join(", ");
 
-      const services = [
-        { key: "Alibaba_Membership", code: "ALIBABA_MEMBERSHIP" },
-        { key: "Alibaba_Services", code: "ALIBABA_SERVICES" },
-        { key: "Design_Development", code: "DESIGN_DEVELOPMENT" },
-        { key: "Domain_Hosting", code: "DOMAIN_HOSTING" },
-      ];
-
-      const serviceSelects = services.map(s => {
-        return `count(*) filter (where exists (
-          select 1 from drm.service_pool_entries spe
-          where spe.customer_id = c.id and spe.service_code = '${s.code}' and spe.status not in ('dropout', 'refund')
-        )) as "${s.key}"`;
-      }).join(", ");
-
-      const query = `
-        select ${gradeSelects}, ${serviceSelects}
-        from drm.customers c
-        where ${where}
+      const gradeQuery = `
+        with scoped as (
+          select c.id, c.grade
+            from drm.customers c
+           where ${where}
+        )
+        select ${gradeSelects}
+          from scoped s
       `;
 
-      const result = await pool.query(query, params);
-      
-      const counts = result.rows[0] || {};
-      // Convert string counts to numbers
-      for (const key in counts) {
-        counts[key] = parseInt(counts[key] || "0", 10);
+      const serviceQuery = `
+        with scoped as (
+          select c.id
+            from drm.customers c
+           where ${where}
+        ),
+        follow_main as (
+          select distinct l.customer_id, trim(l.legacy_service_id) as legacy_sid
+            from scoped s
+            join drm.follow_up_service_lines l on l.customer_id = s.id
+           where trim(coalesce(l.legacy_service_id, '')) in ('316','317','318','319','332')
+        )
+        select legacy_sid, count(distinct customer_id)::int as total
+          from follow_main
+         group by legacy_sid
+      `;
+
+      const [gradeResult, serviceResult] = await Promise.all([
+        pool.query(gradeQuery, params),
+        pool.query(serviceQuery, params),
+      ]);
+
+      const counts: Record<string, number> = { ...(gradeResult.rows[0] || {}) };
+      for (const key of Object.keys(counts)) {
+        counts[key] = parseInt(String(counts[key] ?? "0"), 10);
       }
-      
+      const legacyToKey = Object.fromEntries(TRACING_MAIN_SERVICE_CODES.map((s) => [s.legacyId, s.key]));
+      for (const s of TRACING_MAIN_SERVICE_CODES) {
+        counts[s.key] = 0;
+      }
+      for (const row of serviceResult.rows) {
+        const key = legacyToKey[String(row.legacy_sid)];
+        if (key) counts[key] = Number(row.total ?? 0);
+      }
+
       res.json(counts);
     } catch (error) {
       console.error("Error fetching tracing summary:", error);
       res.status(500).json({ error: "Failed to fetch tracing summary" });
+    }
+  });
+
+  // GET /api/sales/tracing/followup-details — detail rows for Private Pool tracing tabs.
+  // tracing/summary counts customers via follow_up_service_lines; this returns those same lines
+  // (not drm.follow_ups / dashboard followups, which use a different service naming scheme).
+  app.get("/api/sales/tracing/followup-details", async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      await ensureCustomersSchema();
+
+      const activeRole = normalizeRole(((req.user as any).activeRoleId || req.user.roleId) || "");
+      const orgWide = isLeadPoolOrgWideViewer(activeRole);
+
+      const poolParam = String(req.query.pool || "private").toLowerCase();
+      const legacyId = resolveTracingLegacyServiceId(String(req.query.mainService || "all"));
+      const gradeRaw = String(req.query.grade || "").trim();
+      const dateFrom = req.query.dateFrom ? String(req.query.dateFrom) : undefined;
+      const dateTo = req.query.dateTo ? String(req.query.dateTo) : undefined;
+      const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+      const pageSize = Math.max(1, Math.min(200, parseInt(String(req.query.pageSize || "50"), 10)));
+      const offset = (page - 1) * pageSize;
+
+      const conditions: string[] = ["coalesce(c.is_deleted, false) = false"];
+      const params: any[] = [];
+      const addParam = (value: any) => {
+        params.push(value);
+        return `$${params.length}`;
+      };
+
+      switch (poolParam) {
+        case "private":
+          conditions.push("(c.pool_type = 'Private' OR c.pool_type = 'GMBV')");
+          if (!orgWide) {
+            appendLeadPoolSelfOwnerScope(conditions, addParam, req.user.userId);
+          }
+          break;
+        case "service":
+          conditions.push("c.pool_type = 'Service'");
+          if (!orgWide) {
+            appendLeadPoolSelfOwnerScope(conditions, addParam, req.user.userId);
+          }
+          break;
+        case "gm_bv":
+        case "gmbv":
+          conditions.push("c.pool_type = 'GMBV'");
+          if (!orgWide) {
+            appendLeadPoolSelfOwnerScope(conditions, addParam, req.user.userId);
+          }
+          break;
+        case "public":
+          conditions.push("c.pool_type = 'Public'");
+          break;
+        default:
+          conditions.push("(c.pool_type = 'Private' OR c.pool_type = 'GMBV')");
+          if (!orgWide) {
+            appendLeadPoolSelfOwnerScope(conditions, addParam, req.user.userId);
+          }
+      }
+
+      const customerWhere = conditions.join(" AND ");
+      const lineParts: string[] = [
+        "trim(coalesce(l.legacy_service_id, '')) in ('316','317','318','319','332')",
+      ];
+      if (legacyId) {
+        params.push(legacyId);
+        lineParts[0] = `trim(coalesce(l.legacy_service_id, '')) = $${params.length}`;
+      }
+      if (gradeRaw && gradeRaw.toLowerCase() !== "all") {
+        params.push(gradeRaw.toLowerCase());
+        lineParts.push(
+          `lower(trim(coalesce(l.service_grade, c.grade, ''))) = $${params.length}`,
+        );
+      }
+      if (dateFrom) {
+        params.push(dateFrom);
+        lineParts.push(`coalesce(l.legacy_created_at, l.created_at) >= $${params.length}::date`);
+      }
+      if (dateTo) {
+        params.push(dateTo);
+        lineParts.push(
+          `coalesce(l.legacy_created_at, l.created_at) <= $${params.length}::date + interval '1 day'`,
+        );
+      }
+      const lineWhere = lineParts.join(" AND ");
+
+      const countSql = `
+        WITH scoped AS (
+          SELECT c.id FROM drm.customers c WHERE ${customerWhere}
+        )
+        SELECT count(*)::int AS count
+          FROM scoped s
+          JOIN drm.follow_up_service_lines l ON l.customer_id = s.id
+          JOIN drm.customers c ON c.id = s.id
+         WHERE ${lineWhere}
+      `;
+
+      const listSql = `
+        WITH scoped AS (
+          SELECT c.id FROM drm.customers c WHERE ${customerWhere}
+        )
+        SELECT
+          l.id,
+          c.id AS customer_id,
+          coalesce(c.company_name, c.company, 'Unknown') AS company,
+          trim(l.legacy_service_id) AS legacy_service_id,
+          coalesce(nullif(trim(l.service_type), ''), 'General') AS subservice_name,
+          coalesce(nullif(trim(l.service_grade), ''), nullif(trim(c.grade), ''), 'A') AS grade,
+          coalesce(l.purpose, '') AS purpose,
+          coalesce(l.method, '') AS method,
+          coalesce(l.service_comment, '') AS notes,
+          coalesce(u.full_name, u.name, u.username, '') AS sales_person,
+          coalesce(l.note, '') AS followup_note,
+          l.next_date AS due_at,
+          coalesce(l.legacy_created_at, l.created_at) AS created_at
+        FROM scoped s
+        JOIN drm.customers c ON c.id = s.id
+        JOIN drm.follow_up_service_lines l ON l.customer_id = s.id
+        LEFT JOIN drm.users u ON u.id = coalesce(c.owner_user_id, c.created_by)
+        WHERE ${lineWhere}
+        ORDER BY coalesce(l.legacy_created_at, l.created_at) DESC NULLS LAST, l.id
+        LIMIT ${pageSize} OFFSET ${offset}
+      `;
+
+      const [countRes, listRes] = await Promise.all([
+        pool.query(countSql, params),
+        pool.query(listSql, params),
+      ]);
+
+      res.json({
+        success: true,
+        items: listRes.rows.map((r) => {
+          const sid = String(r.legacy_service_id || "").trim();
+          return {
+            id: r.id,
+            customerId: r.customer_id,
+            company: r.company,
+            serviceType: TRACING_SERVICE_LABELS[sid] || sid || "Unknown",
+            subserviceName: r.subservice_name,
+            grade: r.grade,
+            purpose: r.purpose || null,
+            method: r.method || null,
+            notes: r.notes || null,
+            salesPerson: r.sales_person || null,
+            followupNote: r.followup_note || null,
+            dueAt: r.due_at,
+            createdAt: r.created_at,
+          };
+        }),
+        total: countRes.rows[0]?.count ?? 0,
+        page,
+        pageSize,
+      });
+    } catch (error) {
+      console.error("Error fetching tracing followup details:", error);
+      res.status(500).json({ error: "Failed to fetch tracing followup details" });
     }
   });
 
@@ -4636,13 +4899,8 @@ export function registerSalesRoutes(app: Express) {
         [req.user.userId, dateFrom, dateTo],
       );
 
-      const now = new Date();
       const targetField = type === "vas" ? "vas_target" : "ab_target";
-      const targetRes = await pool.query(
-        `select ${targetField} as target from drm.targets where user_id = $1 and month = $2 and year = $3 limit 1`,
-        [req.user.userId, now.getMonth() + 1, now.getFullYear()],
-      );
-      const targetAmount = parseFloat(targetRes.rows[0]?.target ?? (type === "vas" ? 45000 : 50000));
+      const targetAmount = (await getMonthlyTarget(req.user.userId, targetField)) ?? (type === "vas" ? 45000 : 50000);
 
       const points = rowsRes.rows.map((r: any) => {
         const achievedAmount = parseFloat(r.achieved ?? 0);

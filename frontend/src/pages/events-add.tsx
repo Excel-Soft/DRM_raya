@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MapPin } from "lucide-react";
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useQuery, useMutation, keepPreviousData } from "@tanstack/react-query";
 import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -38,6 +38,7 @@ interface EventRow {
   createdByName: string | null;
   createdAt: string | null;
   speakers: EventSpeaker[];
+  isLegacy?: boolean; // read-only row from old DRM (legacy_archive)
 }
 
 interface EventsListResult {
@@ -71,6 +72,8 @@ const EMPTY_SPEAKER_FORM = {
 
 const ATTENDANCE_STATUSES = ["Present", "Absent"] as const;
 
+const PAGE_SIZE = 20;
+
 const EMPTY_ATTENDEE_FORM = {
   eventId: "",
   customerId: "",
@@ -102,12 +105,31 @@ export default function EventsAdd() {
   const [attendeeForm, setAttendeeForm] = useState({ ...EMPTY_ATTENDEE_FORM });
   const [customerSearch, setCustomerSearch] = useState("");
 
+  const [page, setPage] = useState(1);
   const eventsQuery = useQuery<EventsListResult>({
-    queryKey: ["/api/events", { pageSize: 100 }],
-    queryFn: () => apiRequestJson<EventsListResult>("GET", "/api/events?page=1&pageSize=100"),
+    queryKey: ["/api/events", { page, pageSize: PAGE_SIZE, includeLegacy: true }],
+    queryFn: () =>
+      apiRequestJson<EventsListResult>("GET", `/api/events?page=${page}&pageSize=${PAGE_SIZE}&includeLegacy=1`),
+    placeholderData: keepPreviousData,
   });
 
   const events = eventsQuery.data?.data ?? [];
+  const totalEvents = eventsQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalEvents / PAGE_SIZE));
+  const firstRow = totalEvents === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const lastRow = Math.min(page * PAGE_SIZE, totalEvents);
+  // e.g. after deleting the only row on the last page, step back to a valid page.
+  useEffect(() => {
+    if (eventsQuery.data && page > totalPages) setPage(totalPages);
+  }, [eventsQuery.data, page, totalPages]);
+
+  // Speaker/attendee pickers need ALL new events, not just the current table
+  // page. Old-DRM rows are display-only, so this list excludes them (no includeLegacy).
+  const pickerQuery = useQuery<EventsListResult>({
+    queryKey: ["/api/events", "add-event-pickers"],
+    queryFn: () => apiRequestJson<EventsListResult>("GET", "/api/events?page=1&pageSize=100"),
+  });
+  const editableEvents = pickerQuery.data?.data ?? [];
 
   function invalidateEvents() {
     queryClient.invalidateQueries({ queryKey: ["/api/events"] });
@@ -397,7 +419,7 @@ export default function EventsAdd() {
                     <SelectValue placeholder="Select Event" />
                   </SelectTrigger>
                   <SelectContent>
-                    {events.map(ev => (
+                    {editableEvents.map(ev => (
                       <SelectItem key={ev.id} value={ev.id}>{ev.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -443,7 +465,7 @@ export default function EventsAdd() {
                     <SelectValue placeholder="Select Event" />
                   </SelectTrigger>
                   <SelectContent>
-                    {events.map(ev => (
+                    {editableEvents.map(ev => (
                       <SelectItem key={ev.id} value={ev.id}>{ev.name}</SelectItem>
                     ))}
                   </SelectContent>
@@ -548,7 +570,7 @@ export default function EventsAdd() {
                 )}
                 {events.map((ev, idx) => (
                   <tr key={ev.id} className="border-b last:border-b-0 transition-colors">
-                    <td className="px-4 py-4 text-[#d35400] font-medium align-top">{idx + 1}</td>
+                    <td className="px-4 py-4 text-[#d35400] font-medium align-top">{(page - 1) * PAGE_SIZE + idx + 1}</td>
                     <td className="px-4 py-4 text-gray-600 font-medium align-top dark:text-zinc-300">{ev.name}</td>
                     <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{ev.eventType}</td>
                     <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">
@@ -591,10 +613,10 @@ export default function EventsAdd() {
                                   <td className="pt-2 text-gray-600 dark:text-zinc-300">{sp.endTime}</td>
                                   <td className="pt-2 text-gray-600 dark:text-zinc-300">{total}</td>
                                   <td className="pt-2">
-                                    <button
+                                    {!ev.isLegacy && <button
                                       onClick={() => deleteSpeakerMutation.mutate({ eventId: ev.id, speakerId: sp.id })}
                                       className="text-[11px] text-red-600 hover:underline"
-                                    >Remove</button>
+                                    >Remove</button>}
                                   </td>
                                 </tr>
                               );
@@ -604,7 +626,9 @@ export default function EventsAdd() {
                       )}
                     </td>
                     <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{ev.venue}</td>
-                    <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{ev.status}</td>
+                    <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">
+                      {ev.isLegacy ? <span className="text-[11px] text-gray-400">Old DRM</span> : ev.status}
+                    </td>
                     <td className="px-4 py-4 text-[#00a65a] align-top dark:text-zinc-400">
                       {ev.mapUrl ? (
                         <a href={ev.mapUrl} target="_blank" rel="noreferrer" title="View Map">
@@ -621,15 +645,37 @@ export default function EventsAdd() {
                     <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{fmtDate(ev.eventDate)}</td>
                     <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{fmtDate(ev.createdAt)}</td>
                     <td className="px-4 py-4 align-top">
-                      <div className="flex flex-col gap-1">
+                      {!ev.isLegacy && <div className="flex flex-col gap-1">
                         <button onClick={() => handleEditEvent(ev)} className="text-[12px] text-[#00a65a] hover:underline text-left">Edit</button>
                         <button onClick={() => deleteEventMutation.mutate(ev.id)} className="text-[12px] text-red-600 hover:underline text-left">Delete</button>
-                      </div>
+                      </div>}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {totalEvents > 0 && (
+              <div className="px-4 py-3 border-t flex flex-wrap items-center justify-between gap-2 dark:border-zinc-800">
+                <span className="text-sm text-gray-500 dark:text-zinc-400">
+                  Showing {firstRow}–{lastRow} of {totalEvents} events
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page <= 1 || eventsQuery.isFetching}
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                  >Previous</Button>
+                  <span className="text-sm text-gray-600 dark:text-zinc-300">Page {page} of {totalPages}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= totalPages || eventsQuery.isFetching}
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  >Next</Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

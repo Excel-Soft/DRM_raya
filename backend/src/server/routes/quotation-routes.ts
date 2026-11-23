@@ -891,7 +891,24 @@ export function registerQuotationRoutes(app: Express) {
           }
         }
       }
+      const stripServiceDetails = (raw: string) =>
+        String(raw || "")
+          .replace(/<br\s*\/?>/gi, ", ")
+          .replace(/<[^>]+>/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+
       const rows = result.rows.map((r: any, idx: number) => {
+        const labelList =
+          labelsByQuotationId.get(r.id) ??
+          (r.service_details
+            ? String(r.service_details)
+                .split(",")
+                .map((s: string) => stripServiceDetails(s))
+                .filter(Boolean)
+            : []);
+        const serviceSummary =
+          [...new Set(labelList)].slice(0, 4).join(", ") || stripServiceDetails(r.service_details) || "-";
         let statusComment = r.save_status || "Pending";
         if (r.hod_status === "rejected") statusComment = r.hod_comment ? `Rejected: ${r.hod_comment}` : "Rejected";
         else if (r.converted_invoice_id) statusComment = "Converted to Invoice";
@@ -903,7 +920,7 @@ export function registerQuotationRoutes(app: Express) {
           id: r.id,
           company: r.company,
           customerId: r.customer_id,
-          serviceDetails: r.service_details || "-",
+          serviceDetails: serviceSummary,
           date: r.converted_invoice_id || r.converted_gm_id ? r.converted_at : r.created_at,
           statusComment,
           isConfirmed: !!r.confirmed_at,

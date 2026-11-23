@@ -1,0 +1,1866 @@
+mysql_table,postgres_table,mysql_column,postgres_column,mysql_type,postgres_type,mapping_status,transformation_required,notes
+activity_logs,user_activities,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+activity_logs,user_activities,user_id,id,int(11) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+activity_logs,user_activities,username,userName,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,case,table_map=documented/heuristic
+activity_logs,user_activities,action_type,actionType,varchar(50) NOT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+activity_logs,user_activities,action_description,actionDescription,text NOT NULL,text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+activity_logs,user_activities,table_name,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+activity_logs,user_activities,record_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+activity_logs,user_activities,old_values,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+activity_logs,user_activities,new_values,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+activity_logs,user_activities,ip_address,,varchar(45) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+activity_logs,user_activities,user_agent,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+activity_logs,user_activities,created_at,createdAt,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+activity_logs,user_activities,module,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+activity_logs,user_activities,status,,"enum('success','failed','pending') DEFAULT 'success'",drm_schema_enum_or_text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+attendance_auto_settings,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+attendance_auto_settings,,is_enabled,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+attendance_auto_settings,,enabled_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+attendance_auto_settings,,updated_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+gm_history_set,,id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+gm_history_set,,gm_original_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+gm_history_set,,created_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+gm_history_set,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+gm_history_set,,note,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+gm_history_set_items,,id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+gm_history_set_items,,history_set_id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+gm_history_set_items,,verify_gm_history_id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+gm_history_set_items,,delay_amount_history_id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+gm_history_set_items,,gmaccount_history_id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+gm_history_set_items,,created_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+password_resets,password_reset_tokens,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+password_resets,password_reset_tokens,user_id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+password_resets,password_reset_tokens,token,token,varchar(255) NOT NULL,"text(""token"").notNull()",MATCH,no,table_map=documented/heuristic
+password_resets,password_reset_tokens,created_at,createdAt,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+password_resets,password_reset_tokens,expires_at,expiresAt,datetime NOT NULL,timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+password_resets,password_reset_tokens,used,used,tinyint(1) DEFAULT 0,"boolean(""used"").notNull().default(false)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+tbl_customers,customers,customerid,,int(22) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,parentid,,int(22) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,title,title,int(22) NOT NULL,"text(""title"")",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+tbl_customers,customers,type,,int(22) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,firstname,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,lastname,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,religion,,int(22) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,designation,designation,varchar(252) NOT NULL,"text(""designation"")",MATCH,no,table_map=documented/heuristic
+tbl_customers,customers,dob,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,pnic,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,email,email,varchar(252) NOT NULL,"text(""email"").notNull()",MATCH,no,table_map=documented/heuristic
+tbl_customers,customers,phone,phone,varchar(252) NOT NULL,"text(""phone"").notNull()",MATCH,no,table_map=documented/heuristic
+tbl_customers,customers,fax,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,mobile,mobile,varchar(252) NOT NULL,"text(""mobile"")",MATCH,no,table_map=documented/heuristic
+tbl_customers,customers,nationality,,int(22) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,language,,int(22) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,yahoo,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,msn,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,gtalk,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,skype,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,company,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,url,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,country,country,int(22) NOT NULL,"text(""country"")",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+tbl_customers,customers,state,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,city,city,varchar(252) NOT NULL,"text(""city"")",MATCH,no,table_map=documented/heuristic
+tbl_customers,customers,zipcode,,int(22) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,address1,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,address2,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,remarks,,text NOT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,keywords,,text NOT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,email2,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,phone2,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,phone3,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,fax2,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,newsletter,,tinyint(1) NOT NULL,boolean,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,sms,,tinyint(1) NOT NULL,boolean,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,donotcall,,tinyint(1) NOT NULL,boolean,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,addtime,,int(22) UNSIGNED NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,addby,,int(22) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,referby,,int(22) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,token,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,domain,,varchar(252) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,duser,,varchar(252) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,dpass,,varchar(252) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_customers,customers,verify,,int(11) DEFAULT 0,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invitems,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_invitems,,invoiceid,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_invitems,,title,,varchar(252),,NO_TARGET_TABLE,yes,table map: none
+tbl_invitems,,description,,text,,NO_TARGET_TABLE,yes,table map: none
+tbl_invitems,,quantity,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_invitems,,price,,varchar(252),,NO_TARGET_TABLE,yes,table map: none
+tbl_invoices,invoices,invoiceid,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,subject,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,invdate,,int(11) UNSIGNED NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,duedate,dueDate,int(11) UNSIGNED NOT NULL,integer or bigint,TRANSFORMATION_REQUIRED,case,table_map=documented/heuristic
+tbl_invoices,invoices,addby,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,customerid,customerId,int(11) NOT NULL,integer or bigint,TRANSFORMATION_REQUIRED,case,table_map=documented/heuristic
+tbl_invoices,invoices,nettotal,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,discounttype,,tinyint(1) NOT NULL,boolean,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,discount,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,adjustmenttype,,int(1) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,adjustment,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,grandtotal,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,paidtotal,,varchar(252) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,currencyid,,int(11) NOT NULL DEFAULT 1,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,terms,,text NOT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,description,,text NOT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,remarks,,text NOT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,addtime,,int(11) UNSIGNED NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,referby,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_invoices,invoices,token,,varchar(252) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+tbl_receipts,,receiptid,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,recnum,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,recdate,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,addby,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,addtime,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,updatetime,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,updateby,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,invoiceid,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,customerid,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,mtitle,,varchar(252),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,mdate,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,amount,,varchar(252),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,methodid,,int(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,remarks,,text,,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,referby,,varchar(11),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,token,,varchar(252),,NO_TARGET_TABLE,yes,table map: none
+tbl_receipts,,date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_closing_history,ab_closing_history,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_ab_closing_history,ab_closing_history,client_payment,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,cheque,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,loan_recovery,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,last_closing,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,dollar_balance,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,dollar_buy,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,dollar_required,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,get_funds,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,temp_gm_acc,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,temp_gm_amount,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,martini_pending_count,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,martini_pending_amount,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,pending_cheque,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,advance_pay,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,sum_payment,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,total_dollar_pkr,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,dollar_gap_to_pay,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,extra_disc_received,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,extra_disc_paid,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,refund_amount,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,cash_in_hand,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,acount_dep,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,acc_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,ab_pay_dep,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,ab_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,hod_dep,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,hod_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_closing_history,ab_closing_history,closing_date,closingDate,date DEFAULT NULL,date,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_ab_closing_history,ab_closing_history,create_at,,datetime NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_ab_packages,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_packages,,name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_packages,,price,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_packages,,ref_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_packages,,packag_service,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,target_name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,base_target_num,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,jumb_target_num,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,dream_target_num,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,target_revenue,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,target_type,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,package,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,start_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,end_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_ab_target,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_acc_month_task,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_acc_month_task,,task_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_acc_month_task,,name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_acc_month_task,,create_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_activity_logs,user_activities,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_activity_logs,user_activities,user_id,id,int(11) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_activity_logs,user_activities,username,userName,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,case,table_map=documented/heuristic
+webxl_activity_logs,user_activities,action_type,actionType,varchar(50) NOT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_activity_logs,user_activities,action_description,actionDescription,text NOT NULL,text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_activity_logs,user_activities,table_name,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_activity_logs,user_activities,record_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_activity_logs,user_activities,old_values,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_activity_logs,user_activities,new_values,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_activity_logs,user_activities,ip_address,,varchar(45) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_activity_logs,user_activities,user_agent,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_activity_logs,user_activities,created_at,createdAt,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_activity_logs,user_activities,module,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_activity_logs,user_activities,status,,"enum('success','failed','pending') DEFAULT 'success'",drm_schema_enum_or_text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_addvance_salary,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,user_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,salary,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,instalment,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,detail,,varchar(1000),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,remaning,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,manager,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,mng_comm,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,mng_update,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,hod,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,hod_comm,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_addvance_salary,,hod_update,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_assign_notice,notice_assignments,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_assign_notice,notice_assignments,notice_id,noticeId,varchar(100) NOT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_assign_notice,notice_assignments,user_id,id,varchar(100) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_assign_notice,notice_assignments,notice_detail,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_assign_notice,notice_assignments,assign_date,,datetime NOT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_attendance,attendance,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_attendance,attendance,user_id,id,int(11) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_attendance,attendance,timeIn,timeIn,varchar(10) DEFAULT NULL,varchar/text,MATCH,no,table_map=documented/heuristic
+webxl_attendance,attendance,timeOut,timeOut,varchar(10) DEFAULT NULL,varchar/text,MATCH,no,table_map=documented/heuristic
+webxl_attendance,attendance,late_absent,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_attendance,attendance,meeting,,"enum('yes','no') DEFAULT 'no'",drm_schema_enum_or_text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_attendance,attendance,branch,,varchar(100) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_attendance,attendance,date,date,date DEFAULT NULL,"timestamp(""date"").notNull()",MATCH,no,table_map=documented/heuristic
+webxl_attendance_month,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month,,lateHour,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month,,lateMin,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month,,halfLeave,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month,,leaves,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month,,branch,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month,,month,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month,,year,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,lateHour,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,lateMin,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,halfLeave,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,leaves,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,branch,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,month,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,year,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,updated_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_attendance_month_history,,last_update,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_attribute,attributes,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().defaultRandom()",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_attribute,attributes,refId,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_attribute,attributes,name,name,varchar(255) DEFAULT NULL,"text(""name"").notNull()",MATCH,no,table_map=documented/heuristic
+webxl_attribute,attributes,time,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_attribute,attributes,branch,branch,varchar(100) DEFAULT NULL,"text(""branch"")",MATCH,no,table_map=documented/heuristic
+webxl_bank_balance,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_bank_balance,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_bank_balance,,head,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_bank_balance,,detail,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_bank_balance,,amount,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_bank_balance,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_bot_hints,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_bot_hints,,questions,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_bot_hints,,answers,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_bot_hints,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,buyer_main,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,buyer_reference,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,buyer_reference_paypal_email,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,total_dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,dollar_balance,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,buy_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,pay_buy,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_buyer_reference_history,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_callbook,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_callbook,,user_id_call,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_callbook,,call_number,,varchar(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_callbook,,call_type,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_callbook,,call_time,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_callbook,,duration,,varchar(32),,NO_TARGET_TABLE,yes,table map: none
+webxl_callbook,,cname,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_callbook,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_callbook,,assignId,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_category,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_category,,root_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_category,,name,,varchar(300),,NO_TARGET_TABLE,yes,table map: none
+webxl_category,,uae,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_category,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_cheque_system,cheques,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_cheque_system,cheques,pay_name,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_cheque_system,cheques,amount,amount,varchar(255) DEFAULT NULL,"decimal(""amount""",MATCH,no,table_map=documented/heuristic
+webxl_cheque_system,cheques,eng_amount,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_cheque_system,cheques,check_number,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_cheque_system,cheques,cheque_date,chequeDate,datetime DEFAULT NULL,timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_cheque_system,cheques,cheque_type,chequeType,varchar(255) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_cheque_system,cheques,closing_status,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_cheque_system,cheques,remain_amount,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_cheque_system,cheques,comments,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_cheque_system,cheques,cheque_status,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_cheque_system,cheques,user_id,id,varchar(255) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_cheque_system,cheques,create_at,,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_coa_child_heads,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_child_heads,,parent_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_child_heads,,account_code,,varchar(10),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_child_heads,,head_name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_child_heads,,description,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_child_heads,,is_active,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_child_heads,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_child_heads,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_child_heads,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_parent_heads,account_heads,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_coa_parent_heads,account_heads,account_code,,varchar(6) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_coa_parent_heads,account_heads,head_name,,varchar(255) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_coa_parent_heads,account_heads,account_type,,"enum('Asset','Liability','Equity','Revenue','Expense') NOT NULL",drm_schema_enum_or_text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_coa_parent_heads,account_heads,description,description,text DEFAULT NULL,"text(""description"")",MATCH,no,table_map=documented/heuristic
+webxl_coa_parent_heads,account_heads,is_active,isActive,tinyint(1) DEFAULT 1,boolean,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_coa_parent_heads,account_heads,created_by,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_coa_parent_heads,account_heads,created_at,createdAt,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_coa_parent_heads,account_heads,updated_at,updatedAt,timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_coa_sub_transactional_heads,,id,,int(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,parent_id,,int(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,child_id,,int(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,transactional_id,,int(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,account_code,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,head_name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,description,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,is_active,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,created_by,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_sub_transactional_heads,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,parent_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,child_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,account_code,,varchar(10),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,head_name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,description,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,is_active,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_coa_transactional_heads,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_com_category,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_category,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_category,,catName,,varchar(300),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,title,,varchar(10),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,name,,varchar(300),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,cinc,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,email,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,email2,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,email3,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,phone,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,designation,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,phone2,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,phone3,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,phone4,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_detail,,phone5,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_history,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_history,,tilte,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_history,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_com_history,,addBy,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_history,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_com_service,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_service,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_service,,neme,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_task,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_task,,pro_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_task,,user_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_task,,task_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_task,,design,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_task,,develop,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_task,,data_feeding,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_com_task,,finish_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_company,customers,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_company,customers,com_id,,varchar(30) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,cname,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,contact,,varchar(30) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,abAccount,,varchar(30) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,country,country,varchar(30) DEFAULT NULL,"text(""country"")",MATCH,no,table_map=documented/heuristic
+webxl_company,customers,city,city,varchar(30) DEFAULT NULL,"text(""city"")",MATCH,no,table_map=documented/heuristic
+webxl_company,customers,address,address,varchar(1000) DEFAULT NULL,"text(""address"")",MATCH,no,table_map=documented/heuristic
+webxl_company,customers,comType,,varchar(50) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,website,website,varchar(200) DEFAULT NULL,"text(""website"")",MATCH,no,table_map=documented/heuristic
+webxl_company,customers,ntn,ntn,varchar(30) DEFAULT NULL,"text(""ntn"")",MATCH,no,table_map=documented/heuristic
+webxl_company,customers,rcLink,rcLink,varchar(30) DEFAULT NULL,varchar/text,MATCH,no,table_map=documented/heuristic
+webxl_company,customers,source,source,varchar(30) DEFAULT NULL,"text(""source"")",MATCH,no,table_map=documented/heuristic
+webxl_company,customers,invoice_send,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,status,status,varchar(30) DEFAULT NULL,"customerStatusEnum(""status"").notNull().default(""New"")",MATCH,no,table_map=documented/heuristic
+webxl_company,customers,grade,grade,varchar(5) DEFAULT NULL,"text(""grade"").notNull()",MATCH,no,table_map=documented/heuristic
+webxl_company,customers,comment,comment,varchar(1000) DEFAULT NULL,"text(""comment"")",MATCH,no,table_map=documented/heuristic
+webxl_company,customers,assignId,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,crm_id,crmId,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_company,customers,crm_date,crmDate,date DEFAULT NULL,date,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_company,customers,disable,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,tags,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,created_by,createdBy,int(11) NOT NULL,integer or bigint,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_company,customers,create_date,,datetime NOT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_company,customers,update_at,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_complaints,support_tickets,ticket_no,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,com_id,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,service,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,user_id,id,varchar(100) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_complaints,support_tickets,dep,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,priority,priority,varchar(100) DEFAULT NULL,"supportPriorityEnum(""priority"").notNull().default(""Medium"")",MATCH,no,table_map=documented/heuristic
+webxl_complaints,support_tickets,detail,,varchar(2500) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,status,status,varchar(100) DEFAULT NULL,"supportTicketStatusEnum(""status"").notNull().default(""Open"")",MATCH,no,table_map=documented/heuristic
+webxl_complaints,support_tickets,chat_system,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,_token,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,form,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,person_status,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,dep_status,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,dep_resolved,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,create_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,is_deleted,isDeleted,tinyint(1) DEFAULT 0,boolean,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_complaints,support_tickets,deleted_at,,timestamp NULL DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,manager_comment,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_complaints,support_tickets,user_comment,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_create_project,,pro_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_create_project,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_create_project,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_create_project,,manager,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_create_project,,project,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_create_project,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_create_project,,create_data,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_currency,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_currency,,doller,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_currency,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_customer_support_api,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_customer_support_api,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_customer_support_api,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_customer_support_api,,data_send,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_customer_support_api,,api_response,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_customer_support_api,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_customer_support_api,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_day_book,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_day_book,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_day_book,,method,,varchar(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_day_book,,followup,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_day_book,,date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_day_book,,last_update,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_day_target,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_day_target,,role,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_day_target,,method,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_day_target,,target,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_day_target,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,token,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,inv_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,rep_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,cname,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,acc_holder,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,acc_holder_city,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,items,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,price,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,deps,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,method,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,deps_status,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,project_min_time,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,project_max_time,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,project_total_time,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,items_status,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,deps_late_project,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,ab_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,ab_package,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,ab_dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,ab_cash_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,drm_dollar_rate,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,total_links,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,upload_links,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,total_task,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,dep_finish,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,qa,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,verification,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dep_project_comm,,create_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_department,departments,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_department,departments,name,name,varchar(50) NOT NULL,"text(""name"").notNull().unique()",MATCH,no,table_map=documented/heuristic
+webxl_department,departments,email,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_department,departments,pms_managers,,varchar(255) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_department,departments,pms_ratio,,varchar(100) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_department,departments,create_date,,date NOT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dhm_followup,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dhm_followup,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dhm_followup,,sell_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dhm_followup,,purpose,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_dhm_followup,,server,,varchar(60),,NO_TARGET_TABLE,yes,table map: none
+webxl_dhm_followup,,next_follow,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_dhm_followup,,grade,,varchar(3),,NO_TARGET_TABLE,yes,table map: none
+webxl_dhm_followup,,answer,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_dhm_followup,,note,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dhm_followup,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,buyer_main,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,buyer_reference,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,com_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,amount,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,remain_amount,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,comm,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_advance_pay,,delete_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer,dollar_buyers,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_dollar_buyer,dollar_buyers,user_id,id,int(15) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_dollar_buyer,dollar_buyers,buyer_from,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_buyer,dollar_buyers,paypal_email,paypalEmail,varchar(255) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_dollar_buyer,dollar_buyers,mobile,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_buyer,dollar_buyers,account_number,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_buyer,dollar_buyers,ref_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_buyer,dollar_buyers,create_at,,datetime NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_buyer_dollars,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,buyer_main,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,buyer_reference,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,buyer_reference_paypal_email,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,buyer_account_no,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,payment_method,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,pkr_amount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,buy_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,cheque_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,show_ab,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,use_for_tem,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_buyer_dollars,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay,dollar_buying,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_dollar_pay,dollar_buying,user_id,id,int(15) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_dollar_pay,dollar_buying,com_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,gmid,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,member_id,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,order_id,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,buyer_detail,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,dollars,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,dollar_rate,dollarRate,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_dollar_pay,dollar_buying,pkr_amount,pkrAmount,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_dollar_pay,dollar_buying,cus_dollar_rate,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,cus_profit,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,pay_date,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,type,type,varchar(100) DEFAULT NULL,"text(""type"")",MATCH,no,table_map=documented/heuristic
+webxl_dollar_pay,dollar_buying,pay_status,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,partial_payment,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,detail,detail,text DEFAULT NULL,"text(""detail"")",MATCH,no,table_map=documented/heuristic
+webxl_dollar_pay,dollar_buying,update_by,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,pay_detail,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,update_at,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,pay_by,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay,dollar_buying,create_at,,datetime NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_dollar_pay_temp,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,gmid,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,member_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,order_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,buyer_detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,pkr_amount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,cus_dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,cus_profit,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,pay_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,partial_payment,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,update_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,pay_detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,update_at,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,pay_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollar_pay_temp,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,buyer_main,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,buyer_reference,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,dollar_slot_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,buyer_reference_paypal_email,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,buyer_account_no,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,payment_method,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,pkr_amount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,buy_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,cheque_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,show_ab,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,updated,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,update_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,tran_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,acc_pay_pkr,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,acc_pay_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,acc_user_pay_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,acc_pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history,,screen_shot,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,history_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,buyer_reference_paypal_email,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,installment_amount_pkr,,"decimal(18,2)",,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,installment_status,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,installment_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,created_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,note,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,image,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_dollars_received_history_installment,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_backup,it_backups,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_domain_backup,it_backups,user_id,id,int(15) DEFAULT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_domain_backup,it_backups,domain_name,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_domain_backup,it_backups,web_type,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_domain_backup,it_backups,server_link,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_domain_backup,it_backups,domain_detail,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_domain_backup,it_backups,create_at,,datetime NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_domain_renewal_reminder_log,,id,,int(10),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,com_id,,int(10),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,sell_id,,int(10),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,product_key_id,,int(10),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,domain_name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,pro_type,,varchar(32),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,end_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,days_before,,tinyint(3),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,email_to,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,invoice_id,,int(10),,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,sent_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,status,,"enum('sent','failed')",,NO_TARGET_TABLE,yes,table map: none
+webxl_domain_renewal_reminder_log,,error_message,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_donation,donations,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_donation,donations,name,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_donation,donations,detail,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_donation,donations,amount,amount,int(15) DEFAULT NULL,"decimal(""amount""",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_donation,donations,create_at,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_drm_allowed_ip,allowed_ips,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_drm_allowed_ip,allowed_ips,created_by,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_drm_allowed_ip,allowed_ips,allowed_ip,,varchar(45) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_drm_allowed_ip,allowed_ips,location,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_drm_allowed_ip,allowed_ips,browser,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_drm_allowed_ip,allowed_ips,ip_user,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_drm_allowed_ip,allowed_ips,created_at,createdAt,datetime DEFAULT current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_drm_allowed_ip,allowed_ips,updated_at,updatedAt,datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_drm_setting,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_drm_setting,,menu_title,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_drm_setting,,icon,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_drm_setting,,url_title,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_drm_setting,,url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_drm_setting,,status,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_drm_setting,,dep,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_drm_setting,,allowed_role,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_email_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_email_history,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_email_history,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_email_history,,temp,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_email_history,,cat_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_email_history,,sender,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_email_history,,receiver,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_email_history,,type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_email_history,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,event_type,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,amount,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,detail,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,start_time,,time,,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,end_time,,time,,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,attending,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,event_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,venu,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,map,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_event_duty,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_duty,,event_name,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_duty,,duty,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_event_duty,,duty_person,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_duty,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_event_duty,,duty_create_person,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_duty,,create_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_event_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_history,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_history,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_history,,event_name,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_history,,atten,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_history,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_event_menu,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_menu,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_menu,,event_name,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_menu,,item,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_menu,,amount,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_menu,,detail,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_menu,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,event_name,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,speaker,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,topic,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,detail,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,start_time,,time,,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,end_time,,time,,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,total_time,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_event_speaker,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_expense,office_expenses,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_expense,office_expenses,phead_id,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_expense,office_expenses,office,office,varchar(100) DEFAULT NULL,"text(""office"").notNull()",MATCH,no,table_map=documented/heuristic
+webxl_expense,office_expenses,head_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_expense,office_expenses,amount,amount,double DEFAULT NULL,"decimal(""amount""",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_expense,office_expenses,detail,detail,varchar(300) DEFAULT NULL,"text(""detail"")",MATCH,no,table_map=documented/heuristic
+webxl_expense,office_expenses,cheque_id,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_expense,office_expenses,bill_image,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_expense,office_expenses,voucher_number,voucherNumber,varchar(255) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_expense,office_expenses,create_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_expense,office_expenses,created_by,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_expense_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,expense_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,phead_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,head_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,office,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,amount,,"decimal(10,2)",,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,voucher_number,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,cheque_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,bill_image,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,original_created_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,deleted_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,deleted_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_history,,deletion_reason,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images,,expense_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images,,images,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images_history,,history_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images_history,,expense_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images_history,,image_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images_history,,images,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images_history,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expense_images_history,,deleted_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_expenses_head,,head_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expenses_head,,pid_head,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_expenses_head,,expenName,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_expenses_head,,type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_expenses_head,,code,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_expenses_head,,head_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_feedback,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_feedback,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_feedback,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_feedback,,vfy_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_feedback,,feedback,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_feedback,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_follow_up_images,,id,,int(10),,NO_TARGET_TABLE,yes,table map: none
+webxl_follow_up_images,,follow_up_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_follow_up_images,,service_detail_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_follow_up_images,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_follow_up_images,,company_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_follow_up_images,,image,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_follow_up_images,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_follow_up_images,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_follow_up_services,followup_services,id,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,service_id,serviceId,int(11) NOT NULL COMMENT 'Service ID from webxl_attribute table',integer or bigint,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_follow_up_services,followup_services,follow_up_id,,int(11) NOT NULL COMMENT 'Foreign key to webxl_followup table',integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,service_type,,varchar(255) NOT NULL COMMENT 'Sub-service name',varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,service_grade,,"varchar(10) DEFAULT NULL COMMENT 'Grade: A+, A-, B+, B-, B, C+, C, D'",varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,service_comment,,text DEFAULT NULL COMMENT 'Comment for the service',text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,manager_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,manager_comment,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,sm_id,,int(11) DEFAULT NULL COMMENT 'second manager id',integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,sm_comment,,text DEFAULT NULL COMMENT 'second manager comment',text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,hod_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,hod_comment,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,purpose,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,method,,varchar(50) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,next_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,note,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,talk_time,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,added_by,,int(11) NOT NULL COMMENT 'User ID who added this record',integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_follow_up_services,followup_services,created_at,createdAt,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_follow_up_services,followup_services,updated_at,,timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_followup,follow_ups,com_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,uid,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,username,,varchar(30) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,purpose_call,,varchar(30) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,service_for,,varchar(1000) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,cm,,varchar(20) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,nc,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,ncm,,varchar(20) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,answer,,varchar(300) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,note,,varchar(2000) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,tk_mint,,int(11) DEFAULT 0,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup,follow_ups,create_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,com_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,uid,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,username,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,report,report,varchar(100) DEFAULT NULL,"text(""report"")",MATCH,no,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,start_rating,startRating,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,up_salling,upSalling,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,rfq,rfq,varchar(100) DEFAULT NULL,"text(""rfq"")",MATCH,no,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,products,products,varchar(100) DEFAULT NULL,"text(""products"")",MATCH,no,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,follow_rate,followRate,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,sample,sample,varchar(100) DEFAULT NULL,"text(""sample"")",MATCH,no,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,order,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,revenue,revenue,varchar(100) DEFAULT NULL,"text(""revenue"")",MATCH,no,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,happy_alibaba,happyAlibaba,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,happy_webxl,happyWebxl,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,create_date,createDate,datetime NOT NULL DEFAULT current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_followup_service,diagnose_followups,manager_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,manager_comment,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,sm_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,sm_comment,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,hod_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_followup_service,diagnose_followups,hod_comment,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gm_account_history,,history_id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,original_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,user_bv_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,bvDate,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,startData,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,endData,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,LastStartDate,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,LastExpireDate,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,create_data,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,renwal,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,date_btn,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,disable,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,recorded_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,recorded_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_account_history,,operation,,"enum('INSERT','UPDATE','DELETE')",,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_doc,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_doc,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_doc,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_doc,,comm,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_doc,,upload,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_gm_doc,,uploaded_doc,,longtext,,NO_TARGET_TABLE,yes,table map: none
+webxl_gmaccount,gm_entries,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_gmaccount,gm_entries,com_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,user_id,id,int(11) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_gmaccount,gm_entries,user_bv_date,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,bvDate,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,startData,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,endData,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,LastStartDate,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,LastExpireDate,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,create_data,,datetime DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,renwal,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,date_btn,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount,gm_entries,disable,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_gmaccount_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_gmaccount_history,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_gmaccount_history,,addBy,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_gmaccount_history,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_gmaccount_history,,title,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_gmaccount_history,,bvDate,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_gmaccount_history,,bvExpire,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_gmaccount_history,,create_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_govt_leave,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_govt_leave,,user_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_govt_leave,,leave_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_govt_leave,,leave_day,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_govt_leave,,comm,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_govt_leave,,date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_hod_meeting,,id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,meeting_by,,int(15),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,meeting_type,,varchar(25),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,detail,,text,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,status,,int(15),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,start_time,,datetime,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,end_time,,datetime,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,sc_id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,sc_comment,,text,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,hod_id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_hod_meeting,,hod_comment,,text,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_increments,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_increments,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_increments,,target_achievment,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_increments,,skills,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_increments,,disciplinary,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_increments,,feedback,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_increments,,create_at,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_invoice,invoices,invoice_id,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,qou_id,,bigint(20) DEFAULT NULL COMMENT 'qoutation id',integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,is_auto,,tinyint(1) DEFAULT NULL,boolean,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,com_id,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,cname,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,phone,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,email,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,address,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,user_id,id,int(11) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_invoice,invoices,sub_total,,float DEFAULT NULL,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,discount,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,grand_total,,float DEFAULT NULL,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,pay,,float DEFAULT NULL,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,gst,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,create_date,,datetime NOT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,doller_rate,,int(11) DEFAULT 157,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,start,,int(11) DEFAULT 0,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,domain_renewal,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,hod_user_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,hod_role_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,hod_dep_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,hod,,varchar(100) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,hod_comm,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,update_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,account,,varchar(100) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,updated_by,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,role_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,dep_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,invoice_dep,,varchar(50) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_invoice,invoices,updated_at,updatedAt,datetime DEFAULT NULL,timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_invoice_item,,id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item,,invoice_id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item,,item,,varchar(100),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item,,detail,,text,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item,,unit_price,,float,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item,,qty,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item,,totalPkr,,float,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item,,pkr,,float,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item,,pay,,float,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item,,start,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_invoice_item_pay,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_invoice_item_pay,,inv_item_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_invoice_item_pay,,invoice_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_invoice_item_pay,,item,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_invoice_item_pay,,pay,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_invoice_item_pay,,method,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_invoice_item_pay,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,asset_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,make_model,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,colour,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,purchase_date,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,warranty,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,warranty_period,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,purchased_condition,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,current_condition,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,emp_code,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,issued_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,employee_name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,office,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,specification,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,asset_owned_by,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,mobile_phone,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,it_manager_remarks,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,it_executive_remarks,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_it_assets,,is_deleted,,tinyint(4),,NO_TARGET_TABLE,yes,table map: none
+webxl_kwa,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_kwa,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_kwa,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_kwa,,kwa,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_kwa,,remaning,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_kwa,,detail,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_kwa,,type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_kwa,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_kwa_history,target_system_kwa_history,id,id,int(11) NOT NULL,"serial(""id"").primaryKey()",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_kwa_history,target_system_kwa_history,com_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_kwa_history,target_system_kwa_history,kwa_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_kwa_history,target_system_kwa_history,user_id,id,int(15) DEFAULT NULL,"serial(""id"").primaryKey()",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_kwa_history,target_system_kwa_history,pay,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_kwa_history,target_system_kwa_history,type,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_kwa_history,target_system_kwa_history,kwa_detail_pay,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_kwa_history,target_system_kwa_history,pay_date,payDate,datetime DEFAULT NULL,timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_last_followup,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_last_followup,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_last_followup,,uid,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_last_followup,,username,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_last_followup,,cm,,varchar(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_last_followup,,nc,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_last_followup,,ncm,,varchar(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_last_followup,,note,,varchar(2000),,NO_TARGET_TABLE,yes,table map: none
+webxl_last_followup,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_leads,opportunities,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_leads,opportunities,com_id,,varchar(255) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leads,opportunities,user_id,id,varchar(255) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_leads,opportunities,assgin_by,,int(10) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leads,opportunities,transfer,,varchar(100) DEFAULT 'NO',varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leads,opportunities,transfer_note,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leads,opportunities,create_date,,datetime NOT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leave,leave_requests,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_leave,leave_requests,user_id,id,varchar(255) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_leave,leave_requests,purpose,purpose,varchar(255) DEFAULT NULL,"text(""purpose"").notNull()",MATCH,no,table_map=documented/heuristic
+webxl_leave,leave_requests,leave_type,leaveType,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_leave,leave_requests,day,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leave,leave_requests,time,time,varchar(100) DEFAULT NULL,"text(""time"")",MATCH,no,table_map=documented/heuristic
+webxl_leave,leave_requests,st_date,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leave,leave_requests,end_date,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leave,leave_requests,detail,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leave,leave_requests,alternative,alternative,varchar(100) DEFAULT NULL,"text(""alternative"").notNull()",MATCH,no,table_map=documented/heuristic
+webxl_leave,leave_requests,dep,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leave,leave_requests,dep_comm,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leave,leave_requests,hod,,varchar(255) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_leave,leave_requests,create_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_log,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_log,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_log,,userName,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_log,,title,,varchar(200),,NO_TARGET_TABLE,yes,table map: none
+webxl_log,,detail,,varchar(1000),,NO_TARGET_TABLE,yes,table map: none
+webxl_log,,type,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_log,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_log_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_log_history,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_log_history,,name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_log_history,,mac_address,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_log_history,,ip_address,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_log_history,,sytem_name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_log_history,,getuser_agent,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_log_history,,log_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_login,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_login,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_login,,role_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_login,,username,,varchar(200),,NO_TARGET_TABLE,yes,table map: none
+webxl_login,,password,,varchar(200),,NO_TARGET_TABLE,yes,table map: none
+webxl_login,,change_pass,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_login,,last_login,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_login,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_media,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_media,,name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_media,,type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_media,,media,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_media,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_media,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_messager,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_messager,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_messager,,role_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_messager,,message,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_messager,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_notice_board,notices,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_notice_board,notices,heading,,varchar(100) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_notice_board,notices,detail,,varchar(300) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_notice_board,notices,create_date,,datetime NOT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_overtime,overtime_records,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_overtime,overtime_records,user_id,id,int(15) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_overtime,overtime_records,purpose,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_overtime,overtime_records,time,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_overtime,overtime_records,dep,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_overtime,overtime_records,detail,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_overtime,overtime_records,dep_title,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_overtime,overtime_records,type,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_overtime,overtime_records,create_date,,datetime NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_package,it_hosting_packages,pack_id,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_package,it_hosting_packages,title,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_package,it_hosting_packages,space,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_password_reset_emails,password_reset_tokens,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_password_reset_emails,password_reset_tokens,user_id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_password_reset_emails,password_reset_tokens,email,email,varchar(255) NOT NULL,"text(""email"").notNull()",MATCH,no,table_map=documented/heuristic
+webxl_password_reset_emails,password_reset_tokens,status,,"enum('success','failed') NOT NULL",drm_schema_enum_or_text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_password_reset_emails,password_reset_tokens,error_message,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_password_reset_emails,password_reset_tokens,created_at,createdAt,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_pay_loan,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_pay_loan,,user_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_pay_loan,,loan_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_pay_loan,,pay,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_pay_loan,,pay_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_payments,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_payments,,invoice_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_payments,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_payments,,amount,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_payments,,receipt_number,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_payments,,method,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_payments,,status,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_payments,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_penalty,penalties,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().defaultRandom()",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_penalty,penalties,user_id,id,varchar(100) DEFAULT NULL,"uuid(""id"").primaryKey().defaultRandom()",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_penalty,penalties,add_by,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_penalty,penalties,head,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_penalty,penalties,amount,amount,varchar(255) DEFAULT NULL,"decimal(""amount""",MATCH,no,table_map=documented/heuristic
+webxl_penalty,penalties,confirm,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_penalty,penalties,system_genrated,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_penalty,penalties,date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_penalty_head,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_penalty_head,,head,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_penalty_head,,amount,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_policies,policies,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_policies,policies,head,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_policies,policies,detail,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_policies,policies,policy_type,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_policies,policies,min_allow,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_policies,policies,max_allow,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_policies,policies,penalty,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_policies,policies,img,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_policies,policies,create_at,,datetime NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_portfolio,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,category,,varchar(40),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,sub_cate,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,keyword,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,server_link,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,main_img,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,top_header_img,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,main_sliders,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,sliders,,varchar(200),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,body_img,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,listing_page,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,status,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,used,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_booking,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_booking,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_booking,,cname,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_booking,,design_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_booking,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_booking,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_booking,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_booking,,create_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_categories,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_categories,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_categories,,name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_portfolio_categories,,ref_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_data,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_data,,categories,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_data,,images,,varchar(500),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_data,,mimg_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_data,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_keywords,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_keywords,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_keywords,,category,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_keywords,,title,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_keywords,,keywords,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_keywords,,descp,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_keywords,,date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_mimg,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_mimg,,img,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_mimg,,cat,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_mimg,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_posting_mimg,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,pro_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,name,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,att_type,,varchar(40),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,delay_section,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,delay_reason,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,comment,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,dep_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,add_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_attribute,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_chats,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_chats,,pro_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_chats,,detail,,varchar(1000),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_chats,,sender,,varchar(25),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_chats,,readFlag,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_chats,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_data,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_data,,pro_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_data,,task_mes_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_data,,data,,longtext,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_data,,user_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_data,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_img,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_img,,pid,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_img,,images,,varchar(200),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_img,,upl_number,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_img,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,pro_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,product,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,assign_user,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,link,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,pro_update,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,upload_doc,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,mag_verify,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,vfy_date,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,assign_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,modification,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_project_status,,client_status,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_projects,projects,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_projects,projects,project_name,,varchar(50) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_promotions,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,package,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,title,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,img,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,discount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,start_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,end_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,active,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,rank,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_promotions,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_questions,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_questions,,qid,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_questions,,detail,,varchar(2000),,NO_TARGET_TABLE,yes,table map: none
+webxl_questions,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,quo_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,item,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,unit_price,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,ab_discount,,"decimal(10,2)",,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,qty,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,min_day,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,max_day,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,from_year,,timestamp(6),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,to_year,,timestamp(6),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_items,,domain,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_services,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_services,,main_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_services,,name,,varchar(60),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_services,,detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_services,,price,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_services,,discount,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_services,,min_day,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_services,,max_day,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_services,,dep_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_tracker,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_tracker,,quo_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_tracker,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_tracker,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_tracker,,service_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_tracker,,days,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_tracker,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotation_tracker,,is_expire,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,quo_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,cname,,varchar(60),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,phone,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,email,,varchar(60),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,address,,varchar(300),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,sub_total,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,discount,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,grand_total,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,gst,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,first_pay,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,quo_title,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,quo_note,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,quo_save,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,quo_type,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,dliver_time,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,dollar_rate,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,hod_status,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,hod_comment,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_quotations,,is_used,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,office,,varchar(150),,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,device_ip,,varchar(45),,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,uid,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,state,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,type,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,att_timestamp,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,received_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_raw_attendence,,raw_json,,longtext,,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,gmid,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,recovery_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,member_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,order_id,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,pkr_amount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,dollar_balance,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,pkr_balance,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,recovery_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,payment_method,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,add_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_recoverd_ab_payments,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_refund_gm,refund_gm_entries,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_refund_gm,refund_gm_entries,com_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_refund_gm,refund_gm_entries,cname,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_refund_gm,refund_gm_entries,user_id,id,int(15) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_refund_gm,refund_gm_entries,amount,amount,varchar(255) DEFAULT NULL,"decimal(""amount""",MATCH,no,table_map=documented/heuristic
+webxl_refund_gm,refund_gm_entries,amount_type,amountType,varchar(255) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_refund_gm,refund_gm_entries,status,status,varchar(255) DEFAULT NULL,"text(""status"").notNull().default(""pending"")",MATCH,no,table_map=documented/heuristic
+webxl_refund_gm,refund_gm_entries,comment,comment,varchar(255) DEFAULT NULL,"text(""comment"")",MATCH,no,table_map=documented/heuristic
+webxl_refund_gm,refund_gm_entries,add_by,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_refund_gm,refund_gm_entries,create_at,,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_refund_gm,refund_gm_entries,delete_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_registry,it_registries,registry_id,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_registry,it_registries,title,,varchar(30) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_role,roles,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_role,roles,name,name,varchar(32) NOT NULL,"text(""name"").notNull().unique()",MATCH,no,table_map=documented/heuristic
+webxl_role,roles,des,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_role,roles,department,,varchar(30) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_role,roles,create_date,,date NOT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_sell,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell,,domain_name,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell,,username,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell,,passowrd,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell,,reg_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,sell_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,pro_type,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,key_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,server_type,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,start_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,end_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,last_expire,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,af_coname,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_sell_products,,deactive_reason,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_servers,it_servers,server_id,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_servers,it_servers,title,,varchar(60) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_servers,it_servers,space,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_servers,it_servers,year,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_servers,it_servers,server_name,,varchar(200) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_servers,it_servers,buying_date,buyingDate,date DEFAULT NULL,date,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_service_project,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,com_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,user_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,profile,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,minitsite,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,listing,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,pro_ft,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,showcase,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,training,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,pro_six,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,pro_tw,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,three_m_dia,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,smart_showcase,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,auto_response,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,kwa,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,qa_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,user_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_service_project,,project_end_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_servicepool,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_servicepool,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_servicepool,,ta_user,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_servicepool,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_servicepool,,parent_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_servicepool,,note,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_servicepool,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_setterget,,id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_setterget,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_setterget,,terget_id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_setterget,,terget_cat,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_setterget,,target_num,,int(15),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_setterget,,start_date,,date,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_setterget,,end_date,,date,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_setterget,,singDate,,datetime,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_social_account,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account,,email,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account,,phone,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,post_platform,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,post_title,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,url_fb,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,linkedin_url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,insta_url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,youtube_url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,tiktok_url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,account_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_post,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,social_acc_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,fb_profile,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,fb_profile_url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,insta_profile,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,insta_profile_url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,youtube_profile,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,youtube_profile_url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,tiktok_profile,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,tiktok_profile_url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,linkedin_profile,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_account_url,,linkedin_profile_url,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_social_post_followup,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_post_followup,,post_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_post_followup,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_post_followup,,plat_form,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_post_followup,,likes,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_post_followup,,shares,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_post_followup,,comments,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_social_post_followup,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,invoice_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,com_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,acc_status,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,acc_comm,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,hod_status,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,hod_comm,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,update_date,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_status_hod,,pay_rec_date,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,task_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,pro_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,hours,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,min,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,links,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,timespent,,varchar(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,freetime,,time,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,totalTimespent,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,assign_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,stauts,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,last_update,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,mng_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,final_links,,longtext,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,mng_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,qa_status,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,qa_com,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,qa_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,fy_status,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,fy_com,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,fy_fdb,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,fy_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,after_qa_changing,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,open_url,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,url_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,soft_com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,soft_task_cname,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,soft_task_name,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,soft_task_time,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,soft_task_day,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,soft_task_type,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,soft_task_piority,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,soft_task_due_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,assgin_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,soft_task_detail,,longtext,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_assign,,shifted_task,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_detail,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_detail,,pro_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_detail,,detail,,varchar(300),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_detail,,data_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_group,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_group,,name,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_group,,department,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_group,,detail,,varchar(1000),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_links,,id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,pro_id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,task_id,,int(11),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,link,,varchar(255),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,showcase,,varchar(100),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,detail,,text,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,create_at,,date,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,verify,,varchar(100),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,note,,text,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,verify_date,,datetime,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,send_to_qa,,tinyint(1),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,qa_status,,tinyint(1),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,qa_com,,text,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,qa_reject_image,,varchar(255),,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_links,,qa_date,,datetime,,NO_TARGET_TABLE,yes,table map: documented/heuristic
+webxl_task_log_history,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_log_history,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_log_history,,task_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_log_history,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_task_log_history,,time,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_task_log_history,,create_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_tasks_list,tasks,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_tasks_list,tasks,department_id,,varchar(50) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tasks_list,tasks,group_id,,int(11) DEFAULT 0,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tasks_list,tasks,name,,varchar(50) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tasks_list,tasks,detail,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tasks_list,tasks,hours,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tasks_list,tasks,mins,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tasks_list,tasks,repeat_task,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tasks_list,tasks,create_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_team_balance_leaves,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,available_leaves,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,leave_reason,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,manager_approval,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,hod_approval,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,account_approval,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,reject_reason,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,is_approved,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,is_resubmit,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_team_balance_leaves,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_gm,temp_gm_entries,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_tem_gm,temp_gm_entries,com_id,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tem_gm,temp_gm_entries,cname,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tem_gm,temp_gm_entries,user_id,id,int(15) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_tem_gm,temp_gm_entries,amount,amount,varchar(255) DEFAULT NULL,"decimal(""amount""",MATCH,no,table_map=documented/heuristic
+webxl_tem_gm,temp_gm_entries,amount_type,amountType,varchar(255) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_tem_gm,temp_gm_entries,reasion,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tem_gm,temp_gm_entries,status,status,varchar(255) DEFAULT NULL,"text(""status"").notNull().default(""pending"")",MATCH,no,table_map=documented/heuristic
+webxl_tem_gm,temp_gm_entries,comment,comment,varchar(255) DEFAULT NULL,"text(""comment"")",MATCH,no,table_map=documented/heuristic
+webxl_tem_gm,temp_gm_entries,add_by,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tem_gm,temp_gm_entries,create_at,,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tem_gm,temp_gm_entries,delete_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_tem_salary_ship,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,grossSalary,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,present,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,leave,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,cuttingMin,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,pendingLeave,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,pendingleavesrupes,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,vas,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,commission3,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,alibaba,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,projectCommission,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,pppcommission,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,postingCommission,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,overtimemin,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,overtimers,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,reward,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,basicCutting,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,tcutting,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,penalty,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,totalSalary,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,cus_paid_leave,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,cus_unpaid_leave,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,user_salary_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_tem_salary_ship,,status_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,coname,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,name,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,designation,,varchar(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,phone,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,cinc,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,email,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,website,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,guide_person,,varchar(30),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,service,,varchar(50),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,status,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_temp_visit,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_terget,targets,terget_id,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,terget_name,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,target_number,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,bonus,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,conversion,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,price,,float DEFAULT NULL,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,max_amount,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,detail,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,package,,varchar(100) NOT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,reward,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,kwa,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,vas,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,pleanty,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,type,type,varchar(100) DEFAULT NULL,"targetTypeEnum(""type"").notNull()",MATCH,no,table_map=documented/heuristic
+webxl_terget,targets,start_date,,date NOT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,end_date,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_terget,targets,create_data,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_todo_list,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,category,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,priority,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,time,,time,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,end_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,task_tile,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,task_des,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,reminder,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,repeat_alert,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,received,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,status,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,partici,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,partici_status,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,to_do_file,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,ref_task,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,sub_task_title,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,sub_task_des,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,sub_task_time,,time,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,sub_task_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,sub_task_priority,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_todo_list,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_training_thumbnail,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_thumbnail,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_thumbnail,,title,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_thumbnail,,img,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_thumbnail,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_thumbnail,,create_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_training_video,training_modules,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_training_video,training_modules,video_cat,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_training_video,training_modules,title,title,varchar(255) DEFAULT NULL,"text(""title"").notNull()",MATCH,no,table_map=documented/heuristic
+webxl_training_video,training_modules,desc,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_training_video,training_modules,url,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_training_video,training_modules,status,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_training_video,training_modules,rank,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_training_video,training_modules,user_id,id,int(15) DEFAULT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_training_video,training_modules,create_at,,timestamp NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_training_videos,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,category_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,sub_category_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,title,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,description,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,video_url,,varchar(500),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,status,,"enum('active','inactive')",,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,order,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_training_videos,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_user,users,user_id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_user,users,att_id,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,name,name,varchar(50) NOT NULL,"text(""name"")",MATCH,no,table_map=documented/heuristic
+webxl_user,users,fname,,varchar(50) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,email,email,varchar(100) DEFAULT NULL,"text(""email"").notNull().unique()",MATCH,no,table_map=documented/heuristic
+webxl_user,users,officeNumber,,varchar(50) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,guardiansNumber,,varchar(50) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,cinc,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,joinDate,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,serviceYears,,float DEFAULT NULL,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,basicSalary,,float DEFAULT NULL,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,dailyAll,,float DEFAULT 0,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,mobileAll,,float DEFAULT 0,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,conveyanceAll,,float DEFAULT 0,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,adminAll,,float DEFAULT 0,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,netSalary,,float DEFAULT 0,numeric,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,relaxationMin,,int(11) DEFAULT 80,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,timeIn,,varchar(10) DEFAULT '09:15',varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,timeOut,,varchar(10) DEFAULT '18:00',varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,facebookId,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,dob,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,roleId,roleId,varchar(255) DEFAULT NULL,varchar/text,MATCH,no,table_map=documented/heuristic
+webxl_user,users,underWork,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,salary_distribution,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,address,,varchar(500) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,gender,,varchar(10) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,picture,,varchar(500) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,country,country,varchar(255) DEFAULT NULL,"text(""country"").notNull().default(""Pakistan"")",MATCH,no,table_map=documented/heuristic
+webxl_user,users,increment,,date DEFAULT NULL,date,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,branch,branch,varchar(100) DEFAULT NULL,"text(""branch"").notNull().default(""Lahore Gulburg"")",MATCH,no,table_map=documented/heuristic
+webxl_user,users,allowed_branch,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,doc,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_user,users,updated_at,updatedAt,timestamp NULL DEFAULT NULL,timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_user_actions,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_user_actions,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_user_actions,,type,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_user_actions,,message,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_user_actions,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_vas,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_vas,,user_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_vas,,amount,,float,,NO_TARGET_TABLE,yes,table map: none
+webxl_vas,,mouth,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_vas,,year,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_vas,,last_update,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_vas_comm_final,webxl_vas_comm_final,id,id,int(11) NOT NULL,"serial(""id"").primaryKey()",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,user_id,id,int(15) DEFAULT NULL,"serial(""id"").primaryKey()",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_vas_comm_final,webxl_vas_comm_final,comm_type,commType,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,dep,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_vas_comm_final,webxl_vas_comm_final,target,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_vas_comm_final,webxl_vas_comm_final,total_amount,,int(15) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_vas_comm_final,webxl_vas_comm_final,per,per,int(15) DEFAULT NULL,"varchar(""per""",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,comm,comm,int(15) DEFAULT NULL,"decimal(""comm""",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,reward,reward,int(15) DEFAULT NULL,"decimal(""reward""",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,team_reward,teamReward,int(15) DEFAULT NULL,integer or bigint,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,final_pay_amount,finalPayAmount,int(15) DEFAULT NULL,integer or bigint,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,user_status,userStatus,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,user_status_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_vas_comm_final,webxl_vas_comm_final,manager_approve,managerApprove,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,manager_approve_date,managerApproveDate,datetime DEFAULT NULL,timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,comm_month,commMonth,int(15) DEFAULT NULL,integer or bigint,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,comm_year,commYear,int(15) DEFAULT NULL,integer or bigint,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,rewardcomment,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_vas_comm_final,webxl_vas_comm_final,hod_status,hodStatus,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,hod_satatus_date,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_vas_comm_final,webxl_vas_comm_final,account_pay_status,accountPayStatus,varchar(100) DEFAULT NULL,varchar/text,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,account_pay_date,accountPayDate,datetime DEFAULT NULL,timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_vas_comm_final,webxl_vas_comm_final,create_at,,datetime NOT NULL DEFAULT current_timestamp(),timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_verify_gm,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,package,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,price,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,package_price,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,amount,,int(25),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,customer_dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,discount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,extra_discount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,extra_pkr_discount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,com_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,used_quo_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,child_ids,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,user_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,sp_id,,bigint(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,add_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,member_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,order_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,coments,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,create_request,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,acc_disc_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,acc_pay_status,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,ceo_disc_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,ceo_extra_discout,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,ceo_disc_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,webxl_pay_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,webxl_pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,alibaba,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,renwal,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,expire_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,extension,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,droupout,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,webxl_behalf,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,pay_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,finalComm,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,updateBy,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,screen_shot,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,gm_update_request,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,gm_update_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,service_manager_status,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,gm_update_comment,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,gm_update_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,gm_update_app_com,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,gm_update_app_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,approved_by,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_cash,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_cash,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_cash,,gmid,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_cash,,pkr,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_cash,,total_balance,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_cash,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_cash,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,gmid,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,delay_dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,delay_pkr,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,delay_dollar_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,recovery_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,cheque_no,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,current_dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,current_dollar_pay,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,current_pkr,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,balance,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,pay_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,cash_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,acc_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,current_pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,alibaba,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,ab_pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,ab_pay_dollar,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,cus_profit,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,cus_dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,pay_dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,pay_pkr,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,buyer_detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,pay_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,pay_detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,ab_confirm_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,ab_confirm_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,ab_confirm_detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount,,ab_confirm_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,history_id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,original_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,com_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,gmid,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,delay_dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,delay_pkr,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,delay_dollar_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,recovery_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,user_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,cheque_no,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,current_dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,current_dollar_pay,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,current_pkr,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,balance,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,pay_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,cash_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,acc_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,current_pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,alibaba,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,ab_pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,ab_pay_dollar,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,cus_profit,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,cus_dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,pay_dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,pay_pkr,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,buyer_detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,pay_type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,pay_detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,ab_confirm_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,ab_confirm_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,ab_confirm_detail,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,ab_confirm_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,recorded_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,recorded_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_delay_amount_history,,operation,,"enum('INSERT','UPDATE','DELETE')",,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,history_id,,bigint(20),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,original_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,package,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,price,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,package_price,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,amount,,int(25),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,customer_dollars,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,dollar_rate,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,discount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,extra_discount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,extra_pkr_discount,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,com_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,child_ids,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,user_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,add_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,member_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,order_id,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,coments,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,create_request,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,create_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,acc_disc_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,acc_pay_status,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,ceo_disc_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,ceo_extra_discout,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,ceo_disc_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,webxl_pay_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,webxl_pay_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,alibaba,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,renwal,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,expire_date,,date,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,extension,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,droupout,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,webxl_behalf,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,pay_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,finalComm,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,updateBy,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,screen_shot,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,gm_update_request,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,gm_update_status,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,service_manager_status,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,gm_update_comment,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,gm_update_by,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,gm_update_app_com,,text,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,gm_update_app_date,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,approved_by,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,recorded_at,,datetime,,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,recorded_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_verify_gm_history,,operation,,"enum('INSERT','UPDATE','DELETE')",,NO_TARGET_TABLE,yes,table map: none
+webxl_video_category,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_category,,category_name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_category,,category_slug,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_category,,category_thumbnail,,varchar(500),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_category,,category_status,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_category,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_category,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_video_category,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_video_sub_category,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_sub_category,,category_id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_sub_category,,category_name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_sub_category,,category_slug,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_sub_category,,category_thumbnail,,varchar(500),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_sub_category,,category_status,,tinyint(1),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_sub_category,,created_by,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_video_sub_category,,created_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_video_sub_category,,updated_at,,timestamp,,NO_TARGET_TABLE,yes,table map: none
+webxl_visit_meeting,meetings,id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_visit_meeting,meetings,com_id,,int(11) NOT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,user_id,id,int(11) NOT NULL,"uuid(""id"").primaryKey().default(sql`gen_random_uuid()`)",TRANSFORMATION_REQUIRED,rename,table_map=documented/heuristic; legacy col user_id
+webxl_visit_meeting,meetings,status,status,int(11) DEFAULT NULL,"meetingStatusEnum(""status"").notNull().default(""expected"")",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_visit_meeting,meetings,per_status,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,per_com,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,service,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,start_time,startTime,datetime DEFAULT NULL,timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_visit_meeting,meetings,end_time,endTime,datetime DEFAULT NULL,timestamp,TRANSFORMATION_REQUIRED,snake_to_camel,table_map=documented/heuristic
+webxl_visit_meeting,meetings,note,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,per_start_time,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,per_end_time,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,manager,,varchar(100) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,com,,text DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,create_at,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_visit_meeting,meetings,manager_approve,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_whatsapp,support_channel_config,id,id,int(11) NOT NULL,"varchar(""id"").primaryKey().default(sql`gen_random_uuid()`)",TYPE_CONVERSION_REQUIRED,yes,table_map=documented/heuristic
+webxl_whatsapp,support_channel_config,cat,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_whatsapp,support_channel_config,title,,varchar(255) DEFAULT NULL,varchar/text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_whatsapp,support_channel_config,message,,longtext DEFAULT NULL,text,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_whatsapp,support_channel_config,status,,int(11) DEFAULT NULL,integer or bigint,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_whatsapp,support_channel_config,create_date,,datetime DEFAULT NULL,timestamp,NEEDS_MANUAL_REVIEW,no,table_map=documented/heuristic; no pg column match
+webxl_work_space,,id,,int(11),,NO_TARGET_TABLE,yes,table map: none
+webxl_work_space,,name,,varchar(255),,NO_TARGET_TABLE,yes,table map: none
+webxl_work_space,,ref_id,,int(15),,NO_TARGET_TABLE,yes,table map: none
+webxl_work_space,,type,,varchar(100),,NO_TARGET_TABLE,yes,table map: none
+webxl_work_space,,create_at,,datetime,,NO_TARGET_TABLE,yes,table map: none

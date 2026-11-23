@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,7 +7,8 @@ import {
   Eraser, 
   RefreshCw, 
   Search, 
-  List
+  List,
+  Save
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -19,6 +21,8 @@ import {
   SelectGroup,
   SelectLabel
 } from "@/components/ui/select";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 interface PendingBvRow {
   srNo: number;
@@ -31,11 +35,67 @@ interface PendingBvRow {
   bvDate: string;
   abPayDate: string;
   startDate: string;
+  endDate: string;
 }
 
-// This report does not yet have a backend data source. Until one is wired in it
-// renders an honest empty state rather than fabricated rows.
-const REPORT_DATA: PendingBvRow[] = [];
+const EDIT_ROLES = ["admin", "super_admin", "super_hod", "hod", "account_manager"];
+const DATE_CELL = "h-8 min-w-[130px] text-xs font-semibold rounded-sm border-[#d2d6de]";
+
+// One row of the old page: the four gmaccount dates are editable and a Save
+// button appears once a date changes (old func.php updateBVRecord).
+function PendingBvRowView({ row, index, canEdit, onSaved }: { row: PendingBvRow; index: number; canEdit: boolean; onSaved: () => void }) {
+  const { toast } = useToast();
+  const initial = { userBvDate: row.userBvDate, bvDate: row.bvDate, startDate: row.startDate, endDate: row.endDate };
+  const [vals, setVals] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setVals({ userBvDate: row.userBvDate, bvDate: row.bvDate, startDate: row.startDate, endDate: row.endDate });
+  }, [row.userBvDate, row.bvDate, row.startDate, row.endDate]);
+  const dirty = (Object.keys(initial) as (keyof typeof initial)[]).some((k) => vals[k] !== initial[k]);
+  const set = (k: keyof typeof initial) => (e: React.ChangeEvent<HTMLInputElement>) => setVals((v) => ({ ...v, [k]: e.target.value }));
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await apiRequest("PATCH", `/api/reports/bv-pending-rc/${encodeURIComponent(row.companyId)}`, vals);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Update failed");
+      toast({ title: "Record updated successfully" });
+      onSaved();
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message || "Update failed", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+  const cell = "py-1 px-1.5 border-r border-[#dee2e6] dark:border-zinc-800";
+  return (
+    <tr className="hover:bg-[#f5f5f5] dark:hover:bg-zinc-800 transition-colors">
+      <td className="py-2 px-3 text-[#555] dark:text-zinc-300 border-r border-[#dee2e6] dark:border-zinc-800">{index + 1}</td>
+      <td className="py-2 px-3 font-bold text-[#555] dark:text-zinc-300 border-r border-[#dee2e6] dark:border-zinc-800">{row.memberId}</td>
+      <td className="py-2 px-3 text-[#555] dark:text-zinc-300 border-r border-[#dee2e6] dark:border-zinc-800">{row.companyId}</td>
+      <td className="py-2 px-3 text-[#555] dark:text-zinc-300 uppercase text-xs border-r border-[#dee2e6] dark:border-zinc-800">{row.companyName}</td>
+      <td className="py-2 px-3 border-r border-[#dee2e6] dark:border-zinc-800">
+        <span className="bg-[#3c8dbc] text-white px-2 py-[2px] rounded text-[11px] font-bold whitespace-nowrap shadow-sm">{row.persons}</span>
+      </td>
+      <td className="py-2 px-3 border-r border-[#dee2e6] dark:border-zinc-800">
+        <span className="bg-[#00a65a] text-white px-2 py-[2px] rounded text-[11px] font-bold shadow-sm">{row.type}</span>
+      </td>
+      <td className={cell}><Input type="date" readOnly={!canEdit} value={vals.userBvDate} onChange={set("userBvDate")} className={DATE_CELL} /></td>
+      <td className={cell}><Input type="date" readOnly={!canEdit} value={vals.bvDate} onChange={set("bvDate")} className={DATE_CELL} /></td>
+      <td className={cell}><Input type="date" readOnly value={row.abPayDate} className={DATE_CELL} title="Not saved by the old page" /></td>
+      <td className={cell}><Input type="date" readOnly={!canEdit} value={vals.startDate} onChange={set("startDate")} className={DATE_CELL} /></td>
+      <td className={cell}><Input type="date" readOnly={!canEdit} value={vals.endDate} onChange={set("endDate")} className={DATE_CELL} /></td>
+      <td className="py-1 px-1.5 text-center">
+        {canEdit && dirty && (
+          <Button onClick={save} disabled={saving} className="bg-[#5cb85c] hover:bg-[#4cae4c] text-white h-8 px-3 text-xs font-semibold">
+            <Save className="h-3.5 w-3.5 mr-1" />{saving ? "..." : "Save"}
+          </Button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
 
 export default function ReportsBvPendingRc() {
   const { data: allUsers = [] } = useQuery<any[]>({
@@ -47,23 +107,16 @@ export default function ReportsBvPendingRc() {
     },
   });
 
-  const groupedUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    allUsers.forEach((user) => {
-      const role = user.role || 'Unassigned Role';
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(user);
-    });
-    return Object.entries(grouped)
-      .map(([role, users]) => ({ role, users }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [allUsers]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedUsers = useMemo(() => groupUsersByRoleTitle(allUsers), [allUsers]);
 
   const [user, setUser] = useState("all");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [searchText, setSearchText] = useState("");
 
+  // Old DRM: "Load All Records" = user filter only; "Search with Filters" adds
+  // the date range and search text (func.php getPendingBVRecords / searchBVRecords).
   const [appliedFilters, setAppliedFilters] = useState({
     user: "all",
     startDate: "",
@@ -71,80 +124,43 @@ export default function ReportsBvPendingRc() {
     searchText: ""
   });
 
+  let activeRole = "";
+  try { activeRole = sessionStorage.getItem("userRole") || ""; } catch { /* ignore */ }
+  const canEdit = EDIT_ROLES.includes(activeRole.toLowerCase());
+
+  const { data: report, isFetching, refetch } = useQuery<{ total: number; filtered: number; data: PendingBvRow[] }>({
+    queryKey: ["/api/reports/bv-pending-rc", appliedFilters],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (appliedFilters.user !== "all") params.set("userId", appliedFilters.user);
+      if (appliedFilters.startDate) params.set("start", appliedFilters.startDate);
+      if (appliedFilters.endDate) params.set("end", appliedFilters.endDate);
+      if (appliedFilters.searchText.trim()) params.set("q", appliedFilters.searchText.trim());
+      const res = await apiRequest("GET", `/api/reports/bv-pending-rc?${params}`);
+      return res.json();
+    },
+  });
+  const displayedData = report?.data ?? [];
+
   const clearFilters = () => {
     setUser("all");
     setStartDate("");
     setEndDate("");
     setSearchText("");
-    setAppliedFilters({
-      user: "all",
-      startDate: "",
-      endDate: "",
-      searchText: ""
-    });
+    setAppliedFilters({ user: "all", startDate: "", endDate: "", searchText: "" });
   };
 
   const handleSearch = () => {
-    setAppliedFilters({
-      user,
-      startDate,
-      endDate,
-      searchText
-    });
+    setAppliedFilters({ user, startDate, endDate, searchText });
   };
 
   const handleLoadAll = () => {
-    clearFilters();
+    setAppliedFilters({ user, startDate: "", endDate: "", searchText: "" });
   };
 
   const handleRefresh = () => {
     window.location.reload();
   };
-
-  const displayedData = useMemo(() => {
-    return REPORT_DATA.filter((row) => {
-      if (appliedFilters.searchText) {
-        const q = appliedFilters.searchText.toLowerCase();
-        if (
-          !row.companyName.toLowerCase().includes(q) &&
-          !row.companyId.toLowerCase().includes(q) &&
-          !row.memberId.toLowerCase().includes(q) &&
-          !row.persons.toLowerCase().includes(q)
-        ) {
-          return false;
-        }
-      }
-      
-      if (appliedFilters.startDate) {
-        const rowDate = row.startDate || row.bvDate || row.userBvDate;
-        if (rowDate && new Date(rowDate) < new Date(appliedFilters.startDate)) {
-          return false;
-        }
-      }
-      
-      if (appliedFilters.endDate) {
-        const rowDate = row.startDate || row.bvDate || row.userBvDate;
-        if (rowDate && new Date(rowDate) > new Date(appliedFilters.endDate)) {
-          return false;
-        }
-      }
-      
-      if (appliedFilters.user !== "all") {
-        const selectedUserObj = allUsers.find(u => u.id === appliedFilters.user);
-        if (selectedUserObj) {
-          const nameToMatch = selectedUserObj.fullName || selectedUserObj.name || selectedUserObj.username || "";
-          if (!row.persons.toLowerCase().includes(nameToMatch.toLowerCase())) {
-            return false;
-          }
-        } else {
-          // If for some reason user not found, hide it
-          return false;
-        }
-      }
-      
-      return true;
-    });
-  }, [appliedFilters, allUsers]);
 
   return (
     <div className="flex-1 overflow-auto bg-white dark:bg-zinc-900 min-h-screen">
@@ -178,25 +194,14 @@ export default function ReportsBvPendingRc() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-5">
               <div className="space-y-1.5">
                 <label className="text-[13px] font-bold text-slate-700">Select User</label>
-                <Select value={user} onValueChange={setUser}>
-                  <SelectTrigger className="w-full bg-white dark:bg-zinc-900 h-[34px] border-[#d2d6de] text-slate-500 text-[13px]">
-                    <SelectValue placeholder="Choose..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="choose" disabled className="text-slate-400">Choose...</SelectItem>
-                    <SelectItem value="all">All</SelectItem>
-                    {groupedUsers.map((group) => (
-                      <SelectGroup key={group.role}>
-                        <SelectLabel className="font-bold text-slate-700 py-1.5 px-2 text-[13px] bg-slate-50">{group.role}</SelectLabel>
-                        {group.users.map((u) => (
-                          <SelectItem key={u.id} value={u.id} className="pl-6 text-[13px] text-slate-600">
-                            {u.fullName || u.name || u.username}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  users={allUsers}
+                  value={user}
+                  onChange={setUser}
+                  extraOptions={[{ value: "choose", label: "Choose...", disabled: true }, { value: "all", label: "All" }]}
+                  placeholder="Choose..."
+                  className="w-full bg-white dark:bg-zinc-900 h-[34px] border-[#d2d6de] text-slate-500 text-[13px]"
+                />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[13px] font-bold text-slate-700">Start Date</label>
@@ -245,8 +250,8 @@ export default function ReportsBvPendingRc() {
           </div>
           
           <div className="bg-[#e9ecef] dark:bg-zinc-900 p-2.5 px-4 flex justify-between text-[13px] font-semibold text-[#555] dark:text-zinc-300 border-b border-[#dee2e6] dark:border-zinc-800">
-            <div>Total Records: {REPORT_DATA.length}</div>
-            <div>Filtered Results: {displayedData.length}</div>
+            <div>Total Records: {report?.total ?? 0}</div>
+            <div>Filtered Results: {report?.filtered ?? displayedData.length}</div>
             <div>Active Filter: {Object.values(appliedFilters).some(v => v !== "" && v !== "all") ? "Yes" : "None"}</div>
           </div>
 
@@ -263,44 +268,19 @@ export default function ReportsBvPendingRc() {
                   <th className="py-2.5 px-3 text-left font-bold text-[#555] dark:text-zinc-300 whitespace-nowrap border-r border-[#dee2e6] dark:border-zinc-800">User BV Date</th>
                   <th className="py-2.5 px-3 text-left font-bold text-[#555] dark:text-zinc-300 whitespace-nowrap border-r border-[#dee2e6] dark:border-zinc-800">BV Date</th>
                   <th className="py-2.5 px-3 text-left font-bold text-[#555] dark:text-zinc-300 whitespace-nowrap border-r border-[#dee2e6] dark:border-zinc-800">AB Pay Date</th>
-                  <th className="py-2.5 px-3 text-left font-bold text-[#555] dark:text-zinc-300 whitespace-nowrap">Start Date</th>
+                  <th className="py-2.5 px-3 text-left font-bold text-[#555] dark:text-zinc-300 whitespace-nowrap border-r border-[#dee2e6] dark:border-zinc-800">Start Date</th>
+                  <th className="py-2.5 px-3 text-left font-bold text-[#555] dark:text-zinc-300 whitespace-nowrap border-r border-[#dee2e6] dark:border-zinc-800">End Date</th>
+                  <th className="py-2.5 px-3 text-left font-bold text-[#555] dark:text-zinc-300 whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#dee2e6] dark:divide-zinc-800 bg-white dark:bg-zinc-900">
                 {displayedData.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-8 text-center text-slate-500">No pending BV records to display. This report is not yet connected to a live data source.</td>
+                    <td colSpan={12} className="py-8 text-center text-slate-500">{isFetching ? "Loading..." : "No pending BV records to display."}</td>
                   </tr>
                 ) : (
                   displayedData.map((row, index) => (
-                    <tr key={row.srNo} className="hover:bg-[#f5f5f5] dark:hover:bg-zinc-800 transition-colors">
-                      <td className="py-2 px-3 text-[#555] dark:text-zinc-300 border-r border-[#dee2e6] dark:border-zinc-800">{index + 1}</td>
-                      <td className="py-2 px-3 font-bold text-[#555] dark:text-zinc-300 border-r border-[#dee2e6] dark:border-zinc-800">{row.memberId}</td>
-                      <td className="py-2 px-3 text-[#555] dark:text-zinc-300 border-r border-[#dee2e6] dark:border-zinc-800">{row.companyId}</td>
-                      <td className="py-2 px-3 text-[#555] dark:text-zinc-300 uppercase text-xs border-r border-[#dee2e6] dark:border-zinc-800">{row.companyName}</td>
-                      <td className="py-2 px-3 border-r border-[#dee2e6] dark:border-zinc-800">
-                        <span className="bg-[#3c8dbc] text-white px-2 py-[2px] rounded text-[11px] font-bold whitespace-nowrap shadow-sm">
-                          {row.persons}
-                        </span>
-                      </td>
-                      <td className="py-2 px-3 border-r border-[#dee2e6] dark:border-zinc-800">
-                        <span className="bg-[#00a65a] text-white px-2 py-[2px] rounded text-[11px] font-bold shadow-sm">
-                          {row.type}
-                        </span>
-                      </td>
-                      <td className="py-1 px-1.5 border-r border-[#dee2e6] dark:border-zinc-800">
-                        <Input type="date" defaultValue={row.userBvDate} className="h-8 min-w-[130px] text-xs font-semibold rounded-sm border-[#d2d6de]" />
-                      </td>
-                      <td className="py-1 px-1.5 border-r border-[#dee2e6] dark:border-zinc-800">
-                        <Input type="date" defaultValue={row.bvDate} className="h-8 min-w-[130px] text-xs font-semibold rounded-sm border-[#d2d6de]" />
-                      </td>
-                      <td className="py-1 px-1.5 border-r border-[#dee2e6] dark:border-zinc-800">
-                        <Input type="date" defaultValue={row.abPayDate} className="h-8 min-w-[130px] text-xs font-semibold rounded-sm border-[#d2d6de]" />
-                      </td>
-                      <td className="py-1 px-1.5">
-                        <Input type="date" defaultValue={row.startDate} className="h-8 min-w-[130px] text-xs font-semibold rounded-sm border-[#d2d6de]" />
-                      </td>
-                    </tr>
+                    <PendingBvRowView key={`${row.companyId}-${index}`} row={row} index={index} canEdit={canEdit} onSaved={() => refetch()} />
                   ))
                 )}
               </tbody>

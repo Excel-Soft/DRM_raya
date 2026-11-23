@@ -13,6 +13,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Pencil, Trash2, X } from "lucide-react";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 const MENU_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as const;
 
@@ -59,11 +60,11 @@ export default function EventsMenu() {
     },
   });
 
-  const menuItemsKey = ["/api/events/menu-items"];
+  const menuItemsKey = ["/api/events/menu-items", { includeLegacy: true }];
   const { data: menuItemsResp, isLoading } = useQuery<{ data: any[]; totalAmount: number }>({
     queryKey: menuItemsKey,
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/events/menu-items");
+      const res = await apiRequest("GET", "/api/events/menu-items?includeLegacy=1");
       if (!res.ok) throw new Error("Failed to fetch menu items");
       return res.json();
     },
@@ -249,16 +250,15 @@ export default function EventsMenu() {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div>
                   <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Assign To</label>
-                  <Select value={assignedUserId} onValueChange={setAssignedUserId}>
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="Choose..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {usersList.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>{u.name || u.username || u.fullName || u.id}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <RoleGroupedUserSelect
+                    grouped={false}
+                    users={usersList}
+                    value={assignedUserId}
+                    onChange={setAssignedUserId}
+                    getLabel={(u) => String(u.name || u.username || u.fullName || u.id)}
+                    placeholder="Choose..."
+                    className="h-9 text-sm"
+                  />
                 </div>
                 <div>
                   <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Role</label>
@@ -301,7 +301,7 @@ export default function EventsMenu() {
           </Card>
         )}
 
-        {/* Data Table — all menu items for events that haven't happened yet */}
+        {/* Data Table — all menu items (new + read-only old-DRM rows), newest first */}
         <Card className="shadow-sm border-t border-t-gray-200 bg-white dark:bg-zinc-900">
           <CardContent className="p-0 overflow-x-auto">
             <table className="w-full text-[13px] text-left">
@@ -323,7 +323,7 @@ export default function EventsMenu() {
                   </tr>
                 ) : menuItems.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">No menu items for upcoming events.</td>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">No menu items found.</td>
                   </tr>
                 ) : (
                   menuItems.map((m, idx) => (
@@ -335,12 +335,16 @@ export default function EventsMenu() {
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.notes || "-"}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.createdAt ? format(new Date(m.createdAt), "dd-MM-yyyy") : "-"}</td>
                       <td className="px-4 py-4 text-right whitespace-nowrap">
+                        {m.isLegacy ? (
+                          <span className="text-[11px] text-gray-400">Old DRM</span>
+                        ) : (<>
                         <button onClick={() => handleEdit(m)} className="inline-flex items-center justify-center w-8 h-8 rounded text-gray-500 hover:bg-gray-100 hover:text-[#00a65a] dark:hover:bg-zinc-800" title="Edit">
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button onClick={() => deleteMutation.mutate({ eventId: m.eventId, itemId: m.id })} className="inline-flex items-center justify-center w-8 h-8 rounded text-gray-500 hover:bg-gray-100 hover:text-red-600 dark:hover:bg-zinc-800" title="Delete">
                           <Trash2 className="w-4 h-4" />
                         </button>
+                        </>)}
                       </td>
                     </tr>
                   ))

@@ -40,7 +40,7 @@ export function isDemoModeEnabled(): boolean {
  * explicitly turned on for an approved integration.
  */
 export function isBotSystemEnabled(): boolean {
-  return import.meta.env.VITE_BOT_SYSTEM_ENABLED === "true";
+  return import.meta.env.VITE_BOT_SYSTEM_ENABLED !== "false";
 }
 
 export function isOnlineFormEnabled(): boolean {

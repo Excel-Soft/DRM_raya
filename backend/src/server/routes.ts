@@ -21,6 +21,9 @@ import { registerAttendanceRoutes } from "./routes/attendance-routes";
 import { registerAttendanceImportRoutes } from "./routes/attendance-import-routes";
 import { registerAttendanceEditRoutes } from "./routes/attendance-edit-routes";
 import { registerSalaryRoutes } from "./routes/salary-routes";
+import { registerOldSalaryReportRoutes } from "./routes/old-salary-report-routes";
+import { registerBalanceReportRoutes } from "./routes/balance-report-routes";
+import { registerLegacyImportRoutes } from "./routes/legacy-import-routes";
 import { registerStage3ReportsRoutes } from "./routes/stage3-reports-routes";
 import { registerLeaveRoutes } from "./routes/leave-routes";
 import { registerOvertimeRoutes } from "./routes/overtime-routes";
@@ -35,6 +38,7 @@ import { registerFollowUpReportRoutes } from "./routes/follow-up-report-routes";
 import { registerTodoRoutes } from "./routes/todo-routes";
 // Manager routes removed
 import { registerAccountRoutes } from "./routes/account-routes";
+import { registerDollarPayRoutes } from "./routes/dollar-pay-routes";
 import { registerGmBvPoolRoutes } from "./routes/gm-bv-pool-routes";
 import tempContactsRoutes from "./routes/temp-contacts-routes";
 import poolsRoutes from "./routes/pools-routes";
@@ -78,6 +82,8 @@ import departmentsRoutes from "./routes/departments-routes";
 import servicesCatalogRoutes from "./routes/services-catalog-routes";
 import itAssetInventoryRoutes from "./routes/it-asset-inventory-routes";
 import receptionRoutes from "./routes/reception-routes";
+import complaintManagerRoutes from "./routes/complaint-manager-routes";
+import marketingManagerRoutes from "./routes/marketing-manager-routes";
 
 import { registerServiceExecutiveRoutes } from "./routes/service-executive-routes";
 import { registerServiceManagerRoutes } from "./routes/service-manager-routes";
@@ -92,6 +98,7 @@ import { productPostingWorkflowRouter } from "./routes/product-posting-workflow-
 import { teamCommissionRouter } from "./routes/team-commission-routes";
 import { softwareWorkflowRouter } from "./routes/software-workflow-routes";
 import { registerPostingDataRoutes } from "./routes/posting-data-routes";
+import { registerLegacyAssetRoutes } from "./routes/legacy-assets-routes";
 import { registerLeadsImportRoutes } from "./routes/leads-import-routes";
 import { registerCrmDuplicatesRoutes } from "./routes/crm-duplicates-routes";
 import { registerLeadBulkRoutes } from "./routes/lead-bulk-routes";
@@ -265,6 +272,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/health/auth", authHealthHandler);
   app.get("/api/health/auth", authHealthHandler);
 
+  // Public legacy product-image proxy (old-DRM posting_data photos) — must be
+  // registered before the auth middleware; see routes/legacy-assets-routes.ts.
+  registerLegacyAssetRoutes(app);
+
   // Protect all other API routes with JWT auth.
   if (process.env.MOCK_AUTH !== "true") {
     app.use("/api", authMiddleware);
@@ -329,7 +340,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // WebExcels DRM Copilot V1 (protected). Disabled end-to-end unless
   // COPILOT_ENABLED=true, a model+key are configured, and the caller is on
   // the pilot allowlist — see backend/copilot.env.example.
-  await ensureCopilotSchema();
+  try {
+    await ensureCopilotSchema();
+  } catch (err) {
+    if (process.env.SKIP_SCHEMA_ENSURE === "true") {
+      console.warn("[copilot] ensureCopilotSchema skipped after error (staging)");
+    } else {
+      throw err;
+    }
+  }
   registerCopilotRoutes(app);
 
   // Sales routes (protected)
@@ -368,6 +387,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Salary / payroll routes (protected, role-guarded)
   registerSalaryRoutes(app);
+  registerOldSalaryReportRoutes(app);
+  // Old DRM "Balance Report" (Reports -> Balance Report)
+  registerBalanceReportRoutes(app);
+  registerLegacyImportRoutes(app);
 
   // Leave routes (protected)
   registerLeaveRoutes(app);
@@ -404,6 +427,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerReportsRoutes(app);
   console.log("registering AccountRoutes");
   registerAccountRoutes(app);
+  console.log("registering DollarPayRoutes");
+  registerDollarPayRoutes(app);
   console.log("registering QuickEntriesRoutes");
   registerQuickEntriesRoutes(app);
   console.log("registering DashboardRoutes");
@@ -462,6 +487,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Reception routes
   app.use("/api/reception", receptionRoutes);
+  app.use("/api/complaint-manager", complaintManagerRoutes);
+  app.use("/api/marketing-manager", marketingManagerRoutes);
 
   // Product Posting Workflow Routes (protected)
   app.use("/api/invoices", invoiceRouter);

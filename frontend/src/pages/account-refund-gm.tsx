@@ -14,8 +14,9 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
-import { Trash2, ChevronDown } from "lucide-react";
+import { Trash2, ChevronDown, Pencil } from "lucide-react";
 import type { RefundGmEntry } from "@shared/schema";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type User = { id: string; full_name: string; email: string; role: string };
 
@@ -31,6 +32,29 @@ type GmOption = {
   isRefunded: boolean | null;
 };
 
+// Edit + status change are for admin, Account and HOD only (backend enforces the same).
+const GM_EDIT_ROLES = ["admin", "super_admin", "adm", "account_manager", "account", "super_hod", "hod"];
+function canEditGmEntries(): boolean {
+  let role = "";
+  try { role = sessionStorage.getItem("userRole") || ""; } catch { /* ignore */ }
+  return GM_EDIT_ROLES.includes(role.toLowerCase().replace(/[\s-]+/g, "_"));
+}
+
+// Stored values match what the HOD verification queue writes ('Approved' / 'Rejected').
+const REFUND_STATUSES = ["Pending", "Approved", "Rejected", "Clear"];
+const statusKey = (s: string | null | undefined) => {
+  const v = (s || "pending").toLowerCase();
+  return REFUND_STATUSES.find((x) => x.toLowerCase() === v) || "Pending";
+};
+const STATUS_CLS: Record<string, string> = {
+  Pending: "bg-amber-100 text-amber-700",
+  Approved: "bg-green-100 text-green-700",
+  Clear: "bg-blue-100 text-blue-700",
+  Rejected: "bg-red-100 text-red-700",
+};
+
+type RefundEditForm = { companyName: string; personName: string; amount: string; amountType: string; comment: string };
+
 export default function AccountRefundGm() {
   const { toast } = useToast();
   const [currentPage, setCurrentPage] = useState(1);
@@ -41,6 +65,19 @@ export default function AccountRefundGm() {
   const companyRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
   const rowsPerPage = 10;
+  const canEdit = canEditGmEntries();
+  const [editTarget, setEditTarget] = useState<RefundGmEntry | null>(null);
+  const [editForm, setEditForm] = useState<RefundEditForm>({ companyName: "", personName: "", amount: "", amountType: "PKR", comment: "" });
+  const openEdit = (e: RefundGmEntry) => {
+    setEditTarget(e);
+    setEditForm({
+      companyName: e.companyName || "",
+      personName: e.personName || "",
+      amount: e.amount != null ? String(parseFloat(String(e.amount))) : "",
+      amountType: ["USD", "EUR"].includes(String(e.amountType)) ? String(e.amountType) : "PKR",
+      comment: e.comment || "",
+    });
+  };
 
   const [formData, setFormData] = useState({
     gmEntryId: "",
@@ -109,6 +146,35 @@ export default function AccountRefundGm() {
     },
     onError: (err: any) =>
       toast({ title: "Could not add refund", description: err?.message || "Failed to add refund entry", variant: "destructive" }),
+  });
+
+  const editMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: RefundEditForm }) =>
+      apiRequestJson("PATCH", `/api/account/refund-gm/${id}`, {
+        companyName: data.companyName.trim(),
+        personName: data.personName.trim(),
+        amount: data.amount,
+        amountType: data.amountType,
+        comment: data.comment.trim() || null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/account/refund-gm"] });
+      setEditTarget(null);
+      toast({ title: "Updated", description: "Refund entry updated" });
+    },
+    onError: (err: any) =>
+      toast({ title: "Update failed", description: err?.message || "Failed to update entry", variant: "destructive" }),
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) =>
+      apiRequestJson("PATCH", `/api/account/refund-gm/${id}/status`, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/account/refund-gm"] });
+      toast({ title: "Status updated", description: "Refund status changed" });
+    },
+    onError: (err: any) =>
+      toast({ title: "Status update failed", description: err?.message || "Failed to update status", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -271,21 +337,15 @@ export default function AccountRefundGm() {
                 {/* Person — real users dropdown */}
                 <div>
                   <Label className="text-xs text-gray-600 mb-1 block dark:text-zinc-300">Person:</Label>
-                  <Select
+                  <RoleGroupedUserSelect
+                    grouped={false}
+                    users={allUsers}
                     value={formData.personName}
-                    onValueChange={(v) => setFormData((f) => ({ ...f, personName: v }))}
-                  >
-                    <SelectTrigger className="h-9 text-sm border-gray-300 dark:border-zinc-800">
-                      <SelectValue placeholder="Choose..." />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-52">
-                      {allUsers.map((u) => (
-                        <SelectItem key={u.id} value={u.full_name}>
-                          {u.full_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    onChange={(v) => setFormData((f) => ({ ...f, personName: v }))}
+                    getValue={(u: any) => String(u.full_name || "")}
+                    placeholder="Choose..."
+                    className="h-9 text-sm border-gray-300 dark:border-zinc-800"
+                  />
                 </div>
               </div>
 
@@ -331,8 +391,8 @@ export default function AccountRefundGm() {
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-700 w-32 dark:text-zinc-400">Person</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-700 w-24 dark:text-zinc-400">Amount</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-gray-700 dark:text-zinc-400">Comment</th>
-                      <th className="text-left px-3 py-2.5 font-semibold text-gray-700 w-20 dark:text-zinc-400">Status</th>
-                      <th className="text-left px-3 py-2.5 font-semibold text-gray-700 w-16 dark:text-zinc-400">Action</th>
+                      <th className="text-left px-3 py-2.5 font-semibold text-gray-700 w-28 dark:text-zinc-400">Status</th>
+                      <th className="text-left px-3 py-2.5 font-semibold text-gray-700 w-20 dark:text-zinc-400">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -358,9 +418,33 @@ export default function AccountRefundGm() {
                           <span className="line-clamp-2">{entry.comment || "—"}</span>
                         </td>
                         <td className="px-3 py-2">
-                          <span className="text-gray-500 text-xs dark:text-zinc-400">{entry.status || "pending"}</span>
+                          {canEdit ? (
+                            <select
+                              value={statusKey(entry.status)}
+                              disabled={statusMutation.isPending}
+                              onChange={(e) => statusMutation.mutate({ id: entry.id, status: e.target.value })}
+                              className={`text-xs font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer ${STATUS_CLS[statusKey(entry.status)]}`}
+                              title="Change status"
+                            >
+                              {REFUND_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          ) : (
+                            <span className={`text-xs font-semibold rounded px-1.5 py-0.5 ${STATUS_CLS[statusKey(entry.status)]}`}>
+                              {statusKey(entry.status)}
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2">
+                          <div className="flex items-center gap-1">
+                          {canEdit && (
+                            <button
+                              onClick={() => openEdit(entry)}
+                              className="w-6 h-6 bg-blue-500 hover:bg-blue-600 text-white rounded flex items-center justify-center transition-colors"
+                              title="Edit"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                          )}
                           <button
                             onClick={() => deleteMutation.mutate(entry.id)}
                             disabled={deleteMutation.isPending}
@@ -369,6 +453,7 @@ export default function AccountRefundGm() {
                           >
                             <Trash2 className="h-3 w-3" />
                           </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -408,6 +493,69 @@ export default function AccountRefundGm() {
           )}
         </div>
       </div>
+
+      {editTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg max-w-md w-full p-4 border dark:border-zinc-800">
+            <h2 className="text-sm font-bold text-gray-800 dark:text-zinc-100 mb-3">Edit Refund GM</h2>
+            <div className="space-y-2">
+              {([["companyName", "Company"], ["personName", "Person"]] as const).map(([k, label]) => (
+                <div key={k}>
+                  <Label className="text-xs text-gray-600 dark:text-zinc-300">{label} <span className="text-red-500">*</span></Label>
+                  <Input
+                    className="h-9 text-sm mt-1"
+                    value={editForm[k]}
+                    onChange={(e) => setEditForm((f) => ({ ...f, [k]: e.target.value }))}
+                  />
+                </div>
+              ))}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs text-gray-600 dark:text-zinc-300">Amount <span className="text-red-500">*</span></Label>
+                  <Input
+                    className="h-9 text-sm mt-1"
+                    type="number"
+                    step="0.01"
+                    value={editForm.amount}
+                    onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs text-gray-600 dark:text-zinc-300">Amount Type</Label>
+                  <Select value={editForm.amountType} onValueChange={(v) => setEditForm((f) => ({ ...f, amountType: v }))}>
+                    <SelectTrigger className="h-9 text-sm mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PKR">PKR</SelectItem>
+                      <SelectItem value="USD">USD</SelectItem>
+                      <SelectItem value="EUR">EUR</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs text-gray-600 dark:text-zinc-300">Comment</Label>
+                <Textarea
+                  className="text-sm mt-1"
+                  rows={3}
+                  value={editForm.comment}
+                  onChange={(e) => setEditForm((f) => ({ ...f, comment: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-3">
+              <Button type="button" variant="outline" className="h-9 text-sm" onClick={() => setEditTarget(null)}>Cancel</Button>
+              <Button
+                type="button"
+                className="bg-blue-600 hover:bg-blue-700 text-white h-9 text-sm"
+                disabled={editMutation.isPending || !editForm.companyName.trim() || !editForm.personName.trim() || !(parseFloat(editForm.amount) > 0)}
+                onClick={() => editMutation.mutate({ id: editTarget.id, data: editForm })}
+              >
+                {editMutation.isPending ? "Saving..." : "Update"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

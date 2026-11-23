@@ -208,6 +208,7 @@ export function LeadImportDialog({
       setResult(json);
       setStep("result");
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/marketing-manager/dashboard"] });
       toast({
         title: "Import complete",
         description: `${json.inserted} added, ${json.skippedDuplicates} skipped, ${json.invalid} invalid.`,

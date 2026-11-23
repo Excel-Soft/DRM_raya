@@ -19,7 +19,6 @@ const ROLE_LABELS: Record<string, string> = {
   [ROLES.PRODUCT_POSTING_MANAGER]: "Product Posting Manager",
   [ROLES.QA_MANAGER]: "QA Manager",
   [ROLES.VERIFICATION_MANAGER]: "Verification Manager",
-  [ROLES.POSTING_EXECUTIVE]: "Posting Executive",
   [ROLES.DD_MANAGER]: "D&D Manager",
   [ROLES.DD_EXECUTIVE]: "D&D Executive",
   [ROLES.IT_MANAGER]: "IT Manager",
@@ -37,10 +36,12 @@ const ROLE_LABELS: Record<string, string> = {
 // (`ROLE_REGISTRY.filter(r => r.key !== ROLES.ADMIN)`) and passes straight through
 // to the frontend's role switcher (frontend/src/components/top-bar.tsx), which reads
 // role.key / role.label.
-export const ROLE_REGISTRY = Object.values(ROLES).map((key) => ({
-  key,
-  label: ROLE_LABELS[key] || key,
-}));
+export const ROLE_REGISTRY = Object.entries(ROLES)
+  .filter(([name]) => name !== "POSTING_EXECUTIVE")
+  .map(([, key]) => ({
+    key,
+    label: ROLE_LABELS[key] || key,
+  }));
 
 // The frontend does not currently read the "navigation" field returned by
 // GET /me/navigation (grep-confirmed: no consumer of navData.navigation), so a

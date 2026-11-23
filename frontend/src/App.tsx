@@ -13,6 +13,7 @@ import { AIAssistantButton } from "@/components/ai-assistant-button";
 import { TicketAssignmentPopup } from "@/components/ticket-assignment-popup";
 import { TicketReviewPopup } from "@/components/ticket-review-popup";
 import { PenaltyAcknowledgementPopup } from "@/components/penalty-acknowledgement-popup";
+import { BvCommissionAckPopup } from "@/components/bv-commission-ack-popup";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 import { Button } from "@/components/ui/button";
@@ -98,7 +99,6 @@ const KwaHistory = lazy(() => import("./pages/kwa-history"));
 const UserList = lazy(() => import("@/pages/user-list"));
 const UserGroups = lazy(() => import("@/pages/user-groups"));
 const AttributesPage = lazy(() => import("@/pages/drm/attributes"));
-const BranchesPage = lazy(() => import("@/pages/drm/branches"));
 const PermissionPage = lazy(() => import("@/pages/drm/permission"));
 const DelayProjectPage = lazy(() => import("@/pages/drm/delay-project"));
 const PromotionPage = lazy(() => import("@/pages/drm/promotion"));
@@ -119,6 +119,7 @@ const FbPost = lazy(() => import("@/pages/fb-post"));
 const DelayProjectsNewPage = lazy(() => import("./pages/drm/delay-projects-new"));
 const DollarSystem = lazy(() => import("@/pages/dollar-system"));
 const DollarBuying = lazy(() => import("@/pages/dollar-buying"));
+const DollarPay = lazy(() => import("@/pages/dollar-pay"));
 const DollarAdvancePayment = lazy(() => import("@/pages/dollar-advance-payment"));
 const UpcomingProjectPage = lazy(() => import("@/pages/drm/upcoming-project"));
 const SocialMedia = lazy(() => import("@/pages/social-media"));
@@ -153,6 +154,7 @@ const ReceptionDashboard = lazy(() => import("@/pages/reception-dashboard"));
 const SuperAdminDashboard = lazy(() => import("@/pages/super-admin-dashboard"));
 const AdminDashboard = lazy(() => import("@/pages/admin-dashboard"));
 const AuditLogsPage = lazy(() => import("@/pages/admin/audit-logs"));
+const LegacyImportPage = lazy(() => import("@/pages/admin/legacy-import"));
 const ProductPostingDashboard = lazy(() => import("@/pages/product-posting-dashboard"));
 const QAManagerDashboard = lazy(() => import("@/pages/qa-manager-dashboard"));
 const VerificationManagerDashboard = lazy(() => import("@/pages/verification-manager-dashboard"));
@@ -194,6 +196,7 @@ const SalaryCreate = lazy(() => import("@/pages/salary-create"));
 const GradeSystem = lazy(() => import("@/pages/grade-system"));
 const BvSystem = lazy(() => import("@/pages/bv-system"));
 const SalaryReport = lazy(() => import("@/pages/salary-report"));
+const BalanceReport = lazy(() => import("@/pages/balance-report"));
 const SalaryBonuses = lazy(() => import("@/pages/salary-bonuses"));
 const AbReport = lazy(() => import("@/pages/ab-report"));
 const ReportsRawAttendance = lazy(() => import("@/pages/reports-raw-attendance"));
@@ -230,6 +233,7 @@ const ServicePrivatePool = lazy(() => import("@/pages/service-private-pool"));
 const PmsTasks = lazy(() => import("@/pages/pms-tasks"));
 const PmsStatus = lazy(() => import("@/pages/pms-status"));
 const PmsRunningProjects = lazy(() => import("@/pages/pms-running-projects"));
+const PmsOverallProjects = lazy(() => import("@/pages/pms-overall-projects"));
 const PmsCompletedProjects = lazy(() => import("@/pages/pms-completed-projects"));
 const PmsCompleteClosedProjects = lazy(() => import("@/pages/pms-complete-closed-projects"));
 const PmsPendingApprovals = lazy(() => import("@/pages/pms-pending-approvals"));
@@ -349,7 +353,8 @@ function Router() {
       <Route path="/sales/lead-pools" component={LeadPools} />
       <Route path="/sales/invoice-pool" component={InvoicePool} />
       <Route path="/drm/attributes" component={AttributesPage} />
-      <Route path="/drm/branches" component={BranchesPage} />
+      {/* Branches are managed in DRM Setting -> Attributes -> Company Branch; old links land there. */}
+      <Route path="/drm/branches">{() => <Redirect to="/drm/attributes?category=Company%20Branch" />}</Route>
       <Route path="/gm-pool/add-gm" component={GmPoolAddGm} />
       <Route path="/sales/appointments" component={AppointmentsPage} />
       <Route path="/sales/performance-evaluation" component={PerformanceEvaluation} />
@@ -367,6 +372,7 @@ function Router() {
       <Route path="/drm/delay-project" component={DelayProjectPage} />
       <Route path="/drm/delay-projects-new" component={DelayProjectsNewPage} />
       <Route path="/drm/pms-setting" component={PmsSettingPage} />
+      <Route path="/drm/pms-project-assign">{() => <Redirect to="/drm/pms-setting" />}</Route>
       {/* Deprecated alias: canonical PMS settings live at /drm/pms-setting */}
       <Route path="/pms/settings">{() => <Redirect to="/drm/pms-setting" />}</Route>
       <Route path="/drm/monthly-complete-project" component={MonthlyCompleteProject} />
@@ -378,6 +384,7 @@ function Router() {
       <Route path="/drm/increment" component={IncrementPage} />
       <Route path="/drm/performance" component={PerformancePage} />
       <Route path="/drm/late-coming" component={LateComingPage} />
+      <Route path="/pms/overall-projects" component={PmsOverallProjects} />
       <Route path="/pms/running-projects" component={PmsRunningProjects} />
       <Route path="/pms/completed-projects" component={PmsCompletedProjects} />
       <Route path="/pms/complete-closed-projects" component={PmsCompleteClosedProjects} />
@@ -442,6 +449,7 @@ function Router() {
       <Route path="/reports/grade-system" component={GradeSystem} />
       <Route path="/reports/bv-system" component={BvSystem} />
       <Route path="/reports/salary" component={SalaryReport} />
+      <Route path="/reports/balance-report" component={BalanceReport} />
       <Route path="/reports/reception" component={ReceptionReport} />
       <Route path="/reports/event" component={EventReport} />
       <Route path="/reports/department" component={DepartmentReport} />
@@ -458,6 +466,7 @@ function Router() {
       <Route path="/super-admin" component={SuperAdminDashboard} />
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/admin/audit-logs" component={AuditLogsPage} />
+      <Route path="/admin/legacy-import" component={LegacyImportPage} />
       <Route path="/training/:category" component={TrainingCenter} />
       <Route path="/workspace" component={Workspace} />
       <Route path="/policies" component={PoliciesSettings} />
@@ -469,6 +478,7 @@ function Router() {
       <Route path="/account/ab-report" component={AbReport} />
       <Route path="/account/dollar-system" component={DollarSystem} />
       <Route path="/account/dollar-buying" component={DollarBuying} />
+      <Route path="/account/dollar-pay" component={DollarPay} />
       <Route path="/account/dollar-advance-payment" component={DollarAdvancePayment} />
       <Route path="/account/ledger" component={AccountLedger} />
       <Route path="/account/history/:companyId" component={AccountHistory} />
@@ -482,6 +492,7 @@ function Router() {
       <Route path="/reports/loan/:id/edit" component={LoanReportEdit} />
       <Route path="/reports/vas/new" component={VasReportNew} />
       <Route path="/reports/gm/new" component={GmReportNew} />
+      <Route path="/users">{() => <Redirect to="/drm/users/list" />}</Route>
       <Route path="/drm/users/add" component={AddUser} />
       <Route path="/drm/users/list" component={UserList} />
       <Route path="/drm/users/groups" component={UserGroups} />
@@ -496,6 +507,8 @@ function Router() {
       <Route path="/posting-data/verified" component={PostingData} />
       <Route path="/posting-data/view-keywords" component={PostingData} />
       <Route path="/posting-data/view-products" component={PostingData} />
+      <Route path="/posting-data/restricted-products" component={PostingData} />
+      <Route path="/posting-data/trash-products" component={PostingData} />
       <Route path="/posting-data/link-report" component={PostingDataLinkReport} />
       {/* Alias → canonical /posting-data/link-report (Stage 2) */}
       <Route path="/team-report/link-report">{() => <Redirect to="/posting-data/link-report" />}</Route>
@@ -587,11 +600,11 @@ function AppContent() {
           sessionStorage.setItem("userName", data.fullName);
         }
         const effectiveRole = data?.activeRoleId || data?.role;
-        if (data?.role) {
-          setUserRole(data.role);
-          sessionStorage.setItem("userRole", data.role);
+        if (effectiveRole) {
+          setUserRole(effectiveRole);
+          setActiveRoleId(effectiveRole);
+          sessionStorage.setItem("userRole", effectiveRole);
         }
-        if (effectiveRole) setActiveRoleId(effectiveRole);
         if (data?.roles && Array.isArray(data.roles)) {
           setUserRoles(data.roles);
           sessionStorage.setItem("userRoles", JSON.stringify(data.roles));
@@ -681,6 +694,7 @@ function AppContent() {
             {authStatus === "authed" && isSupportModuleEnabled() && <TicketAssignmentPopup />}
             {authStatus === "authed" && isSupportModuleEnabled() && <TicketReviewPopup />}
             {authStatus === "authed" && <PenaltyAcknowledgementPopup />}
+            {authStatus === "authed" && <BvCommissionAckPopup />}
             <Toaster />
           </AssistantProvider>
         </ScreenContextProvider>

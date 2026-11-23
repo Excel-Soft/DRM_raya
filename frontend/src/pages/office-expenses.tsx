@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -51,9 +51,41 @@ const OFFICES = [
   "Sialkot-Webexcels",
   "Gujranwala branch"
 ];
+// Filter also offers the office names used by old-DRM expenses ("Main" = head office).
+const FILTER_OFFICES = [...OFFICES, "Main", "Sialkot", "Lahore", "Wazirabad Branch"];
 const EXPENSE_HEADS = ["Rent", "Utilities", "Salaries", "Office Supplies", "Travel", "Marketing", "Maintenance", "Miscellaneous"];
 
 
+
+// Old-DRM receipts live on the legacy server; served (and cached) via the https-safe proxy.
+const legacyReceiptUrl = (file: string) => `/api/legacy-assets/expense-bill?f=${encodeURIComponent(file)}`;
+
+function LegacyReceiptLinks({ files }: { files: string[] }) {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-1">
+      {files.map((file, idx) => {
+        const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(file);
+        return (
+          <a
+            key={file}
+            href={legacyReceiptUrl(file)}
+            target="_blank"
+            rel="noreferrer"
+            title={file}
+            className="inline-flex items-center gap-1 bg-white border border-[#2bc185] text-[#2bc185] hover:bg-[#2bc185] hover:text-white px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors"
+          >
+            {isImage ? (
+              <img src={legacyReceiptUrl(file)} alt="" loading="lazy" decoding="async" className="h-5 w-5 rounded-sm object-cover" />
+            ) : (
+              <FileText className="w-3 h-3" />
+            )}
+            {idx + 1}
+          </a>
+        );
+      })}
+    </div>
+  );
+}
 
 const MultiSelectDropdown = ({ options, selected, onChange, placeholder }: { options: string[], selected: string[], onChange: (val: string[]) => void, placeholder: string }) => {
   return (
@@ -173,7 +205,19 @@ export default function OfficeExpenses() {
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const rowsPerPage = 10;
+  const [tableSearch, setTableSearch] = useState("");
+  const [debouncedTableSearch, setDebouncedTableSearch] = useState("");
+  // Server-side pagination: 50 most recent expenses per page.
+  const rowsPerPage = 50;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedTableSearch(tableSearch.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [tableSearch]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedTableSearch]);
 
   // Temporary filter states (bound to inputs)
   const [tempStartDate, setTempStartDate] = useState("");
@@ -197,6 +241,10 @@ export default function OfficeExpenses() {
   // Fetch current role to determine delete permissions
   const currentRole = sessionStorage.getItem("userRole") || "";
   const isAdmin = ["admin", "super_admin", "adm"].includes(currentRole.toLowerCase());
+  // Delete is shown to admin, super HOD and HOD only (backend enforces the same).
+  const canDeleteExpense = ["admin", "super_admin", "adm", "super_hod", "hod"].includes(
+    currentRole.toLowerCase().replace(/\s+/g, "_"),
+  );
 
   const [formData, setFormData] = useState({
     expenseHead: "",
@@ -212,32 +260,87 @@ export default function OfficeExpenses() {
     expenseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
   });
 
-  const queryParams = new URLSearchParams();
-  if (startDate) queryParams.set("startDate", startDate);
-  if (endDate) queryParams.set("endDate", endDate);
-  if (filterOffice.length > 0 && !filterOffice.includes("all")) queryParams.set("office", filterOffice.join(","));
-  
-  const allFilteredHeads = [
-    ...filterAccountingHead, ...filterParentHead, ...filterChildHead, ...filterTransactionalHead
-  ].filter(h => h !== "all");
-  
-  if (allFilteredHeads.length > 0) {
-    queryParams.set("accountingHead", allFilteredHeads.join(","));
-  }
-
-  const { data: expenses = [], isLoading, isError } = useQuery<(OfficeExpense & {createdByName?: string})[]>({
-    queryKey: ["/api/office/expenses", startDate, endDate, filterOffice.join(","), allFilteredHeads.join(",")],
-    queryFn: () => apiRequestJson<(OfficeExpense & {createdByName?: string})[]>("GET", `/api/office/expenses?${queryParams.toString()}`),
-  });
-
+  // Chart of Accounts tree (DRM -> Office Account -> Chart of Account). Levels come from
+  // parent_account_id: 1 Accounting head (Assets...), 2 Parent, 3 Child, 4 Transactional.
   const { data: accountHeads = [] } = useQuery<AccountHead[]>({
     queryKey: ["/api/office/account-heads"],
     queryFn: () => apiRequestJson<AccountHead[]>("GET", "/api/office/account-heads"),
   });
-
-  const transactionalHeads = useMemo(() => {
-    return accountHeads.filter(h => h.type === "Transactional" || h.type === "Sub-Transactional").map(h => h.name).sort();
+  const headTree = useMemo(() => {
+    const byId = new Map<string, AccountHead>();
+    for (const h of accountHeads) byId.set(h.id, h);
+    const levelOf = (h: AccountHead): number => {
+      let lvl = 1;
+      let cur: AccountHead | undefined = h;
+      const seen = new Set<string>();
+      while (cur?.parentAccountId && byId.has(cur.parentAccountId) && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        cur = byId.get(cur.parentAccountId);
+        lvl++;
+      }
+      return lvl;
+    };
+    const label = (h: AccountHead) => (h.code ? `${h.code} - ${h.name}` : h.name);
+    const nodes = accountHeads.map((h) => ({ head: h, level: levelOf(h), label: label(h) }));
+    const idByLabel = new Map(nodes.map((n) => [n.label, n.head.id]));
+    const labelById = new Map(nodes.map((n) => [n.head.id, n.label]));
+    const hasChildren = new Set(accountHeads.map((h) => h.parentAccountId).filter(Boolean) as string[]);
+    return { nodes, idByLabel, labelById, hasChildren, byId };
   }, [accountHeads]);
+  const isUnder = (headId: string, ancestorIds: Set<string>) => {
+    let cur = headTree.byId.get(headId);
+    const seen = new Set<string>();
+    while (cur && !seen.has(cur.id)) {
+      if (ancestorIds.has(cur.id)) return true;
+      seen.add(cur.id);
+      cur = cur.parentAccountId ? headTree.byId.get(cur.parentAccountId) : undefined;
+    }
+    return false;
+  };
+  const headIdsParam = useMemo(
+    () => allFilteredHeadsLabels().map((l) => headTree.idByLabel.get(l)).filter(Boolean).join(","),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filterAccountingHead, filterParentHead, filterChildHead, filterTransactionalHead, headTree],
+  );
+  function allFilteredHeadsLabels(): string[] {
+    const sel = (a: string[]) => a.filter((h) => h !== "all");
+    if (sel(filterTransactionalHead).length) return sel(filterTransactionalHead);
+    if (sel(filterChildHead).length) return sel(filterChildHead);
+    if (sel(filterParentHead).length) return sel(filterParentHead);
+    return sel(filterAccountingHead);
+  }
+
+  const queryParams = new URLSearchParams();
+  if (startDate) queryParams.set("startDate", startDate);
+  if (endDate) queryParams.set("endDate", endDate);
+  if (filterOffice.length > 0 && !filterOffice.includes("all")) queryParams.set("office", filterOffice.join(","));
+  if (headIdsParam) queryParams.set("headIds", headIdsParam);
+  if (debouncedTableSearch) queryParams.set("search", debouncedTableSearch);
+  
+  // Head filters hold "code - name" labels; the API gets the ids of the most specific
+  // level that has a selection and expands to every head below it.
+  const pickSel = (sel: string[]) => sel.filter((h) => h !== "all");
+  const headSelection =
+    pickSel(filterTransactionalHead).length ? pickSel(filterTransactionalHead)
+    : pickSel(filterChildHead).length ? pickSel(filterChildHead)
+    : pickSel(filterParentHead).length ? pickSel(filterParentHead)
+    : pickSel(filterAccountingHead);
+  const allFilteredHeads = headSelection;
+
+  type ExpenseRow = OfficeExpense & { createdByName?: string; legacyReceipts?: string[]; expenseHeadId?: string };
+  const { data: expensePage, isLoading, isError, isFetching: expensesFetching } = useQuery<{
+    data: ExpenseRow[]; total: number; totalAmount: string; page: number; pageSize: number;
+  }>({
+    queryKey: ["/api/office/expenses", startDate, endDate, filterOffice.join(","), allFilteredHeads.join(","), headIdsParam, debouncedTableSearch, currentPage],
+    queryFn: () =>
+      apiRequestJson("GET", `/api/office/expenses?${queryParams.toString()}&page=${currentPage}&pageSize=${rowsPerPage}`),
+    placeholderData: (prev) => prev,
+  });
+  const expenses: ExpenseRow[] = expensePage?.data ?? [];
+  const expenseTotal = expensePage?.total ?? 0;
+  // Export: all rows matching the current filters (fetched only when exporting).
+  const fetchAllForExport = () =>
+    apiRequestJson<ExpenseRow[]>("GET", `/api/office/expenses?${queryParams.toString()}`);
 
   const { data: cheques = [] } = useQuery<any[]>({
     queryKey: ["/api/office/cheques"],
@@ -374,7 +477,7 @@ export default function OfficeExpenses() {
 
     setEditingId(expense.id);
     setFormData({
-      expenseHead: expense.expenseHead || "",
+      expenseHead: (expense as any).expenseHeadId || expense.expenseHead || "",
       office: expense.office || "",
       amount: expense.amount || "",
       currency: expense.currency || "PKR",
@@ -416,30 +519,64 @@ export default function OfficeExpenses() {
     setFilterParentHead(["all"]);
     setFilterChildHead(["all"]);
     setFilterTransactionalHead(["all"]);
+    setTableSearch("");
+    setDebouncedTableSearch("");
     setCurrentPage(1);
   };
 
   const expensesList = Array.isArray(expenses) ? expenses : [];
-  const paginatedExpenses = expensesList.slice(
-    (currentPage - 1) * rowsPerPage,
-    currentPage * rowsPerPage
-  );
+  const paginatedExpenses = expensesList;
+  const totalPages = Math.max(1, Math.ceil(expenseTotal / rowsPerPage));
+  const pageStart = (currentPage - 1) * rowsPerPage;
+  const pageButtons: (number | "gap")[] = [];
+  for (let n = 1; n <= totalPages; n++) {
+    if (n === 1 || n === totalPages || Math.abs(n - currentPage) <= 1) pageButtons.push(n);
+    else if (pageButtons[pageButtons.length - 1] !== "gap") pageButtons.push("gap");
+  }
 
   // Head filter options derived from accountHeads API
-  const accountingHeadOptions = useMemo(() => Array.from(new Set(accountHeads.map(h => h.category || "General").filter(Boolean))).sort(), [accountHeads]);
-  const parentHeadOptions = useMemo(() => accountHeads.filter(h => h.type === "Parent").map(h => h.name).sort(), [accountHeads]);
-  const childHeadOptions = useMemo(() => accountHeads.filter(h => h.type === "Child").map(h => h.name).sort(), [accountHeads]);
-  // transactionalHeads is already defined above
+  // Cascading head filters (uses the temp selections so options follow what is picked).
+  const idsOf = (labels: string[]) =>
+    new Set(labels.filter((l) => l !== "all").map((l) => headTree.idByLabel.get(l)).filter(Boolean) as string[]);
+  const optionsAt = (level: number, scopes: Set<string>[]) => {
+    const scope = scopes.find((sc) => sc.size > 0);
+    return headTree.nodes
+      .filter((n) => n.level === level && (!scope || isUnder(n.head.id, scope)))
+      .sort((a, b) => String(a.head.code).localeCompare(String(b.head.code), undefined, { numeric: true }))
+      .map((n) => n.label);
+  };
+  const accountingHeadOptions = useMemo(() => optionsAt(1, []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [headTree]);
+  const parentHeadOptions = useMemo(() => optionsAt(2, [idsOf(tempAccountingHead)]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [headTree, tempAccountingHead]);
+  const childHeadOptions = useMemo(() => optionsAt(3, [idsOf(tempParentHead), idsOf(tempAccountingHead)]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [headTree, tempParentHead, tempAccountingHead]);
+  const transactionalHeads = useMemo(() => optionsAt(4, [idsOf(tempChildHead), idsOf(tempParentHead), idsOf(tempAccountingHead)]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [headTree, tempChildHead, tempParentHead, tempAccountingHead]);
+  // Heads an expense can be booked on: the lowest level of each branch (leaf heads).
+  const bookableHeadLabels = useMemo(
+    () => headTree.nodes
+      .filter((n) => n.level >= 3 && !headTree.hasChildren.has(n.head.id) && n.head.isActive !== 0)
+      .sort((a, b) => String(a.head.code).localeCompare(String(b.head.code), undefined, { numeric: true }))
+      .map((n) => n.label),
+    [headTree],
+  );
 
   // Create/Edit dialog option lists: the standard enumeration unioned with the
   // real values already in the data, plus the row's current value when editing
   // (so an existing expense whose head/office is not in the static list keeps it).
+  // Dialog: chart-of-account leaf heads ("code - name"); formData.expenseHead keeps the
+  // head id (or an old free-text head when editing an older expense).
   const dialogHeadOptions = useMemo(() => {
-    const set = new Set<string>(transactionalHeads);
-    for (const e of expensesList) if (e.expenseHead) set.add(e.expenseHead);
-    if (formData.expenseHead) set.add(formData.expenseHead);
-    return Array.from(set).sort();
-  }, [expensesList, formData.expenseHead, transactionalHeads]);
+    const list = [...bookableHeadLabels];
+    const current = formData.expenseHead ? headTree.labelById.get(formData.expenseHead) ?? formData.expenseHead : "";
+    if (current && !list.includes(current)) list.unshift(current);
+    return list;
+  }, [bookableHeadLabels, formData.expenseHead, headTree]);
 
   const dialogOfficeOptions = useMemo(() => {
     const set = new Set<string>(OFFICES);
@@ -448,7 +585,8 @@ export default function OfficeExpenses() {
     return Array.from(set);
   }, [expensesList, formData.office]);
 
-  const totalAmount = expensesList.reduce((sum, e) => sum + parseFloat(e.amount || "0"), 0);
+  // Total of ALL expenses matching the filters (from the server), not just this page.
+  const totalAmount = parseFloat(expensePage?.totalAmount ?? "0") || 0;
 
   const formatCurrency = (amount: string | null, currency = "PKR") => {
     if (!amount) return "0.00";
@@ -456,7 +594,8 @@ export default function OfficeExpenses() {
     return num.toLocaleString("en-US", { minimumFractionDigits: 2 });
   };
 
-  const exportToCSV = () => {
+  const exportToCSV = async () => {
+    const expensesList = await fetchAllForExport().catch(() => [] as ExpenseRow[]);
     if (expensesList.length === 0) {
       toast({ title: "Info", description: "No data to export" });
       return;
@@ -471,7 +610,7 @@ export default function OfficeExpenses() {
       `"${e.voucherNumber || ""}"`,
       e.amount,
       e.currency,
-      "System"
+      `"${(e.createdByName || "System").replace(/"/g, '""')}"`
     ]);
     const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -484,7 +623,8 @@ export default function OfficeExpenses() {
     document.body.removeChild(link);
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
+    const expensesList = await fetchAllForExport().catch(() => [] as ExpenseRow[]);
     if (expensesList.length === 0) {
       toast({ title: "Info", description: "No data to export" });
       return;
@@ -498,7 +638,7 @@ export default function OfficeExpenses() {
       "Voucher Number": e.voucherNumber || "",
       Amount: parseFloat(e.amount || "0"),
       Currency: e.currency,
-      "Created By": "System"
+      "Created By": e.createdByName || "System"
     }));
     const ws = utils.json_to_sheet(data);
     const wb = utils.book_new();
@@ -566,7 +706,7 @@ export default function OfficeExpenses() {
             <div className="space-y-1.5">
               <Label className="text-[13px] font-normal text-gray-700">Select Office<span className="text-red-500">*</span></Label>
               <MultiSelectDropdown
-                options={OFFICES}
+                options={FILTER_OFFICES}
                 selected={tempFilterOffice}
                 onChange={setTempFilterOffice}
                 placeholder="Select one or more options"
@@ -612,21 +752,32 @@ export default function OfficeExpenses() {
         <div className="bg-white dark:bg-zinc-900 p-5 rounded shadow-sm border border-gray-100 min-h-[400px]">
           <h2 className="text-[15px] font-semibold text-[#555] mb-4">Expense List</h2>
           
-          <div className="flex gap-2 mb-4">
-            <Button 
-              onClick={exportToCSV}
-              className="bg-[#2bc185] hover:bg-[#25a873] text-white rounded-[4px] h-8 px-3 text-[12px] font-medium flex items-center gap-1.5 shadow-sm"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              Export to CSV
-            </Button>
-            <Button 
-              onClick={exportToExcel}
-              className="bg-[#4fb1f1] hover:bg-[#439ade] text-white rounded-[4px] h-8 px-3 text-[12px] font-medium flex items-center gap-1.5 shadow-sm"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              Export to Excels
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+            <div className="flex gap-2">
+              <Button 
+                onClick={exportToCSV}
+                className="bg-[#2bc185] hover:bg-[#25a873] text-white rounded-[4px] h-8 px-3 text-[12px] font-medium flex items-center gap-1.5 shadow-sm"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                Export to CSV
+              </Button>
+              <Button 
+                onClick={exportToExcel}
+                className="bg-[#4fb1f1] hover:bg-[#439ade] text-white rounded-[4px] h-8 px-3 text-[12px] font-medium flex items-center gap-1.5 shadow-sm"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Export to Excels
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-gray-500 whitespace-nowrap">Search:</span>
+              <Input
+                value={tableSearch}
+                onChange={(e) => setTableSearch(e.target.value)}
+                placeholder="Branch, head, detail, voucher, amount, user…"
+                className="h-8 w-[min(100%,260px)] border-gray-300 text-[13px] rounded-[4px]"
+              />
+            </div>
           </div>
 
           <div className="w-full">
@@ -662,7 +813,7 @@ export default function OfficeExpenses() {
                   paginatedExpenses.map((expense, index) => (
                     <TableRow key={expense.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800">
                       <TableCell className="text-center text-[13px] text-gray-700 py-2.5">
-                        {(currentPage - 1) * rowsPerPage + index + 1}
+                        {pageStart + index + 1}
                       </TableCell>
                       <TableCell className="text-[13px] text-gray-700 py-2.5">
                         {format(new Date(expense.expenseDate), "yyyy-MM-dd")}
@@ -687,7 +838,9 @@ export default function OfficeExpenses() {
                       </TableCell>
                       <TableCell className="text-[13px] text-gray-700 py-2.5 text-center">
                         {(() => {
-                          if (!expense.fileUrl) return "-";
+                          const legacy: string[] = Array.isArray((expense as any).legacyReceipts) ? (expense as any).legacyReceipts : [];
+                          if (!expense.fileUrl && legacy.length === 0) return "-";
+                          if (!expense.fileUrl) return <LegacyReceiptLinks files={legacy} />;
                           try {
                             const parsed = JSON.parse(expense.fileUrl);
                             if (Array.isArray(parsed)) {
@@ -719,20 +872,21 @@ export default function OfficeExpenses() {
                           >
                             <Pencil className="h-3.5 w-3.5 text-blue-500" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-transparent"
-                            disabled={!isAdmin}
-                            onClick={() => {
-                              if (!isAdmin) return;
-                              if (window.confirm("Are you sure you want to delete this expense?")) {
-                                deleteMutation.mutate(expense.id);
-                              }
-                            }}
-                          >
-                            <Trash2 className={`h-3.5 w-3.5 ${isAdmin ? 'text-red-500' : 'text-gray-400'}`} />
-                          </Button>
+                          {canDeleteExpense && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 hover:bg-transparent"
+                              title="Delete"
+                              onClick={() => {
+                                if (window.confirm("Are you sure you want to delete this expense?")) {
+                                  deleteMutation.mutate(expense.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -741,6 +895,52 @@ export default function OfficeExpenses() {
               </TableBody>
             </Table>
             
+            {/* Pagination: 50 per page, most recent first */}
+            <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-3 text-[12px] text-gray-500 dark:text-zinc-400">
+              <span>
+                {expenseTotal === 0
+                  ? "Showing 0 expenses"
+                  : `Showing ${(pageStart + 1).toLocaleString()} to ${(pageStart + paginatedExpenses.length).toLocaleString()} of ${expenseTotal.toLocaleString()} expenses`}
+                {expensesFetching && <span className="ml-2 text-gray-400">Loading…</span>}
+              </span>
+              <div className="flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className="h-8 rounded border border-gray-300 px-3 disabled:opacity-40 hover:bg-gray-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                >
+                  Previous
+                </button>
+                {pageButtons.map((n, i) =>
+                  n === "gap" ? (
+                    <span key={`gap-${i}`} className="flex h-8 items-center px-1.5">…</span>
+                  ) : (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setCurrentPage(n)}
+                      className={
+                        n === currentPage
+                          ? "h-8 min-w-8 rounded bg-[#0f8b4d] px-2 font-semibold text-white"
+                          : "h-8 min-w-8 rounded border border-gray-300 px-2 hover:bg-gray-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                      }
+                    >
+                      {n}
+                    </button>
+                  ),
+                )}
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className="h-8 rounded border border-gray-300 px-3 disabled:opacity-40 hover:bg-gray-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+
             {/* Table Footer */}
             <div className="flex bg-[#f8f9fa] dark:bg-zinc-900 border-t border-gray-200 dark:border-zinc-800">
               <div className="flex-1 flex justify-end pr-10 items-center py-2">
@@ -766,8 +966,8 @@ export default function OfficeExpenses() {
                   <Label className="text-[13px] font-medium text-gray-700">Select Transactional Head:</Label>
                   <SearchableSelect
                     options={dialogHeadOptions}
-                    value={formData.expenseHead}
-                    onChange={(v) => setFormData({ ...formData, expenseHead: v })}
+                    value={formData.expenseHead ? headTree.labelById.get(formData.expenseHead) ?? formData.expenseHead : ""}
+                    onChange={(v) => setFormData({ ...formData, expenseHead: headTree.idByLabel.get(v) ?? v })}
                     placeholder="Choose..."
                   />
                 </div>

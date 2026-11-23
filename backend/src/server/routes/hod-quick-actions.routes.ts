@@ -57,14 +57,14 @@ export function registerHodQuickActionRoutes(router: Router) {
 
       const [rows, count] = await Promise.all([
         pool.query(
-          `select id, user_id, from_date, to_date, reason, status, created_at
+          `select id, user_id, from_date, to_date, purpose as reason, status, created_at
            from drm.leave_requests
-           where status = $1
+           where status::text = $1
            order by created_at desc
            limit $2 offset $3`,
           [status, limit, offset],
         ),
-        pool.query(`select count(*)::int as count from drm.leave_requests where status = $1`, [status]),
+        pool.query(`select count(*)::int as count from drm.leave_requests where status::text = $1`, [status]),
       ]);
 
       return send(res, 200, {
@@ -83,7 +83,7 @@ export function registerHodQuickActionRoutes(router: Router) {
     try {
       const id = req.params.id;
       await pool.query(
-        `update drm.leave_requests set status = 'Approved', approved_by = $2, updated_at = now() where id = $1`,
+        `update drm.leave_requests set status = 'Approved', approved_by_user_id = $2, approved_at = now(), updated_at = now() where id = $1`,
         [id, req.user!.userId],
       );
       await logAction(req.user!.userId, "approve_leave", { leaveId: id });
@@ -100,7 +100,7 @@ export function registerHodQuickActionRoutes(router: Router) {
       const id = req.params.id;
       const reason = (req.body?.reason as string) ?? null;
       await pool.query(
-        `update drm.leave_requests set status = 'Rejected', approved_by = $2, reason = coalesce($3, reason), updated_at = now() where id = $1`,
+        `update drm.leave_requests set status = 'Rejected', approved_by_user_id = $2, approved_at = now(), rejection_reason = coalesce($3, rejection_reason), updated_at = now() where id = $1`,
         [id, req.user!.userId, reason],
       );
       await logAction(req.user!.userId, "reject_leave", { leaveId: id, reason });

@@ -6,8 +6,12 @@ import { requireReportPermission } from "./middleware/report-permission";
 import { requireActionPermission } from "./middleware/action-permission";
 import { recordAuditLog } from "./services/activity-service";
 import { attendanceRepository } from "../repositories/attendance.repository";
+import { saveOldViewAttendance, validateOldViewValues, isIsoDate } from "../services/old-attendance-edit.service";
 
-const ALLOWED_FIELDS = new Set(["status", "check_in", "check_out", "notes", "working_hours"]);
+// "old_view" = the old Attendance page modal (Time In / Time Out / late/absent);
+// after_value is JSON {"timeIn","timeOut","lateAbsent"} and approval applies it
+// exactly like a direct save (PATCH /api/attendance/old-view/:userId/:date).
+const ALLOWED_FIELDS = new Set(["status", "check_in", "check_out", "notes", "working_hours", "old_view"]);
 const VALID_STATUSES = ["Present", "Absent", "Late", "HalfDay", "Leave"];
 // Salary-run states that "freeze" a month: once payroll is computed/approved/locked,
 // retroactive attendance edits for that employee/month must not silently change pay.
@@ -72,9 +76,32 @@ async function isMonthLocked(
 async function applyEditToAttendance(
   client: PoolClient,
   edit: { attendance_id: string | null; user_id: string; attendance_date: Date | string; field: string; after_value: unknown },
+  opts?: { allowLocked: boolean; actorUserId: string },
 ): Promise<{ attendanceId: string; before: unknown; after: unknown }> {
   const field = String(edit.field);
   if (!ALLOWED_FIELDS.has(field)) throw httpError(400, `Unsupported field "${field}"`);
+
+  if (field === "old_view") {
+    let parsed: unknown;
+    try { parsed = JSON.parse(String(edit.after_value ?? "")); } catch { throw httpError(400, "Invalid old_view value"); }
+    const values = validateOldViewValues(parsed);
+    const d = edit.attendance_date instanceof Date ? edit.attendance_date : new Date(String(edit.attendance_date));
+    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const results = await saveOldViewAttendance(client, {
+      modernUserId: String(edit.user_id),
+      date,
+      values,
+      actorUserId: opts?.actorUserId ?? String(edit.user_id),
+      // approveEdit already enforced the lock (+ admin override) for this employee.
+      allowLocked: opts?.allowLocked ?? false,
+    });
+    const main = results.find((r) => r.userId === String(edit.user_id)) ?? results[0];
+    return {
+      attendanceId: main?.attendanceIds[0] ?? "",
+      before: main?.before ?? null,
+      after: { ...values, distributionUsers: results.filter((r) => r !== main).map((r) => r.userId), month: main?.month.after },
+    };
+  }
 
   // Locate the row: by linked attendance_id when present, else by employee+date.
   let row: any;
@@ -223,6 +250,19 @@ async function createEdit(req: Request, res: Response) {
     if (String(field) === "status" && afterValue != null && !VALID_STATUSES.includes(String(afterValue))) {
       return res.status(400).json({ error: `status must be one of ${VALID_STATUSES.join(", ")}` });
     }
+    let afterStored = afterValue ?? null;
+    if (String(field) === "old_view") {
+      if (attendanceId) return res.status(400).json({ error: "old_view requests are by employee + date" });
+      if (!isIsoDate(String(attendanceDate).slice(0, 10))) {
+        return res.status(400).json({ error: "attendanceDate must be YYYY-MM-DD" });
+      }
+      try {
+        const raw = typeof afterValue === "string" ? JSON.parse(afterValue) : afterValue;
+        afterStored = JSON.stringify(validateOldViewValues(raw));
+      } catch (e: any) {
+        return res.status(400).json({ error: e?.status ? e.message : "Invalid old_view value" });
+      }
+    }
 
     // Resolve the target employee + date. When an attendanceId is supplied the
     // request MUST be bound to that row's REAL employee/date — never the
@@ -260,7 +300,7 @@ async function createEdit(req: Request, res: Response) {
         targetDate,
         String(field),
         beforeValue ?? null,
-        afterValue ?? null,
+        afterStored,
         String(reason).trim(),
         req.user.userId,
       ],
@@ -329,7 +369,10 @@ async function approveEdit(req: Request, res: Response) {
       }
     }
 
-    const applied = await applyEditToAttendance(client, edit);
+    const applied = await applyEditToAttendance(client, edit, {
+      allowLocked: !!overrideReason,
+      actorUserId: req.user.userId,
+    });
 
     const updated = await client.query(
       `UPDATE drm.attendance_edit_requests
@@ -523,6 +566,18 @@ export function registerAttendanceEditRoutes(app: Express) {
     app.patch(`${base}/:id/reject`, approveGuard, rejectEdit);
   }
 
+  // Old DRM "edit-att" monthly sheet (drm.attendance_month: copied old months + new Excel
+  // imports). Formula as on the old page:
+  //   off days   = leaves + half leaves / 2      earn days = 26 - off days
+  //   paid leave = 1 when off days > 1, absents = max(0, off days - 1)
+  //   per day    = net / 30                     absents RS = absents x per day
+  //   late min   = late_hour x 60 + late_min    cutting min = late min - relaxation
+  //   cutting RS = max(0, cutting min) x net / 30 / 8 / 60
+  //   total cutting = absents RS + cutting RS    total salary = net - total cutting
+  // Net salary / relaxation: old DRM user values, else the new user fields.
+  app.get("/api/attendance/monthly-sheet", monthlySheet);
+  app.patch("/api/attendance/monthly-sheet/:userId", approveGuard, updateMonthlySheet);
+
   // Admin-only direct correction.
   app.patch("/api/attendance/:id/correction", correctionGuard, directCorrection);
 
@@ -544,4 +599,132 @@ export function registerAttendanceEditRoutes(app: Express) {
       res.status(500).json({ error: "Failed to fetch raw attendance" });
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Monthly attendance sheet (old DRM edit-att)
+// ---------------------------------------------------------------------------
+function monthYear(q: any): { month: number; year: number } {
+  const now = new Date();
+  const month = Number(q.month) >= 1 && Number(q.month) <= 12 ? Number(q.month) : now.getMonth() + 1;
+  const year = Number(q.year) >= 2000 && Number(q.year) <= 2100 ? Number(q.year) : now.getFullYear();
+  return { month, year };
+}
+
+const SHEET_SQL = `
+  SELECT am.user_id AS "userId",
+         coalesce(nullif(btrim(u.full_name), ''), u.username, '-') AS name,
+         am.late_hour AS "lateHour", am.late_min AS "lateMin",
+         am.half_leave AS "halfLeave", am.leaves, am.branch, am.month, am.year,
+         coalesce(nullif(regexp_replace(coalesce(l."netSalary", ''), '[^0-9.]', '', 'g'), '')::numeric,
+                  nullif(regexp_replace(coalesce(u.basic_salary, ''), '[^0-9.]', '', 'g'), '')::numeric, 0) AS "netSalary",
+         coalesce(nullif(regexp_replace(coalesce(u.relaxation_minutes::text, ''), '[^0-9.]', '', 'g'), '')::numeric,
+                  nullif(regexp_replace(coalesce(l."relaxationMin", ''), '[^0-9.]', '', 'g'), '')::numeric, 0) AS relaxation
+    FROM drm.attendance_month am
+    JOIN drm.users u ON u.id = am.user_id
+    LEFT JOIN migration_meta.migration_legacy_ids m
+           ON m.modern_table = 'users' AND m.modern_id = u.id::text AND m.legacy_table = 'webxl_user'
+    LEFT JOIN legacy_archive.webxl_user l ON l._source_table = 'webxl_user' AND l._legacy_pk = m.legacy_id
+   WHERE am.month = $1 AND am.year = $2
+     AND u.is_active IS NOT FALSE
+     -- old DRM role 54 = former staff (the old attendance pages skip roleId 54)
+     AND coalesce(l."roleId", '') !~ '^\\s*54\\s*,?\\s*$'`;
+
+function sheetRow(r: any) {
+  const net = Number(r.netSalary || 0);
+  const offDays = Number(r.leaves || 0) + Number(r.halfLeave || 0) / 2;
+  const paidLeave = offDays > 1 ? 1 : 0;
+  const absents = Math.max(0, offDays - 1);
+  const perDay = net / 30;
+  const absentsRs = absents * perDay;
+  const lateTotal = Number(r.lateHour || 0) * 60 + Number(r.lateMin || 0);
+  const relaxation = Number(r.relaxation || 0);
+  const cuttingMin = lateTotal - relaxation;
+  const cuttingRs = Math.max(0, cuttingMin) * (net / 30 / 8 / 60);
+  const totalCutting = Math.round(absentsRs + cuttingRs);
+  return {
+    userId: r.userId, name: r.name, branch: r.branch, month: r.month, year: r.year,
+    lateHour: r.lateHour, lateMin: r.lateMin, halfLeave: r.halfLeave, leaves: r.leaves,
+    netSalary: net, paidLeave, offDays, earnDays: 26 - offDays, absents,
+    absentsRs: Math.round(absentsRs), lateTotal, relaxation, cuttingMin,
+    cuttingRs: Math.round(cuttingRs), perDay: Math.round(perDay),
+    totalCutting, totalSalary: Math.round(net - totalCutting),
+  };
+}
+
+async function monthlySheet(req: Request, res: Response) {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    const { month, year } = monthYear(req.query);
+    const search = String(req.query.search ?? "").trim();
+    const params: any[] = [month, year];
+    let extra = "";
+    if (search) { params.push(`%${search}%`); extra = ` AND (u.full_name ILIKE $3 OR u.username ILIKE $3)`; }
+    // Non-managers only see their own row.
+    if (!isManagerialRole(callerRole(req))) {
+      params.push((req.user as any).userId);
+      extra += ` AND am.user_id = $${params.length}::uuid`;
+    }
+    const { rows } = await pool.query(`${SHEET_SQL}${extra} ORDER BY name`, params);
+    res.json({ month, year, rows: rows.map(sheetRow) });
+  } catch (err) {
+    console.error("[attendance] monthly sheet error:", err);
+    res.status(500).json({ error: "Failed to load monthly attendance" });
+  }
+}
+
+async function updateMonthlySheet(req: Request, res: Response) {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    const { month, year } = monthYear(req.body ?? {});
+    const toInt = (v: unknown, max: number) => {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 0 || n > max) throw httpError(400, "Values must be whole numbers within range");
+      return n;
+    };
+    const leaves = toInt(req.body?.leaves, 31);
+    const halfLeave = toInt(req.body?.halfLeave ?? 0, 62);
+    const lateHour = toInt(req.body?.lateHour ?? 0, 744);
+    const lateMin = toInt(req.body?.lateMin ?? 0, 59);
+    const userId = String(req.params.userId);
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const before = await client.query(
+        `SELECT late_hour, late_min, half_leave, leaves FROM drm.attendance_month
+          WHERE user_id = $1::uuid AND month = $2 AND year = $3 FOR UPDATE`,
+        [userId, month, year],
+      );
+      if (!before.rows[0]) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "No attendance row for this month" });
+      }
+      await client.query(
+        `UPDATE drm.attendance_month SET leaves = $4, half_leave = $5, late_hour = $6, late_min = $7, updated_at = now()
+          WHERE user_id = $1::uuid AND month = $2 AND year = $3`,
+        [userId, month, year, leaves, halfLeave, lateHour, lateMin],
+      );
+      // Keep the month history in step, like the attendance import does.
+      await client.query(
+        `UPDATE drm.attendance_month_history SET leaves = $4, half_leave = $5, late_hour = $6, late_min = $7, updated_at = now()
+          WHERE user_id = $1::uuid AND month = $2 AND year = $3`,
+        [userId, month, year, leaves, halfLeave, lateHour, lateMin],
+      );
+      await client.query("COMMIT");
+      console.log(`[attendance] monthly sheet ${userId} ${year}-${month} updated by ${(req.user as any).userId}:`,
+        JSON.stringify({ before: before.rows[0], after: { leaves, halfLeave, lateHour, lateMin } }));
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw e;
+    } finally {
+      client.release();
+    }
+    const { rows } = await pool.query(`${SHEET_SQL} AND am.user_id = $3::uuid`, [month, year, userId]);
+    res.json(rows[0] ? sheetRow(rows[0]) : null);
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
+    console.error("[attendance] monthly sheet update error:", err);
+    res.status(500).json({ error: "Failed to update attendance" });
+  }
 }

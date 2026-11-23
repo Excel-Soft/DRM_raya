@@ -32,6 +32,8 @@ import { ServiceCatalogTree } from "@/components/service-catalog-tree";
 import { QaAttributeTree } from "@/components/qa-attribute-tree";
 import { BuyerDetailTree } from "@/components/buyer-detail-tree";
 import { DepartmentsManager } from "@/components/departments-manager";
+import { CompanyBusinessTypeTree } from "@/components/company-business-type-tree";
+import { LegacyAttributeTree } from "@/components/legacy-attribute-tree";
 
 const ATTRIBUTE_CATEGORIES = [
     "Company Detail",
@@ -56,8 +58,39 @@ const ATTRIBUTE_CATEGORIES = [
     "Departments",
 ];
 
+function attributeNameColumnLabel(category: string): string {
+    const labels: Record<string, string> = {
+        "Company Detail": "Business Type",
+        "Company Business Type": "Category",
+        "Service Type": "Role Title",
+        "RC Link": "Role Title",
+        Source: "Source Name",
+        "Job Designation": "Designation",
+        "Q & A": "Question / Answer",
+        "Whatsapp Message": "Message",
+        "Contact Attribute": "Contact Method",
+        "Donation Head": "Donation Head",
+        "Penalty Head": "Penalty Head",
+        "Company Branch": "Branch Name",
+        Country: "Country",
+        "Govt Leave": "Leave Title",
+        "Account Monthly Task": "Task Name",
+        "Buyer Detail": "Buyer",
+        "Portfolio Categories": "Category Name",
+        "Alibaba Packages": "Package Name",
+        Departments: "Department",
+    };
+    return labels[category] ?? "Name";
+}
+
 export default function AttributesPage() {
-    const [selectedCategory, setSelectedCategory] = useState(ATTRIBUTE_CATEGORIES[0]);
+    // ?category=<name> opens that section directly (e.g. the old /drm/branches link -> Company Branch).
+    const [selectedCategory, setSelectedCategory] = useState(() => {
+        const fromUrl = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("category") : null;
+        return (ATTRIBUTE_CATEGORIES as readonly string[]).includes(fromUrl ?? "")
+            ? (fromUrl as (typeof ATTRIBUTE_CATEGORIES)[number])
+            : ATTRIBUTE_CATEGORIES[0];
+    });
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [newItemName, setNewItemName] = useState("");
     const [newItemAmount, setNewItemAmount] = useState("");
@@ -66,11 +99,6 @@ export default function AttributesPage() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
-    // "Company Branch" is not a generic attributes bucket — it's a thin view
-    // over the real, dedicated drm.branches table (full CRUD with code/sortOrder/
-    // isActive already lives at /drm/branches) so this list and that page never
-    // drift into two different sources of truth for the same "office" concept.
-    const isBranchCategory = selectedCategory === "Company Branch";
     // "Service for Quotation" is a real 3-level hierarchy (services ->
     // service_subservices -> service_sub_subservices) with its own CRUD API
     // and its own tree UI — nothing about the generic single-field
@@ -98,31 +126,35 @@ export default function AttributesPage() {
     // Company Branch above. It also needs an Edit affordance the generic
     // add/delete list below doesn't have, so it gets its own component.
     const isDepartmentCategory = selectedCategory === "Departments";
+    const isCompanyBusinessTypeCategory = selectedCategory === "Company Business Type";
+    const isAlibabaPackagesCategory = selectedCategory === "Alibaba Packages";
+    const isPortfolioCategoriesCategory = selectedCategory === "Portfolio Categories";
     const extraColumnCount = (isPenaltyCategory ? 1 : 0) + (isGovtLeaveCategory ? 1 : 0) + (isAccountTaskCategory ? 2 : 0);
+    const nameColumnLabel = attributeNameColumnLabel(selectedCategory);
 
     // Fetch attributes for selected category (Service for Quotation / Q & A /
     // Buyer Detail / Departments manage their own fetching entirely inside their own components).
     const { data: attributes = [], isLoading } = useQuery({
-        queryKey: isBranchCategory ? ["/api/drm/branches", "all"] : ["/api/attributes", selectedCategory],
+        queryKey: ["/api/attributes", selectedCategory],
         queryFn: async () => {
-            if (isBranchCategory) {
-                const res = await apiRequest("GET", "/api/drm/branches?includeInactive=true");
-                const body = await res.json();
-                return (body.data ?? []).map((b: any) => ({ id: b.id, name: b.name }));
-            }
             const res = await apiRequest("GET", `/api/attributes/${encodeURIComponent(selectedCategory)}`);
             return res.json();
         },
-        enabled: !isServiceCategory && !isQaCategory && !isBuyerDetailCategory && !isDepartmentCategory,
+        enabled:
+            !isServiceCategory &&
+            !isQaCategory &&
+            !isBuyerDetailCategory &&
+            !isDepartmentCategory &&
+            !isCompanyBusinessTypeCategory &&
+            !isAlibabaPackagesCategory &&
+            !isPortfolioCategoriesCategory,
     });
 
     // Add mutation — mutationRequest throws on non-2xx so 401/403 messages
     // (e.g. "You are not authorized to manage attributes.") surface honestly.
     const addMutation = useMutation({
         mutationFn: async (input: { name: string; amount?: string; dateLabel?: string; branch?: string }) =>
-            isBranchCategory
-                ? mutationRequest("POST", "/api/drm/branches", { name: input.name })
-                : mutationRequest("POST", "/api/attributes", {
+            mutationRequest("POST", "/api/attributes", {
                     category: selectedCategory,
                     name: input.name,
                     ...(isPenaltyCategory && input.amount ? { amount: input.amount } : {}),
@@ -130,7 +162,7 @@ export default function AttributesPage() {
                     ...(isAccountTaskCategory && input.branch ? { branch: input.branch } : {}),
                 }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: isBranchCategory ? ["/api/drm/branches"] : ["/api/attributes", selectedCategory] });
+            queryClient.invalidateQueries({ queryKey: ["/api/attributes", selectedCategory] });
             setNewItemName("");
             setNewItemAmount("");
             setNewItemDateLabel("");
@@ -146,10 +178,10 @@ export default function AttributesPage() {
     // Delete mutation
     const deleteMutation = useMutation({
         mutationFn: async (id: string) => {
-            await mutationRequest("DELETE", isBranchCategory ? `/api/drm/branches/${id}` : `/api/attributes/${id}`);
+            await mutationRequest("DELETE", `/api/attributes/${id}`);
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: isBranchCategory ? ["/api/drm/branches"] : ["/api/attributes", selectedCategory] });
+            queryClient.invalidateQueries({ queryKey: ["/api/attributes", selectedCategory] });
             toast({ title: "Success", description: "Item deleted successfully" });
         },
         onError: (error: Error) => {
@@ -187,7 +219,7 @@ export default function AttributesPage() {
             </div>
 
             {/* Main Content */}
-            <div className="flex-1 p-8">
+            <div className="min-w-0 flex-1 p-8">
                 {isServiceCategory ? (
                     <ServiceCatalogTree />
                 ) : isQaCategory ? (
@@ -196,6 +228,20 @@ export default function AttributesPage() {
                     <BuyerDetailTree />
                 ) : isDepartmentCategory ? (
                     <DepartmentsManager />
+                ) : isCompanyBusinessTypeCategory ? (
+                    <CompanyBusinessTypeTree />
+                ) : isAlibabaPackagesCategory ? (
+                    <LegacyAttributeTree
+                        title="Alibaba Packages"
+                        queryKey="/api/attributes/alibaba-packages/tree"
+                        apiPath="/api/attributes/alibaba-packages/tree"
+                    />
+                ) : isPortfolioCategoriesCategory ? (
+                    <LegacyAttributeTree
+                        title="Portfolio Categories"
+                        queryKey="/api/attributes/portfolio-categories/tree"
+                        apiPath="/api/attributes/portfolio-categories/tree"
+                    />
                 ) : (
                     <>
                         <div className="flex items-center justify-between mb-6">
@@ -263,27 +309,27 @@ export default function AttributesPage() {
                             </Dialog>
                         </div>
 
-                        <Card className="border-t-4 border-t-[#008d4c] shadow-sm">
+                        <Card className="w-full border-t-4 border-t-[#008d4c] shadow-sm">
                             <CardHeader className="pb-2">
                                 <CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">{selectedCategory}</CardTitle>
                             </CardHeader>
                             <CardContent className="p-0">
-                                <Table>
+                                <Table className="w-full">
                                     <TableHeader className="bg-slate-50 dark:bg-zinc-900">
                                         <TableRow>
-                                            <TableHead className="font-semibold text-slate-700 w-full dark:text-zinc-400">
-                                                {isPenaltyCategory ? "Name" : "Role Title"}
+                                            <TableHead className="min-w-[200px] font-semibold text-slate-700 dark:text-zinc-400">
+                                                {nameColumnLabel}
                                             </TableHead>
                                             {isAccountTaskCategory && (
-                                                <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Branch</TableHead>
+                                                <TableHead className="w-28 whitespace-nowrap font-semibold text-slate-700 dark:text-zinc-400">Branch</TableHead>
                                             )}
                                             {(isGovtLeaveCategory || isAccountTaskCategory) && (
-                                                <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Date</TableHead>
+                                                <TableHead className="w-32 whitespace-nowrap font-semibold text-slate-700 dark:text-zinc-400">Date</TableHead>
                                             )}
                                             {isPenaltyCategory && (
-                                                <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Amount</TableHead>
+                                                <TableHead className="w-24 whitespace-nowrap font-semibold text-slate-700 dark:text-zinc-400">Amount</TableHead>
                                             )}
-                                            <TableHead className="font-semibold text-slate-700 w-20 text-center dark:text-zinc-400">Action</TableHead>
+                                            <TableHead className="w-20 shrink-0 text-center font-semibold text-slate-700 dark:text-zinc-400">Action</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -300,7 +346,9 @@ export default function AttributesPage() {
                                         ) : (
                                             attributes.map((item: any) => (
                                                 <TableRow key={item.id}>
-                                                    <TableCell className="font-medium text-slate-700 dark:text-zinc-400">{item.name}</TableCell>
+                                                    <TableCell className="font-medium text-slate-700 dark:text-zinc-400 whitespace-normal break-words align-top">
+                                                        {item.name}
+                                                    </TableCell>
                                                     {isAccountTaskCategory && (
                                                         <TableCell className="text-slate-600 dark:text-zinc-400">{item.branch ?? "-"}</TableCell>
                                                     )}
@@ -316,7 +364,10 @@ export default function AttributesPage() {
                                                             size="sm"
                                                             className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
                                                             onClick={() => {
-                                                                if (confirm("Are you sure?")) deleteMutation.mutate(item.id);
+                                                                const msg = item.legacyReadOnly
+                                                                    ? "Delete this legacy row from the archive? This matches old DRM behavior."
+                                                                    : "Are you sure?";
+                                                                if (confirm(msg)) deleteMutation.mutate(item.id);
                                                             }}
                                                         >
                                                             <Trash2 className="w-4 h-4" />

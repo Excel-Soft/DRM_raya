@@ -16,6 +16,11 @@ import { pool } from "../db";
 import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { ActivityLogService } from "./services/activity-service";
 import { safePage, safePageSize } from "../utils/sql-safety";
+import {
+  legacyPromotionBannerUrl,
+  reorderPromotionRank,
+  seedPromotionsFromLegacyIfEmpty,
+} from "../utils/promotion-legacy";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -144,7 +149,7 @@ function mapRow(r: any) {
     title: r.title,
     subTitle: r.sub_title ?? null,
     discount: r.discount ?? null,
-    bannerUrl: r.banner_url ?? null,
+    bannerUrl: legacyPromotionBannerUrl(r.banner_url) ?? r.banner_url ?? null,
     mediaType: r.media_type ?? null,
     targetRole: r.target_role ?? null,
     startDate: r.start_date ?? null,
@@ -159,6 +164,8 @@ function mapRow(r: any) {
     createdByName: r.created_by_name ?? null,
     createdAt: r.created_at ?? null,
     updatedAt: r.updated_at ?? null,
+    legacySourceId: r.legacy_source_id ?? null,
+    sortRank: r.sort_rank ?? null,
   };
 }
 
@@ -173,11 +180,21 @@ async function getRaw(id: string): Promise<{ id: string; createdBy: string | nul
 
 export async function registerPromotionRoutes(app: Express) {
   await ensurePromotionTable();
+  try {
+  await seedPromotionsFromLegacyIfEmpty(pool);
+  } catch (e) {
+    console.error("[promotion] legacy seed skipped:", e);
+  }
 
   // GET /api/drm/promotions — paginated, filtered list (scoped to caller)
   app.get("/api/drm/promotions", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      try {
+        await seedPromotionsFromLegacyIfEmpty(pool);
+      } catch {
+        /* best-effort */
+      }
 
       const page = safePage(req.query.page, 1);
       const pageSize = safePageSize(req.query.pageSize, 25, 100);
@@ -252,7 +269,7 @@ export async function registerPromotionRoutes(app: Express) {
          LEFT JOIN drm.users cu ON cu.id = p.created_by
          LEFT JOIN drm.users au ON au.id = p.approved_by
          ${whereSql}
-         ORDER BY p.created_at DESC
+         ORDER BY p.sort_rank ASC NULLS LAST, p.created_at ASC, p.id ASC
          LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
         listParams,
       );
@@ -299,6 +316,37 @@ export async function registerPromotionRoutes(app: Express) {
     } catch (err) {
       console.error("[promotion] create error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to create promotion" });
+    }
+  });
+
+  // PATCH /api/drm/promotions/:id/rank — reorder list (legacy-style cascade)
+  app.patch("/api/drm/promotions/:id/rank", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const id = String(req.params.id);
+      const raw = await getRaw(id);
+      if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Promotion not found" });
+      if (!(await canMutate(req, raw))) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to edit this promotion" });
+      }
+      const sortRank = Number(req.body?.sortRank);
+      if (!Number.isFinite(sortRank) || sortRank < 1) {
+        return badRequest(res, "sortRank must be a positive integer");
+      }
+      await reorderPromotionRank(pool, id, sortRank);
+      const { rows } = await pool.query(
+        `SELECT p.*, cu.name AS created_by_name, au.name AS approved_by_name
+         FROM drm.promotions p
+         LEFT JOIN drm.users cu ON cu.id = p.created_by
+         LEFT JOIN drm.users au ON au.id = p.approved_by
+         WHERE p.id::text = $1::text`,
+        [id],
+      );
+      await audit(req, "drm.promotion.reorder", id, { sortRank });
+      res.json({ success: true, promotion: rows[0] ? mapRow(rows[0]) : null });
+    } catch (err) {
+      console.error("[promotion] rank error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to update rank" });
     }
   });
 

@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type FollowUpRow = {
   id: string;
@@ -27,6 +28,8 @@ export default function ReportsFollowUp() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [applied, setApplied] = useState<AppliedFilters | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   // Same role-grouping convention as the other Select User pickers built this
   // session (KWA History, Diagnose Report, Target System, BV Report).
@@ -56,11 +59,11 @@ export default function ReportsFollowUp() {
   // conventions across entry points (e.g. "MOBILE" vs this list's "Mobile").
   const CONTACT_METHODS = ["Mobile", "OnSite Visit", "E-mail", "Fax"];
 
-  const { data: reportData, isLoading } = useQuery<{ rows: FollowUpRow[] }>({
-    queryKey: ["/api/reports/follow-up", applied],
+  const { data: reportData, isLoading, isFetching } = useQuery<{ rows: FollowUpRow[]; total?: number }>({
+    queryKey: ["/api/reports/follow-up", applied, page, pageSize],
     queryFn: async () => {
       if (!applied) return { rows: [] };
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
       params.set("userId", applied.userId || "all");
       if (applied.method) params.set("method", applied.method);
       if (applied.startDate) params.set("startDate", applied.startDate);
@@ -70,13 +73,17 @@ export default function ReportsFollowUp() {
       return res.json();
     },
     enabled: !!applied,
+    placeholderData: (prev) => prev,
   });
 
   const handleView = () => {
     setApplied({ userId: selectedUser, method: selectedMethod, startDate, endDate });
+    setPage(1);
   };
 
   const rows = reportData?.rows || [];
+  const total = Number(reportData?.total ?? rows.length);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -89,24 +96,14 @@ export default function ReportsFollowUp() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Select User</label>
-              <Select value={selectedUser} onValueChange={setSelectedUser}>
-                <SelectTrigger className="bg-white dark:bg-zinc-800">
-                  <SelectValue placeholder="Choose..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {groupedUsers.map(({ role, users }) => (
-                    <SelectGroup key={role}>
-                      <SelectLabel>{role}</SelectLabel>
-                      {users.filter((u) => u.fullName || u.username).map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.fullName || u.username}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  ))}
-                </SelectContent>
-              </Select>
+              <RoleGroupedUserSelect
+                users={users}
+                value={selectedUser}
+                onChange={setSelectedUser}
+                extraOptions={[{ value: "all", label: "All" }]}
+                placeholder="Choose..."
+                className="bg-white dark:bg-zinc-800"
+              />
             </div>
 
             <div className="space-y-2">
@@ -213,9 +210,25 @@ export default function ReportsFollowUp() {
             </table>
           </div>
 
-          {applied && rows.length > 0 && (
-            <div className="mt-4 text-sm text-slate-500">
-              Total: <b>{rows.length}</b>
+          {applied && total > 0 && (
+            <div className={`mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500 ${isFetching ? "opacity-60" : ""}`}>
+              <div className="flex items-center gap-2">
+                <span>
+                  Showing <b>{(page - 1) * pageSize + 1}</b> to <b>{Math.min(page * pageSize, total)}</b> of <b>{total.toLocaleString()}</b>
+                </span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                  className="h-8 rounded border border-slate-200 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                >
+                  {[25, 50, 100, 200].map((n) => <option key={n} value={n}>{n} / page</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
+                <span>Page <b>{page}</b> of <b>{totalPages}</b></span>
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Next</Button>
+              </div>
             </div>
           )}
         </CardContent>

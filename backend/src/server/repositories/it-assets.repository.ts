@@ -1,6 +1,6 @@
 import { db, pool } from "../db";
 import { itServers, itDomains, itBackups, itRegistries, itHostingPackages, customers } from "@shared/schema";
-import { eq, desc, sql, isNotNull } from "drizzle-orm";
+import { eq, asc, desc, sql, isNotNull } from "drizzle-orm";
 
 // Patch 4 Stage 4 — canonical "Server Names" status set. The DB column stays
 // `text` for backward-compat; we normalize at the boundary. Legacy values
@@ -99,7 +99,8 @@ async function ensureItSchema() {
 export const itAssetsRepository = {
   async listServers(opts: ListServersOptions = {}) {
     await ensureItSchema();
-    const rows = await db.select().from(itServers).orderBy(desc(itServers.createdAt));
+    // Oldest first, like the old DRM list (imported servers on top, new ones appended).
+    const rows = await db.select().from(itServers).orderBy(asc(itServers.createdAt));
 
     // Used space per server = sum of capacity_mb for hosting packages
     // assigned to domains hosted there (legacy's getServerUseH). A single
@@ -211,11 +212,11 @@ export const itAssetsRepository = {
   },
   async listRegistries() {
     await ensureItSchema();
-    return db.select().from(itRegistries).orderBy(desc(itRegistries.createdAt));
+    return db.select().from(itRegistries).orderBy(asc(itRegistries.createdAt));
   },
   async listHostingPackages() {
     await ensureItSchema();
-    return db.select().from(itHostingPackages).orderBy(desc(itHostingPackages.createdAt));
+    return db.select().from(itHostingPackages).orderBy(asc(itHostingPackages.createdAt));
   },
   async listDomains() {
     await ensureItSchema();

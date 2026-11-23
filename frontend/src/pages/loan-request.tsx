@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest, apiRequestJson } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -6,6 +6,7 @@ import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { LoanRequest } from "@shared/schema";
 import { Trash2, CheckCircle, XCircle } from "lucide-react";
 
@@ -46,6 +47,8 @@ function isManagerialRole(role: string) {
 export default function LoanRequestPage() {
     const { toast } = useToast();
     const [searchQuery, setSearchQuery] = useState("");
+    const [pageSize, setPageSize] = useState(10);
+    const [currentPage, setCurrentPage] = useState(1);
     const userRoleName = getActiveRole();
 
     const isSalesExecutive      = userRoleName === "sales_executive";
@@ -102,6 +105,7 @@ export default function LoanRequestPage() {
             toast({ title: "Loan added successfully" });
             setAddForm({ employee: sessionStorage.getItem("userName") || "", amount: "", instalment: "", detail: "" });
             setActiveTab("list");
+            setCurrentPage(1);
         },
         onError: () => toast({ title: "Failed to add loan", variant: "destructive" }),
     });
@@ -174,22 +178,50 @@ export default function LoanRequestPage() {
     };
 
     // ── Filter ───────────────────────────────────────────────────────────────
-    const filteredRequests = (Array.isArray(loanRequests) ? loanRequests : []).filter((l) => {
-        if (activeTab === "history") {
-            if (appliedStart && l.createdAt) {
-                const d = new Date(appliedStart); d.setHours(0, 0, 0, 0);
-                if (new Date(l.createdAt).getTime() < d.getTime()) return false;
+    const filteredRequests = useMemo(() => {
+        const list = (Array.isArray(loanRequests) ? loanRequests : []).filter((l) => {
+            if (activeTab === "history") {
+                if (appliedStart && l.createdAt) {
+                    const d = new Date(appliedStart); d.setHours(0, 0, 0, 0);
+                    if (new Date(l.createdAt).getTime() < d.getTime()) return false;
+                }
+                if (appliedEnd && l.createdAt) {
+                    const d = new Date(appliedEnd); d.setHours(23, 59, 59, 999);
+                    if (new Date(l.createdAt).getTime() > d.getTime()) return false;
+                }
             }
-            if (appliedEnd && l.createdAt) {
-                const d = new Date(appliedEnd); d.setHours(23, 59, 59, 999);
-                if (new Date(l.createdAt).getTime() > d.getTime()) return false;
-            }
+            if (!searchQuery) return true;
+            const q  = searchQuery.toLowerCase();
+            const nm = ((l as any).userName || "Employee").toLowerCase();
+            return nm.includes(q) || l.detail?.toLowerCase().includes(q) || l.status?.toLowerCase().includes(q);
+        });
+        return [...list].sort((a, b) => {
+            const tb = new Date(b.createdAt ?? 0).getTime();
+            const ta = new Date(a.createdAt ?? 0).getTime();
+            if (tb !== ta) return tb - ta;
+            return String(b.id).localeCompare(String(a.id));
+        });
+    }, [loanRequests, searchQuery, activeTab, appliedStart, appliedEnd]);
+
+    const totalFiltered = filteredRequests.length;
+    const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+    const safePage = Math.min(currentPage, totalPages);
+    const pageStart = totalFiltered === 0 ? 0 : (safePage - 1) * pageSize + 1;
+    const pageEnd = Math.min(safePage * pageSize, totalFiltered);
+    const paginatedRequests = filteredRequests.slice(
+        (safePage - 1) * pageSize,
+        safePage * pageSize,
+    );
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, pageSize, activeTab, appliedStart, appliedEnd]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
         }
-        if (!searchQuery) return true;
-        const q  = searchQuery.toLowerCase();
-        const nm = ((l as any).userName || "Employee").toLowerCase();
-        return nm.includes(q) || l.detail?.toLowerCase().includes(q) || l.status?.toLowerCase().includes(q);
-    });
+    }, [currentPage, totalPages]);
 
     const handleAddSubmit = () => {
         if (!addForm.amount || !addForm.instalment) {
@@ -352,6 +384,25 @@ export default function LoanRequestPage() {
 
                     {/* ── Table controls ── */}
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 gap-4 mt-2">
+                        <div className="flex flex-wrap items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <span className="text-[13px] text-[#495057] dark:text-zinc-400">Show</span>
+                            <Select
+                                value={String(pageSize)}
+                                onValueChange={(val) => setPageSize(Number(val))}
+                            >
+                                <SelectTrigger className="h-8 w-[70px] bg-white text-[13px] text-gray-600 border-gray-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="10">10</SelectItem>
+                                    <SelectItem value="25">25</SelectItem>
+                                    <SelectItem value="50">50</SelectItem>
+                                    <SelectItem value="100">100</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <span className="text-[13px] text-[#495057] dark:text-zinc-400">entries</span>
+                        </div>
                         <div className="flex bg-[#6c757d] rounded-[3px] overflow-hidden shadow-sm h-8">
                             {(["copy", "excel", "csv", "pdf"] as const).map((f, i, arr) => (
                                 <button
@@ -362,6 +413,7 @@ export default function LoanRequestPage() {
                                     {f.charAt(0).toUpperCase() + f.slice(1)}
                                 </button>
                             ))}
+                        </div>
                         </div>
                         <div className="flex items-center gap-2">
                             <span className="text-[13px] text-[#495057] dark:text-zinc-400">Search:</span>
@@ -375,9 +427,9 @@ export default function LoanRequestPage() {
                     </div>
 
                     {/* ── Table ── */}
-                    <div className="w-full border border-gray-200 overflow-hidden mb-4 rounded-t dark:border-zinc-800">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
+                    <div className="w-full border border-gray-200 mb-4 rounded-t dark:border-zinc-800 max-h-[min(70vh,720px)] overflow-auto">
+                        <table className="w-full min-w-[1100px] text-left border-collapse">
+                            <thead className="sticky top-0 z-10">
                                 <tr className="bg-[#f1f5f9] border-b border-gray-200 dark:bg-zinc-800 dark:border-zinc-800">
                                     <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white w-[50px] dark:text-zinc-400">No#</th>
                                     <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white dark:text-zinc-400">Employee</th>
@@ -412,9 +464,9 @@ export default function LoanRequestPage() {
                                         </td>
                                     </tr>
                                 ) : (
-                                    filteredRequests.map((loan, idx) => (
+                                    paginatedRequests.map((loan, idx) => (
                                         <tr key={loan.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                            <td className="px-3 py-3 text-[13px] text-gray-700 dark:text-zinc-400">{idx + 1}</td>
+                                            <td className="px-3 py-3 text-[13px] text-gray-700 dark:text-zinc-400">{(safePage - 1) * pageSize + idx + 1}</td>
                                             <td className="px-3 py-3 text-[13px] text-gray-700 dark:text-zinc-400">{(loan as any).userName || "Employee"}</td>
                                             <td className="px-3 py-3 text-[13px] text-gray-700 dark:text-zinc-400">{loan.amount}</td>
                                             <td className="px-3 py-3 text-[13px] text-gray-700 dark:text-zinc-400">{loan.detail}</td>
@@ -518,8 +570,31 @@ export default function LoanRequestPage() {
                     )}
 
                     {/* ── Footer ── */}
-                    <div className="text-[13px] text-[#495057] mt-4 dark:text-zinc-400">
-                        Showing {filteredRequests.length > 0 ? 1 : 0} to {filteredRequests.length} of {filteredRequests.length} entries
+                    <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center text-[13px] text-[#495057] mt-4 dark:text-zinc-400">
+                        <div>
+                            Showing {pageStart} to {pageEnd} of {totalFiltered} entries
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span>Page {safePage} of {totalPages}</span>
+                            <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-zinc-800">
+                                <button
+                                    type="button"
+                                    disabled={safePage <= 1}
+                                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                    className="px-3 py-1.5 border-r border-gray-200 dark:border-zinc-800 bg-white hover:bg-gray-50 disabled:bg-[#f9f9f9] disabled:text-[#b0b0b0] disabled:cursor-not-allowed dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                                >
+                                    Previous
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={safePage >= totalPages}
+                                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                    className="px-3 py-1.5 bg-white hover:bg-gray-50 disabled:bg-[#f9f9f9] disabled:text-[#b0b0b0] disabled:cursor-not-allowed dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </CardContent>
             </Card>

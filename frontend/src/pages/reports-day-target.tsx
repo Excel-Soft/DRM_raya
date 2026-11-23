@@ -8,6 +8,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 interface DayTargetMethodRow {
   method: string;
@@ -51,17 +53,8 @@ export default function ReportsDayTarget() {
     },
   });
 
-  const groupedUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    users.forEach((u: any) => {
-      const role = u.role || "Unassigned Role";
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(u);
-    });
-    return Object.entries(grouped)
-      .map(([role, users]) => ({ role, users }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [users]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedUsers = useMemo(() => groupUsersByRoleTitle(users), [users]);
 
   const { data: report, isLoading, isError } = useQuery<DayTargetReport>({
     queryKey: ["/api/reports/day-target", fetchParams],
@@ -102,24 +95,14 @@ export default function ReportsDayTarget() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Select User</label>
-              <Select value={selectedUser} onValueChange={setSelectedUser}>
-                <SelectTrigger className="bg-white dark:bg-zinc-800">
-                  <SelectValue placeholder="Choose..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {groupedUsers.map(({ role, users }) => (
-                    <SelectGroup key={role}>
-                      <SelectLabel>{role}</SelectLabel>
-                      {users.filter((u) => u.fullName || u.username).map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.fullName || u.username}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  ))}
-                </SelectContent>
-              </Select>
+              <RoleGroupedUserSelect
+                users={users}
+                value={selectedUser}
+                onChange={setSelectedUser}
+                extraOptions={[{ value: "all", label: "All" }]}
+                placeholder="Choose..."
+                className="bg-white dark:bg-zinc-800"
+              />
             </div>
 
             <div className="flex items-center gap-2 pb-2">

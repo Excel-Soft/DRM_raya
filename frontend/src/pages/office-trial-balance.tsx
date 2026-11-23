@@ -167,15 +167,16 @@ function money(value: string | number | null | undefined): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function HierarchicalView({ dbAccountHeads, rows, applied, totals }: { dbAccountHeads: any[], rows: TrialBalanceRow[], applied: AppliedFilters | null, totals: any }) {
+function HierarchicalView({ dbAccountHeads, rows, applied, totals, periodCounts = {} }: { dbAccountHeads: any[], rows: TrialBalanceRow[], applied: AppliedFilters | null, totals: any, periodCounts?: Record<string, number> }) {
   const includeZeroBalance = applied?.includeZeroBalance || false;
+  // Old-DRM Trial Balance: amount booked on each head within the selected period
+  // (no opening balance carried in), always positive - e.g. expenses booked on an
+  // Owner Equity head (Owner's Withdrawals) show as their amount, not a negative.
   const tbMap = new Map<string, number>();
   for (const r of rows) {
-    const dr = parseFloat(r.closingDebit) || 0;
-    const cr = parseFloat(r.closingCredit) || 0;
-    const isDebitNormal = ["Assets", "Expenses"].includes(r.category || "");
-    const net = isDebitNormal ? dr - cr : cr - dr;
-    tbMap.set(r.accountHeadId, net);
+    const dr = parseFloat(r.periodDebit) || 0;
+    const cr = parseFloat(r.periodCredit) || 0;
+    tbMap.set(r.accountHeadId, Math.abs(dr - cr));
   }
 
   const childrenMap = new Map<string, any[]>();
@@ -191,7 +192,9 @@ function HierarchicalView({ dbAccountHeads, rows, applied, totals }: { dbAccount
     const ownAmount = tbMap.get(node.id) || 0;
     const childrenAmount = children.reduce((sum, c) => sum + c.totalAmount, 0);
     const totalAmount = ownAmount + childrenAmount;
-    return { ...node, children, totalAmount };
+    const ownCount = periodCounts[node.id] || 0;
+    const txnCount = ownCount + children.reduce((sum, c) => sum + c.txnCount, 0);
+    return { ...node, children, totalAmount, txnCount };
   };
 
   const roots = dbAccountHeads
@@ -223,13 +226,16 @@ function HierarchicalView({ dbAccountHeads, rows, applied, totals }: { dbAccount
   // Recalculate totals after pruning
   const recalcTotals = (node: any): number => {
     let childSum = 0;
+    let childCount = 0;
     if (node.children) {
       for (const c of node.children) {
         childSum += recalcTotals(c);
+        childCount += c.txnCount;
       }
     }
     const ownAmount = tbMap.get(node.id) || 0;
     node.totalAmount = ownAmount + childSum;
+    node.txnCount = (periodCounts[node.id] || 0) + childCount;
     return node.totalAmount;
   };
   
@@ -272,13 +278,13 @@ function HierarchicalView({ dbAccountHeads, rows, applied, totals }: { dbAccount
             <>
               <TableCell></TableCell>
               <TableCell></TableCell>
-              <TableCell colSpan={2} className="text-[13px]">{node.code ? `${node.code} - ` : ''}{node.name}</TableCell>
+              <TableCell colSpan={2} className="text-[13px]">{node.name}</TableCell>
             </>
           )}
-          <TableCell className="text-center text-[13px]">-</TableCell>
-          <TableCell className="text-right text-[13px] font-bold">{money(node.totalAmount)}</TableCell>
+          <TableCell className="text-center text-[13px]">{node.txnCount || 0}</TableCell>
+          <TableCell className={`text-right text-[13px] ${level < 2 ? "font-bold" : ""}`}>{money(node.totalAmount)}</TableCell>
         </TableRow>
-        {hasChildren && node.children.map((c: any) => renderNode(c, level + 1))}
+        {hasChildren && level < 2 && node.children.map((c: any) => renderNode(c, level + 1))}
         {level === 0 && (
           <TableRow className="h-[5px] bg-[#f8f9fa] dark:bg-zinc-950 border-none hover:bg-[#f8f9fa]">
             <TableCell colSpan={7} className="p-0"></TableCell>
@@ -288,19 +294,17 @@ function HierarchicalView({ dbAccountHeads, rows, applied, totals }: { dbAccount
     );
   };
 
-  const totalAssetsExp = roots.filter(r => ["Assets", "Expenses"].includes(r.category)).reduce((sum, r) => sum + r.totalAmount, 0);
-  const totalLiabEqRev = roots.filter(r => !["Assets", "Expenses"].includes(r.category)).reduce((sum, r) => sum + r.totalAmount, 0);
-  // In a balanced TB, Assets + Expenses = Liab + Equity + Revenue. 
-  // We will just show the total of Debits (or whichever is bigger) as the Grand Total for visual purposes.
-  const grandTotal = Math.max(totalAssetsExp, totalLiabEqRev);
+  // Old report: Grand Total = every head's amount + transactions in the period.
+  const grandTotal = roots.reduce((sum, r) => sum + r.totalAmount, 0);
+  const grandCount = roots.reduce((sum, r) => sum + (r.txnCount || 0), 0);
 
   return (
     <>
       {roots.map(r => renderNode(r, 0))}
       {totals && (
         <TableRow className="bg-[#e9ecef] dark:bg-zinc-800 font-bold border-t-2 border-slate-300">
-          <TableCell colSpan={5} className="text-right text-[13px] font-bold">Grand Total (Balanced):</TableCell>
-          <TableCell className="text-center text-[13px] font-bold">-</TableCell>
+          <TableCell colSpan={5} className="text-right text-[13px] font-bold">Grand Total:</TableCell>
+          <TableCell className="text-center text-[13px] font-bold">{grandCount}</TableCell>
           <TableCell className="text-right text-[13px] font-bold text-green-700 dark:text-green-400">{money(grandTotal)}</TableCell>
         </TableRow>
       )}
@@ -325,8 +329,12 @@ export default function OfficeTrialBalance() {
     queryKey: ["/api/office/account-heads"],
   });
 
+  // Offices are where expenses were booked (ledger entry branch) - same list as Office Expense.
   const branchOptions = useMemo(() => {
-    const set = new Set<string>();
+    const set = new Set<string>([
+      "Main", "Karachi", "Lahore", "Lahore-Raya", "Lahore-GulBerg", "Sialkot",
+      "Sialkot-Welc", "Sialkot-Webexcels", "Gujranwala branch", "Wazirabad Branch",
+    ]);
     for (const h of dbAccountHeads) {
       if (h?.branch && String(h.branch).trim()) set.add(String(h.branch).trim());
     }
@@ -558,9 +566,10 @@ export default function OfficeTrialBalance() {
                     ) : (
                       <HierarchicalView 
                         dbAccountHeads={dbAccountHeads} 
-                        rows={rows} 
+                        rows={rows}
                         applied={applied}
                         totals={totals}
+                        periodCounts={(report as any)?.periodCounts ?? {}}
                       />
                     )}
                   </TableBody>

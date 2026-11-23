@@ -13,6 +13,7 @@ import {
   PlusCircle, RefreshCw, Filter, ChevronRight,
   Activity, TrendingUp, Clock, CheckCircle2, ArrowRight, Search, Trash2, X
 } from "lucide-react";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type TabType = "waiting" | "delay" | "approved" | "today-leave" | "team-yearly" | "team-balance";
 type SoftwareManagerView = "dashboard" | "pms-setting" | "task-create" | "running-project" | "pending-project" | "project-task" | "project-report" | "dep-project" | "over-time" | "loan-application" | "performance" | "late-coming" | "project-list" | "commission-verification" | "upcoming-project" | "in-progress-project" | "completed-project" | "leave-application";
@@ -4515,19 +4516,15 @@ export default function SoftwareManagerDashboard() {
 
               <div className="space-y-2">
                 <label className="text-[13px] font-semibold text-slate-700 dark:text-zinc-400">Assign To Executive <span className="text-red-500">*</span></label>
-                <div className="relative">
-                  <select
-                    value={assignForm.assigneeId}
-                    onChange={(e) => setAssignForm((prev) => ({ ...prev, assigneeId: e.target.value }))}
-                    className="h-11 w-full rounded-md border border-slate-300 bg-white px-4 pr-10 text-[13px] text-slate-700 outline-none appearance-none dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"
-                  >
-                    <option value="">Select executive...</option>
-                    {softwareExecutives.map((exec: any) => (
-                      <option key={exec.id} value={exec.id}>{exec.name || exec.fullName || exec.email}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                </div>
+                <RoleGroupedUserSelect
+                  grouped={false}
+                  users={softwareExecutives}
+                  value={assignForm.assigneeId}
+                  onChange={(v) => setAssignForm((prev) => ({ ...prev, assigneeId: v }))}
+                  getLabel={(exec: any) => String(exec.name || exec.fullName || exec.email || "")}
+                  placeholder="Select executive..."
+                  className="h-11 text-[13px] text-slate-700 dark:text-zinc-400"
+                />
               </div>
 
               <div className="space-y-2">

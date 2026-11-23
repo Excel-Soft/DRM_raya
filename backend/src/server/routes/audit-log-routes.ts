@@ -78,7 +78,7 @@ async function resolveEntityLabels(
   const projects = idsFor("project");
   if (projects.length) {
     const { rows } = await pool.query(
-      `SELECT id::text as id, name, project_number FROM drm.projects WHERE id::text = ANY($1::text[])`,
+      `SELECT p.id::text as id, p.name, (SELECT mli.legacy_id FROM migration_meta.migration_legacy_ids mli WHERE mli.modern_table = 'projects' AND mli.modern_id = p.id::text LIMIT 1) AS project_number FROM drm.projects p WHERE p.id::text = ANY($1::text[])`,
       [projects],
     );
     for (const row of rows) {

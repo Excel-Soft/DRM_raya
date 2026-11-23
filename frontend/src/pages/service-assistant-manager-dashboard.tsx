@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { DashboardPromotionAside } from "@/components/dashboard-promotion-aside";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequestJson, getAuthHeader } from "@/lib/queryClient";
 import { Users, Tag, Target, ArrowRightLeft, ChevronRight, ChevronLeft, Plus, Play, Check, ChevronsUpDown } from "lucide-react";
@@ -620,12 +621,7 @@ export default function ServiceAssistantManagerDashboard() {
 
                 {/* Right Area: Banner + Target Achieve + Quick Entries + Today Appointment (Span 4) */}
                 <div className="xl:col-span-4 space-y-6">
-                    {/* Banner Image */}
-                    <div className="h-32 w-full rounded-2xl overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.03)] relative">
-                        <img src="https://images.unsplash.com/photo-1497215728101-856f4ea42174?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80" alt="Banner" className="w-full h-full object-cover" />
-                        <ChevronLeft className="absolute left-2 top-1/2 -translate-y-1/2 text-white/70 h-8 w-8 cursor-pointer hover:text-white" />
-                        <ChevronRight className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 h-8 w-8 cursor-pointer hover:text-white" />
-                    </div>
+                    <DashboardPromotionAside titleClassName="text-[15px] text-[#475569] dark:text-zinc-400" />
 
                     {/* Target Achive */}
                     <div className="bg-white backdrop-blur-xl rounded-2xl border border-white/60 shadow-[0_4px_24px_rgba(0,0,0,0.03)] p-6 dark:bg-zinc-900">

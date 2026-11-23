@@ -21,10 +21,12 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
-import { Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Trash2, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
 import type { Donation } from "@shared/schema";
 
 const TITLE_OPTIONS = ["Mr.", "Ms.", "Mrs.", "Dr.", "Prof.", "Engr."];
+// Old-DRM donations have no title (the name already says "Sir ...", "... Wife").
+const NO_TITLE = "__none__";
 
 export default function AccountDonations() {
   const { toast } = useToast();
@@ -46,11 +48,34 @@ export default function AccountDonations() {
     queryKey: ["/api/account/donations"],
   });
 
+  // null = adding a new donation; otherwise the id of the donation being edited
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const emptyForm = { referenceNumber: "", title: "Mr.", personName: "", amount: "", currency: "PKR", comment: "" };
+
+  const openAdd = () => {
+    setEditingId(null);
+    setFormData(emptyForm);
+    setDialogOpen(true);
+  };
+
+  const openEdit = (d: Donation) => {
+    setEditingId(d.id);
+    setFormData({
+      referenceNumber: d.referenceNumber || "",
+      title: d.title || NO_TITLE,
+      personName: d.personName || "",
+      amount: d.amount != null ? String(parseFloat(String(d.amount))) : "",
+      currency: d.currency === "USD" ? "USD" : "PKR",
+      comment: d.comment || "",
+    });
+    setDialogOpen(true);
+  };
+
   const createMutation = useMutation({
     mutationFn: async (data: typeof formData) =>
-      apiRequestJson("POST", "/api/account/donations", {
+      apiRequestJson(editingId ? "PATCH" : "POST", editingId ? `/api/account/donations/${editingId}` : "/api/account/donations", {
         referenceNumber: data.referenceNumber || null,
-        title: data.title,
+        title: data.title === NO_TITLE ? "" : data.title,
         personName: data.personName,
         amount: data.amount,
         currency: data.currency,
@@ -59,11 +84,16 @@ export default function AccountDonations() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/account/donations"] });
       setDialogOpen(false);
-      setFormData({ referenceNumber: "", title: "Mr.", personName: "", amount: "", currency: "PKR", comment: "" });
-      toast({ title: "Success", description: "Donation added successfully" });
+      toast({ title: "Success", description: editingId ? "Donation updated successfully" : "Donation added successfully" });
+      setEditingId(null);
+      setFormData(emptyForm);
     },
     onError: (err: any) =>
-      toast({ title: "Could not add donation", description: err?.message || "Failed to add donation", variant: "destructive" }),
+      toast({
+        title: editingId ? "Could not update donation" : "Could not add donation",
+        description: err?.message || (editingId ? "Failed to update donation" : "Failed to add donation"),
+        variant: "destructive",
+      }),
   });
 
   const deleteMutation = useMutation({
@@ -116,7 +146,7 @@ export default function AccountDonations() {
         {/* ─── Add Donation Button ─────────────────────────────── */}
         <div className="mb-4">
           <Button
-            onClick={() => setDialogOpen(true)}
+            onClick={openAdd}
             className="bg-green-600 hover:bg-green-700 text-white h-9 px-5 text-sm font-medium rounded"
             data-testid="button-add-donation"
           >
@@ -205,6 +235,15 @@ export default function AccountDonations() {
                             : "—"}
                         </td>
                         <td className="px-4 py-2">
+                          <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => openEdit(donation)}
+                            className="w-6 h-6 bg-blue-500 hover:bg-blue-600 text-white rounded flex items-center justify-center transition-colors"
+                            data-testid={`button-edit-${donation.id}`}
+                            title="Edit"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
                           <button
                             onClick={() => deleteMutation.mutate(donation.id)}
                             disabled={deleteMutation.isPending}
@@ -214,6 +253,7 @@ export default function AccountDonations() {
                           >
                             <Trash2 className="h-3 w-3" />
                           </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -260,7 +300,7 @@ export default function AccountDonations() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold">Add Donation</DialogTitle>
+            <DialogTitle className="text-base font-bold">{editingId ? "Edit Donation" : "Add Donation"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
@@ -271,6 +311,7 @@ export default function AccountDonations() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={NO_TITLE}>None</SelectItem>
                     {TITLE_OPTIONS.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -342,7 +383,7 @@ export default function AccountDonations() {
                 Cancel
               </Button>
               <Button type="submit" disabled={createMutation.isPending} className="bg-green-600 hover:bg-green-700 text-white h-9 text-sm" data-testid="button-submit">
-                {createMutation.isPending ? "Submitting..." : "Submit"}
+                {createMutation.isPending ? "Saving..." : editingId ? "Update" : "Submit"}
               </Button>
             </DialogFooter>
           </form>

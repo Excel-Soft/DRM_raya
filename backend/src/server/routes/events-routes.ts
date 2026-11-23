@@ -216,12 +216,27 @@ function ensureEventsTablesOnce(): Promise<void> {
   return eventsTablesReady;
 }
 
+// pg parses DATE columns into a JS Date at server-local midnight, which
+// JSON-serialises as the previous day in UTC (e.g. 2026-11-17 on a CET server
+// -> "2026-11-16T23:00:00.000Z"). Clients slicing the first 10 chars then see
+// the wrong day. Always return a plain "YYYY-MM-DD" for date-only columns.
+function toDateOnly(v: any): string | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return null;
+    const mm = String(v.getMonth() + 1).padStart(2, "0");
+    const dd = String(v.getDate()).padStart(2, "0");
+    return `${v.getFullYear()}-${mm}-${dd}`;
+  }
+  return String(v).slice(0, 10);
+}
+
 function mapEvent(r: any) {
   return {
     id: r.id,
     name: r.name,
     eventType: r.event_type ?? null,
-    eventDate: r.event_date ?? null,
+    eventDate: toDateOnly(r.event_date),
     startTime: r.start_time ?? null,
     endTime: r.end_time ?? null,
     venue: r.venue ?? null,
@@ -238,6 +253,7 @@ function mapEvent(r: any) {
     createdAt: r.created_at ?? null,
     updatedAt: r.updated_at ?? null,
     speakers: Array.isArray(r.speakers) ? r.speakers : [],
+    isLegacy: r.is_legacy === true,
   };
 }
 
@@ -288,7 +304,7 @@ function mapMenuItem(r: any) {
     assignedUserId: r.assigned_user_id ?? null,
     assignedUserName: r.assigned_user_name ?? null,
     assignedRole: r.assigned_role ?? null,
-    scheduledDate: r.scheduled_date ?? null,
+    scheduledDate: toDateOnly(r.scheduled_date),
     scheduledTime: r.scheduled_time ?? null,
     status: r.status,
     notes: r.notes ?? null,
@@ -306,13 +322,53 @@ function mapDuty(r: any) {
     assignedUserId: r.assigned_user_id ?? null,
     assignedUserName: r.assigned_user_name ?? null,
     assignedRole: r.assigned_role ?? null,
-    scheduledDate: r.scheduled_date ?? null,
+    scheduledDate: toDateOnly(r.scheduled_date),
     scheduledTime: r.scheduled_time ?? null,
     status: r.status,
     notes: r.notes ?? null,
     createdBy: r.created_by ?? null,
     createdAt: r.created_at ?? null,
     updatedAt: r.updated_at ?? null,
+  };
+}
+
+// Old-DRM duties (legacy_archive.webxl_event_duty), read-only. duty_person /
+// duty_create_person are legacy webxl_user ids -> names via the archive.
+// Optional $1 = legacy event id to scope to one event.
+function legacyDutiesSql(scoped: boolean): string {
+  return `
+    SELECT ld.id, ld.event_name AS legacy_event_id, ld.duty, ld.detail, ld.create_at,
+           pu.name AS person_name, le.name AS event_name, le.event_date::date AS event_date
+    FROM legacy_archive.webxl_event_duty ld
+    LEFT JOIN legacy_archive.webxl_user pu ON pu.user_id = ld.duty_person
+    LEFT JOIN legacy_archive.webxl_event le ON le.id = ld.event_name
+    WHERE NOT EXISTS (
+      SELECT 1 FROM migration_meta.migration_legacy_ids m
+      JOIN drm.event_duties md ON md.id::text = m.modern_id
+      WHERE m.legacy_table = 'webxl_event_duty' AND m.legacy_id = ld.id
+    )
+    ${scoped ? "AND ld.event_name = $1" : ""}
+    ORDER BY ld.id::int DESC`;
+}
+
+function mapLegacyDuty(r: any) {
+  return {
+    id: `legacy-${r.id}`,
+    eventId: r.legacy_event_id ? `legacy-${r.legacy_event_id}` : null,
+    duty: r.duty ?? null,
+    assignedUserId: null,
+    assignedUserName: r.person_name ?? null,
+    assignedRole: null,
+    scheduledDate: null,
+    scheduledTime: null,
+    status: null,
+    notes: r.detail || null,
+    createdBy: null,
+    createdAt: r.create_at ? String(r.create_at).replace(" ", "T") : null,
+    updatedAt: r.create_at ? String(r.create_at).replace(" ", "T") : null,
+    eventName: r.event_name ?? null,
+    eventDate: toDateOnly(r.event_date),
+    isLegacy: true,
   };
 }
 
@@ -331,6 +387,67 @@ const SPEAKERS_SUBQUERY = `
     ) ORDER BY s.created_at)
     FROM drm.event_speakers s WHERE s.event_id = e.id
   ), '[]'::json) AS speakers
+`;
+
+// Legacy (old DRM, webxl_event / webxl_event_speaker in legacy_archive) events,
+// shaped like drm.events rows so they can be UNIONed into the Add Event list.
+// Read-only: ids are "legacy-<id>" and is_legacy = true. Mirrors legacy
+// get_event list (func.php). Rows already migrated into drm.events (recorded in
+// migration_meta.migration_legacy_ids) are skipped to avoid duplicates.
+const LEGACY_EVENTS_SELECT = `
+  SELECT
+    'legacy-' || le.id AS id,
+    le.name,
+    COALESCE(att.name, le.event_type) AS event_type,
+    le.event_date::date AS event_date,
+    NULLIF(left(le.start_time, 5), '') AS start_time,
+    NULLIF(left(le.end_time, 5), '') AS end_time,
+    NULLIF(btrim(le.venu, E' \\t\\r\\n'), '') AS venue,
+    CASE WHEN btrim(le.amount) ~ '^[0-9]+(\\.[0-9]+)?$' THEN btrim(le.amount)::numeric ELSE 0 END AS amount,
+    CASE WHEN btrim(le.attending) ~ '^[0-9]+$' THEN btrim(le.attending)::int ELSE 0 END AS attendee_count,
+    CASE WHEN btrim(le.map) ~* '^https?://' THEN btrim(le.map) ELSE NULL END AS map_url,
+    NULL::text AS location,
+    NULL::text AS status,
+    NULLIF(le.detail, '') AS notes,
+    NULL::uuid AS created_by,
+    NULL::uuid AS updated_by,
+    le.create_at::timestamptz AS created_at,
+    le.create_at::timestamptz AS updated_at,
+    NULL::timestamptz AS deleted_at,
+    true AS is_legacy,
+    COALESCE((
+      SELECT json_agg(json_build_object(
+        'id', 'legacy-' || ls.id,
+        'eventId', 'legacy-' || le.id,
+        'speakerName', ls.speaker,
+        'topic', ls.topic,
+        'detail', ls.detail,
+        'startTime', NULLIF(left(ls.start_time, 5), ''),
+        'endTime', NULLIF(left(ls.end_time, 5), ''),
+        'createdAt', ls.create_at,
+        'updatedAt', ls.create_at
+      ) ORDER BY ls.id::int)
+      FROM legacy_archive.webxl_event_speaker ls WHERE ls.event_name = le.id
+    ), '[]'::json) AS speakers
+  FROM legacy_archive.webxl_event le
+  LEFT JOIN legacy_archive.webxl_attribute att ON att.id = le.event_type AND att."refId" = '9'
+  WHERE le.event_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND le.event_date NOT LIKE '0000%'
+    AND NOT EXISTS (
+      SELECT 1 FROM migration_meta.migration_legacy_ids m
+      JOIN drm.events me ON me.id::text = m.modern_id
+      WHERE m.legacy_table = 'webxl_event' AND m.legacy_id = le.id
+    )
+`;
+
+// drm.events rows with the same column set as LEGACY_EVENTS_SELECT.
+const MODERN_EVENTS_SELECT = `
+  SELECT
+    e.id::text AS id, e.name, e.event_type, e.event_date, e.start_time, e.end_time,
+    e.venue, e.amount, e.attendee_count, e.map_url, e.location, e.status, e.notes,
+    e.created_by, e.updated_by, e.created_at, e.updated_at, e.deleted_at,
+    false AS is_legacy,
+    ${SPEAKERS_SUBQUERY}
+  FROM drm.events e
 `;
 
 // Per-event aggregate counts for the report row, from the real child tables.
@@ -632,8 +749,16 @@ export async function registerEventsRoutes(app: Express) {
 
       const whereSql = `WHERE ${where.join(" AND ")}`;
 
+      // ?includeLegacy=1 (Add Event page only) also lists read-only old-DRM
+      // events from legacy_archive. Default stays drm.events only so pickers
+      // (menu, duty planner, reports) never offer non-UUID legacy ids.
+      const includeLegacy = ["1", "true"].includes(String(req.query.includeLegacy ?? "").toLowerCase());
+      const fromSql = includeLegacy
+        ? `(${MODERN_EVENTS_SELECT} UNION ALL ${LEGACY_EVENTS_SELECT}) e`
+        : `drm.events e`;
+
       const countResult = await pool.query(
-        `SELECT count(*)::int AS total FROM drm.events e ${whereSql}`,
+        `SELECT count(*)::int AS total FROM ${fromSql} ${whereSql}`,
         params,
       );
       const total = countResult.rows[0]?.total ?? 0;
@@ -642,8 +767,8 @@ export async function registerEventsRoutes(app: Express) {
       listParams.push(pageSize);
       listParams.push(offset);
       const { rows } = await pool.query(
-        `SELECT e.*, cu.name AS created_by_name, uu.name AS updated_by_name, ${SPEAKERS_SUBQUERY}
-         FROM drm.events e
+        `SELECT e.*, cu.name AS created_by_name, uu.name AS updated_by_name${includeLegacy ? "" : `, ${SPEAKERS_SUBQUERY}`}
+         FROM ${fromSql}
          LEFT JOIN drm.users cu ON cu.id = e.created_by
          LEFT JOIN drm.users uu ON uu.id = e.updated_by
          ${whereSql}
@@ -753,20 +878,91 @@ export async function registerEventsRoutes(app: Express) {
   app.get("/api/events/menu-items", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      // ?includeLegacy=1 (Add Event Menu page): ALL menu items, newest first —
+      // legacy allMarketingsEventsCost() in func.php has no date filter — plus
+      // read-only old-DRM rows from legacy_archive.webxl_event_menu.
+      const includeLegacy = ["1", "true"].includes(String(req.query.includeLegacy ?? "").toLowerCase());
       const { rows } = await pool.query(
         `SELECT mi.*, au.name AS assigned_user_name, e.name AS event_name, e.event_date
          FROM drm.event_menu_items mi
          JOIN drm.events e ON e.id = mi.event_id
          LEFT JOIN drm.users au ON au.id = mi.assigned_user_id
-         WHERE e.deleted_at IS NULL AND e.event_date >= CURRENT_DATE
+         WHERE e.deleted_at IS NULL ${includeLegacy ? "" : "AND e.event_date >= CURRENT_DATE"}
          ORDER BY mi.created_at DESC`,
       );
-      const data = rows.map((r) => ({ ...mapMenuItem(r), eventName: r.event_name, eventDate: r.event_date }));
+      const data: any[] = rows.map((r) => ({ ...mapMenuItem(r), eventName: r.event_name, eventDate: toDateOnly(r.event_date), isLegacy: false }));
+      if (includeLegacy) {
+        const legacy = await pool.query(
+          `SELECT lm.id, lm.item, lm.detail, lm.create_at, le.name AS event_name, le.event_date,
+                  CASE WHEN btrim(lm.amount) ~ '^[0-9]+(\\.[0-9]+)?$' THEN btrim(lm.amount)::numeric ELSE 0 END AS amount
+           FROM legacy_archive.webxl_event_menu lm
+           LEFT JOIN legacy_archive.webxl_event le ON le.id = lm.event_name
+           WHERE NOT EXISTS (
+             SELECT 1 FROM migration_meta.migration_legacy_ids m
+             JOIN drm.event_menu_items mm ON mm.id::text = m.modern_id
+             WHERE m.legacy_table = 'webxl_event_menu' AND m.legacy_id = lm.id
+           )
+           ORDER BY lm.id::int DESC`,
+        );
+        for (const r of legacy.rows) {
+          data.push({
+            id: `legacy-${r.id}`,
+            eventId: null,
+            itemName: r.item ?? null,
+            amount: Number(r.amount) || 0,
+            assignedUserId: null,
+            assignedUserName: null,
+            assignedRole: null,
+            scheduledDate: null,
+            scheduledTime: null,
+            status: null,
+            notes: r.detail || null,
+            createdBy: null,
+            createdAt: r.create_at ? String(r.create_at).replace(" ", "T") : null,
+            updatedAt: r.create_at ? String(r.create_at).replace(" ", "T") : null,
+            eventName: r.event_name ?? null,
+            eventDate: toDateOnly(r.event_date),
+            isLegacy: true,
+          });
+        }
+      }
       const totalAmount = data.reduce((sum, r) => sum + r.amount, 0);
       res.json({ data, total: data.length, totalAmount });
     } catch (err) {
       console.error("[events] global menu-items list error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to fetch menu items" });
+    }
+  });
+
+  // GET /api/events/duties — ALL duties across events, newest first, with the
+  // event name. ?includeLegacy=1 also returns read-only old-DRM duties.
+  // Registered BEFORE /api/events/:id so "duties" is never captured as an :id.
+  app.get("/api/events/duties", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const includeLegacy = ["1", "true"].includes(String(req.query.includeLegacy ?? "").toLowerCase());
+      const { rows } = await pool.query(
+        `SELECT d.*, au.name AS assigned_user_name, e.name AS event_name, e.event_date
+         FROM drm.event_duties d
+         JOIN drm.events e ON e.id = d.event_id
+         LEFT JOIN drm.users au ON au.id = d.assigned_user_id
+         WHERE e.deleted_at IS NULL
+         ORDER BY d.created_at DESC`,
+      );
+      const data: any[] = rows.map((r) => ({
+        ...mapDuty(r),
+        eventName: r.event_name,
+        eventDate: toDateOnly(r.event_date),
+        isLegacy: false,
+      }));
+      if (includeLegacy) {
+        const legacy = await pool.query(legacyDutiesSql(false));
+        data.push(...legacy.rows.map(mapLegacyDuty));
+      }
+      res.json({ data, total: data.length, page: 1, pageSize: data.length });
+    } catch (err) {
+      console.error("[events] global duties list error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to fetch duties" });
     }
   });
 
@@ -1201,6 +1397,12 @@ export async function registerEventsRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const eventId = String(req.params.id);
+      const legacyMatch = /^legacy-(\d+)$/.exec(eventId);
+      if (legacyMatch) {
+        const legacy = await pool.query(legacyDutiesSql(true), [legacyMatch[1]]);
+        const data = legacy.rows.map(mapLegacyDuty);
+        return res.json({ data, total: data.length, page: 1, pageSize: data.length });
+      }
       const { rows } = await pool.query(
         `SELECT d.*, au.name AS assigned_user_name
          FROM drm.event_duties d

@@ -31,7 +31,8 @@ export const ROLES = {
   PRODUCT_POSTING_MANAGER: "product_posting_manager",
   QA_MANAGER: "qa_manager",
   VERIFICATION_MANAGER: "verification_manager",
-  POSTING_EXECUTIVE: "posting_executive",
+  /** @deprecated Same as PRODUCT_POSTING_EXECUTIVE — kept for legacy parses only. */
+  POSTING_EXECUTIVE: "product_posting_executive",
   DD_MANAGER: "dd_manager",
   DD_EXECUTIVE: "dd_executive",
   IT_MANAGER: "it_manager",

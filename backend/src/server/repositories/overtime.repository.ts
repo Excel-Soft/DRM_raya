@@ -1,6 +1,28 @@
-import { db, pool } from "../db";
-import { overtimeRecords, users, type OvertimeRecord, type InsertOvertimeRecord } from "@shared/schema";
-import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
+import { pool } from "../db";
+import type { InsertOvertimeRecord, OvertimeRecord } from "@shared/schema";
+
+const OVERTIME_SELECT = `
+  o.id,
+  o.user_id as "userId",
+  o.task_title as "taskTitle",
+  o.time_spent as "timeSpent",
+  o.task_details as "taskDetails",
+  o.date,
+  o.status,
+  o.reviewed_by_user_id as "reviewedByUserId",
+  o.reviewed_at as "reviewedAt",
+  o.rejection_reason as "rejectionReason",
+  o.created_at as "createdAt",
+  o.updated_at as "updatedAt",
+  u.full_name as "userName",
+  rv.full_name as "reviewerName"
+`;
+
+const OVERTIME_FROM = `
+  from drm.overtime_records o
+  left join drm.users u on u.id = o.user_id
+  left join drm.users rv on rv.id = o.reviewed_by_user_id
+`;
 
 export type OvertimeRecordWithUser = OvertimeRecord & {
   userName?: string | null;
@@ -18,186 +40,121 @@ export type OvertimeStats = {
 export class OvertimeRepository {
   async findByUserId(userId: string): Promise<OvertimeRecordWithUser[]> {
     const res = await pool.query(
-      `select o.id, o.user_id, o.date, o.hours, o.status, o.reason, o.approved_by,
-              o.created_at, o.updated_at, u.full_name
-         from drm.overtime_records o
-         left join users u on u.id = o.user_id
+      `select ${OVERTIME_SELECT}
+         ${OVERTIME_FROM}
         where o.user_id = $1
-        order by o.created_at desc`,
+        order by o.created_at desc, o.id desc`,
       [userId],
     );
-    return res.rows.map((r: any) => ({
-      id: r.id,
-      userId: r.user_id,
-      taskTitle: r.reason ?? "Overtime",
-      timeSpent: Number(r.hours ?? 0),
-      taskDetails: r.reason ?? null,
-      date: r.date,
-      status: r.status,
-      reviewedByUserId: r.approved_by,
-      reviewedAt: null,
-      rejectionReason: null,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      userName: r.full_name,
-    })) as any;
+    return res.rows as OvertimeRecordWithUser[];
   }
 
   async findAll(): Promise<OvertimeRecordWithUser[]> {
     const res = await pool.query(
-      `select o.id, o.user_id, o.date, o.hours, o.status, o.reason, o.approved_by,
-              o.created_at, o.updated_at, u.full_name
-         from drm.overtime_records o
-         left join users u on u.id = o.user_id
-        order by o.created_at desc`
+      `select ${OVERTIME_SELECT}
+         ${OVERTIME_FROM}
+        order by o.created_at desc, o.id desc`,
     );
-    return res.rows.map((r: any) => ({
-      id: r.id,
-      userId: r.user_id,
-      taskTitle: r.reason ?? "Overtime",
-      timeSpent: Number(r.hours ?? 0),
-      taskDetails: r.reason ?? null,
-      date: r.date,
-      status: r.status,
-      reviewedByUserId: r.approved_by,
-      reviewedAt: null,
-      rejectionReason: null,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      userName: r.full_name,
-    })) as any;
+    return res.rows as OvertimeRecordWithUser[];
   }
 
   async findByUserIdAndDateRange(
     userId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
   ): Promise<OvertimeRecordWithUser[]> {
     const res = await pool.query(
-      `select o.id, o.user_id, o.date, o.hours, o.status, o.reason, o.approved_by,
-              o.created_at, o.updated_at, u.full_name
-         from drm.overtime_records o
-         left join users u on u.id = o.user_id
+      `select ${OVERTIME_SELECT}
+         ${OVERTIME_FROM}
         where o.user_id = $1
-          and o.date >= $2 and o.date <= $3
-        order by o.created_at desc`,
+          and o.date >= $2
+          and o.date <= $3
+        order by o.created_at desc, o.id desc`,
       [userId, startDate, endDate],
     );
-    return res.rows.map((r: any) => ({
-      id: r.id,
-      userId: r.user_id,
-      taskTitle: r.reason ?? "Overtime",
-      timeSpent: Number(r.hours ?? 0),
-      taskDetails: r.reason ?? null,
-      date: r.date,
-      status: r.status,
-      reviewedByUserId: r.approved_by,
-      reviewedAt: null,
-      rejectionReason: null,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      userName: r.full_name,
-    })) as any;
+    return res.rows as OvertimeRecordWithUser[];
   }
 
   async findById(id: string): Promise<OvertimeRecordWithUser | null> {
     const res = await pool.query(
-      `select o.id, o.user_id, o.date, o.hours, o.status, o.reason, o.approved_by,
-              o.created_at, o.updated_at, u.full_name
-         from drm.overtime_records o
-         left join users u on u.id = o.user_id
+      `select ${OVERTIME_SELECT}
+         ${OVERTIME_FROM}
         where o.id = $1
         limit 1`,
       [id],
     );
-    const r = res.rows[0];
-    if (!r) return null;
-    return {
-      id: r.id,
-      userId: r.user_id,
-      taskTitle: r.reason ?? "Overtime",
-      timeSpent: Number(r.hours ?? 0),
-      taskDetails: r.reason ?? null,
-      date: r.date,
-      status: r.status,
-      reviewedByUserId: r.approved_by,
-      reviewedAt: null,
-      rejectionReason: null,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      userName: r.full_name,
-    } as any;
+    return (res.rows[0] as OvertimeRecordWithUser) || null;
   }
 
-  async create(data: InsertOvertimeRecord): Promise<OvertimeRecord> {
+  async create(data: InsertOvertimeRecord): Promise<OvertimeRecordWithUser> {
     const res = await pool.query(
-      `insert into drm.overtime_records (user_id, date, hours, status, reason, approved_by, created_at, updated_at)
-       values ($1, $2, $3, 'Pending', $4, null, now(), now())
-       returning id, user_id, date, hours, status, reason, approved_by, created_at, updated_at`,
-      [data.userId, data.date || new Date(), data.timeSpent ?? 0, data.taskTitle ?? data.taskDetails ?? "Overtime"],
+      `insert into drm.overtime_records (
+          user_id, task_title, time_spent, task_details, date, status, created_at, updated_at
+       )
+       values ($1, $2, $3, $4, coalesce($5, now()), 'Pending', now(), now())
+       returning id`,
+      [
+        data.userId,
+        data.taskTitle,
+        data.timeSpent,
+        data.taskDetails,
+        data.date ?? new Date(),
+      ],
     );
-    const r = res.rows[0];
-    return {
-      id: r.id,
-      userId: r.user_id,
-      date: r.date,
-      timeSpent: Number(r.hours ?? 0),
-      taskTitle: r.reason ?? "Overtime",
-      taskDetails: r.reason ?? null,
-      status: r.status,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-    } as any;
+    const created = await this.findById(res.rows[0].id);
+    if (!created) {
+      throw new Error("Failed to load created overtime record");
+    }
+    return created;
   }
 
-  async cancel(id: string, userId: string): Promise<OvertimeRecord | null> {
+  async cancel(id: string, userId: string): Promise<OvertimeRecordWithUser | null> {
     const existing = await this.findById(id);
     if (!existing || existing.userId !== userId || existing.status !== "Pending") {
       return null;
     }
 
-    const res = await pool.query(
-      `delete from drm.overtime_records where id = $1 returning id, user_id, date, hours, status, reason, approved_by, created_at, updated_at`,
-      [id],
-    );
-    return res.rows[0] as any;
+    await pool.query(`delete from drm.overtime_records where id = $1`, [id]);
+    return existing;
   }
 
-  async approve(id: string, reviewerUserId: string): Promise<OvertimeRecord | null> {
+  async approve(id: string, reviewerUserId: string): Promise<OvertimeRecordWithUser | null> {
     const existing = await this.findById(id);
     if (!existing || existing.status !== "Pending") {
       return null;
     }
 
-    const res = await pool.query(
+    await pool.query(
       `update drm.overtime_records
-          set status='Approved',
-              approved_by = $2,
+          set status = 'Approved',
+              reviewed_by_user_id = $2,
+              reviewed_at = now(),
               updated_at = now()
-        where id = $1
-        returning id, user_id, date, hours, status, reason, approved_by, created_at, updated_at`,
+        where id = $1`,
       [id, reviewerUserId],
     );
-    return res.rows[0] as any;
+
+    return this.findById(id);
   }
 
-  async reject(id: string, reviewerUserId: string, reason?: string): Promise<OvertimeRecord | null> {
+  async reject(id: string, reviewerUserId: string, reason?: string): Promise<OvertimeRecordWithUser | null> {
     const existing = await this.findById(id);
     if (!existing || existing.status !== "Pending") {
       return null;
     }
 
-    const res = await pool.query(
+    await pool.query(
       `update drm.overtime_records
-          set status='Rejected',
-              approved_by = $2,
-              reason = $3,
+          set status = 'Rejected',
+              reviewed_by_user_id = $2,
+              rejection_reason = $3,
+              reviewed_at = now(),
               updated_at = now()
-        where id = $1
-        returning id, user_id, date, hours, status, reason, approved_by, created_at, updated_at`,
+        where id = $1`,
       [id, reviewerUserId, reason ?? null],
     );
-    return res.rows[0] as any;
+
+    return this.findById(id);
   }
 
   async getStats(userId: string): Promise<OvertimeStats> {
@@ -218,7 +175,7 @@ export class OvertimeRepository {
           break;
         case "Approved":
           stats.approved++;
-          stats.totalMinutesApproved += record.timeSpent;
+          stats.totalMinutesApproved += Number(record.timeSpent ?? 0);
           break;
         case "Rejected":
           stats.rejected++;
@@ -234,11 +191,12 @@ export class OvertimeRepository {
     const endDate = new Date(year, month + 1, 0);
 
     const res = await pool.query(
-      `select coalesce(sum(hours),0)::int as mins
+      `select coalesce(sum(time_spent), 0)::int as mins
          from drm.overtime_records
         where user_id = $1
           and status = 'Approved'
-          and date >= $2 and date <= $3`,
+          and date >= $2
+          and date <= $3`,
       [userId, startDate, endDate],
     );
     return Number(res.rows[0]?.mins ?? 0);
@@ -246,4 +204,3 @@ export class OvertimeRepository {
 }
 
 export const overtimeRepository = new OvertimeRepository();
-

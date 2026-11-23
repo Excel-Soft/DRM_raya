@@ -410,13 +410,59 @@ function FollowupListView({
         createdDate: { label: "Created Date", visible: true },
     });
 
-    const { data: followupsRes } = useQuery({ queryKey: ["/api/dashboard/followups?pageSize=50&pool=private"] });
-    const followupsData = (followupsRes as any)?.data?.items || [];
+    const { data: tracingSummary } = useQuery<Record<string, number>>({
+        queryKey: ["/api/sales/tracing/summary", "private"],
+        queryFn: async () => {
+            const response = await apiRequest("GET", "/api/sales/tracing/summary?pool=private");
+            return response.json();
+        },
+    });
 
-    const getCount = (serviceName: string) =>
-        followupsData.filter((r: any) => (r.serviceType || "").toLowerCase() === serviceName.toLowerCase()).length;
+    const tracingTabToMainService: Record<string, string> = {
+        "ALIBABA MEMBERSHIP": "Alibaba Membership",
+        "ALIBABA SERVICES": "Alibaba Services",
+        "DESIGN DEVELOPMENT": "Design Development",
+        "DOMAIN HOSTING": "Domain Hosting",
+        "AI SERVICES": "AI Services",
+    };
+    const tracingServiceKeyMap: Record<string, string> = {
+        "ALIBABA MEMBERSHIP": "Alibaba_Membership",
+        "ALIBABA SERVICES": "Alibaba_Services",
+        "DESIGN DEVELOPMENT": "Design_Development",
+        "DOMAIN HOSTING": "Domain_Hosting",
+        "AI SERVICES": "AI_Services",
+    };
 
-    const byService = followupsData.filter((r: any) => (r.serviceType || "").toLowerCase() === activeTracingTab.toLowerCase());
+    const { data: followupDetailsRes } = useQuery({
+        queryKey: [
+            "/api/sales/tracing/followup-details",
+            activeTracingTab,
+            activeGrade,
+            page,
+        ],
+        queryFn: async () => {
+            const mainService = tracingTabToMainService[activeTracingTab] || activeTracingTab;
+            const params = new URLSearchParams({
+                pool: "private",
+                page: String(page),
+                pageSize: String(pageSize),
+                mainService,
+            });
+            if (activeGrade !== "All") params.set("grade", activeGrade);
+            const response = await apiRequest("GET", `/api/sales/tracing/followup-details?${params.toString()}`);
+            return response.json();
+        },
+    });
+
+    const followupsData = followupDetailsRes?.items || [];
+    const followupTotal = followupDetailsRes?.total ?? followupsData.length;
+
+    const getCount = (serviceName: string) => {
+        const key = tracingServiceKeyMap[serviceName.toUpperCase()];
+        return key ? (tracingSummary?.[key] ?? 0) : 0;
+    };
+
+    const byService = followupsData;
 
     const uniqueSubtypes = Array.from(new Set(
         byService
@@ -474,8 +520,8 @@ function FollowupListView({
             return Object.values(row).some((v) => String(v ?? "").toLowerCase().includes(needle));
         });
 
-    const totalPages = Math.max(1, Math.ceil(displayData.length / pageSize));
-    const pageData = displayData.slice((page - 1) * pageSize, page * pageSize);
+    const totalPages = Math.max(1, Math.ceil(followupTotal / pageSize));
+    const pageData = displayData;
 
     const handleTabClick = (tab: string) => {
         setActiveTracingTab(tab);

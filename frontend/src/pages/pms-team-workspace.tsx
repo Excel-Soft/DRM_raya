@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, X, Search, SlidersHorizontal, ChevronLeft, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { filterDdExecutiveUsers } from "@/lib/dd-executive-users";
 
 interface AssignmentMember {
   id: string;
@@ -20,6 +21,8 @@ interface AssignmentItem {
   startDate: string | null;
   dueDate: string | null;
   owner: { id: string; name: string | null; email: string | null } | null;
+  workspaceTitle?: string | null;
+  legacyWorkspace?: boolean;
   members: AssignmentMember[];
   myRole: string | null;
   taskCounts: {
@@ -59,13 +62,12 @@ function useDDExecutives() {
     queryKey: ["dd-executives-only-v2"],
     queryFn: async () => {
       const data = await apiRequestJson<any>("GET", "/api/users?role=dd_executive");
-      const users: any[] = data?.users || [];
-
-      // Use rawRole (exact DB value) — NOT the normalized role which maps all *_executive to dd_executive
-      const ddOnly = users.filter((u: any) =>
-        u.isActive !== false &&
-        (u.rawRole === "dd_executive" || u.rawRole === "d_d_executive")
-      );
+      let users: any[] = filterDdExecutiveUsers(data?.users);
+      if (users.length === 0) {
+        const all = await apiRequestJson<any>("GET", "/api/users?role=all");
+        users = filterDdExecutiveUsers(all?.users);
+      }
+      const ddOnly = users;
 
       const options: { label: string; isHeader?: boolean }[] = [
         { label: "Tasker", isHeader: true },
@@ -345,10 +347,14 @@ export default function PmsTeamWorkspace() {
     const map = new Map<string, WorkspaceGroup>();
     for (const item of items) {
       const ownerName = item.owner?.name?.trim() || "Unassigned";
-      if (!map.has(ownerName)) {
-        map.set(ownerName, { id: ownerName, name: `${ownerName} Tasks`, subItems: [] });
+      const groupKey = item.workspaceTitle?.trim() || ownerName;
+      const groupLabel =
+        item.workspaceTitle?.trim() ||
+        (ownerName.endsWith(" Tasks") ? ownerName : `${ownerName} Tasks`);
+      if (!map.has(groupKey)) {
+        map.set(groupKey, { id: groupKey, name: groupLabel, subItems: [] });
       }
-      map.get(ownerName)!.subItems.push({
+      map.get(groupKey)!.subItems.push({
         name: item.projectName || "Untitled Project",
         projectId: item.projectId,
         count: item.taskCounts?.total ? item.taskCounts.total : undefined,

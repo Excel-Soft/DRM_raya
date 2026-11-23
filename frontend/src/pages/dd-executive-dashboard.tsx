@@ -80,10 +80,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { DashboardPromotionAside } from "@/components/dashboard-promotion-aside";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { PieChart as RePieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 const itemVariants = {
     hidden: { opacity: 0 },
@@ -610,6 +612,7 @@ export default function DDExecutiveDashboard() {
 
                 {/* Sidebar (4 columns) */}
                 <div className="col-span-12 lg:col-span-4 space-y-6">
+                    <DashboardPromotionAside titleClassName="text-[16px] text-slate-700 dark:text-zinc-400" />
                     {/* Activities */}
                     <Card className="border-none shadow-sm rounded-xl bg-white overflow-hidden dark:bg-zinc-900">
                         <CardHeader className="py-4 px-6 border-b border-slate-50 flex flex-row items-center justify-between dark:border-zinc-800">
@@ -1023,30 +1026,15 @@ export default function DDExecutiveDashboard() {
                                 <div className="grid grid-cols-2 gap-6">
                                     <div className="space-y-1.5">
                                         <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Person</label>
-                                        <Select 
-                                            value={taskDetails.assigneeId} 
-                                            onValueChange={(v) => setTaskDetails(prev => ({ ...prev, assigneeId: v }))}
-                                        >
-                                            <SelectTrigger className="h-10 border-gray-200 text-[13px] text-gray-700 dark:border-zinc-800 dark:text-zinc-400">
-                                                <SelectValue placeholder="Choose Person..." />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {isLoadingUsers ? (
-                                                    <div className="p-2 text-center text-gray-400 text-[12px]">Loading users...</div>
-                                                ) : usersError ? (
-                                                    <div className="p-2 text-center text-rose-500 text-[12px]">Error: {(usersError as any).message}</div>
-                                                ) : usersData?.users ? (
-                                                    usersData.users
-                                                    .map((user: any) => (
-                                                        <SelectItem key={user.id} value={user.id}>
-                                                            {user.fullName || user.name || user.username || "Unknown"} ({user.email})
-                                                        </SelectItem>
-                                                    ))
-                                                ) : (
-                                                    <div className="p-2 text-center text-gray-400 text-[12px]">No data</div>
-                                                )}
-                                            </SelectContent>
-                                        </Select>
+                                        <RoleGroupedUserSelect
+                                            grouped={false}
+                                            users={usersData?.users || []}
+                                            value={taskDetails.assigneeId}
+                                            onChange={(v) => setTaskDetails(prev => ({ ...prev, assigneeId: v }))}
+                                            getLabel={(u: any) => `${u.fullName || u.name || u.username || "Unknown"} (${u.email})`}
+                                            placeholder={isLoadingUsers ? "Loading users..." : usersError ? "Error loading users" : "Choose Person..."}
+                                            className="h-10 border-gray-200 text-[13px] text-gray-700 dark:border-zinc-800 dark:text-zinc-400"
+                                        />
                                     </div>
                                     <div className="space-y-1.5">
                                         <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Task</label>

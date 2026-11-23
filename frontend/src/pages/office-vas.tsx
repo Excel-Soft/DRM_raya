@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,7 +14,17 @@ import {
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequestJson } from "@/lib/queryClient";
-import type { OfficeVas } from "@shared/schema";
+
+const PAGE_SIZE = 50;
+
+interface VasRow {
+  id: string;
+  companyName: string;
+  amount: string;
+  currency: string;
+  method: string;
+  vasDate: string | null; // "YYYY-MM-DD HH:mm:ss"
+}
 
 export default function OfficeVasPage() {
   const [tempStartDate, setTempStartDate] = useState("");
@@ -24,21 +33,43 @@ export default function OfficeVasPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
+  const [page, setPage] = useState(1);
+
   const queryParams = new URLSearchParams();
   if (startDate) queryParams.set("startDate", startDate);
   if (endDate) queryParams.set("endDate", endDate);
+  queryParams.set("page", String(page));
+  queryParams.set("pageSize", String(PAGE_SIZE));
 
-  const { data: vasEntries = [], isLoading, isError } = useQuery<OfficeVas[]>({
-    queryKey: ["/api/office/vas", startDate, endDate],
-    queryFn: () => apiRequestJson<OfficeVas[]>("GET", `/api/office/vas?${queryParams.toString()}`),
+  // Server-side pagination: 50 most recent payments per page.
+  const { data: vasPage, isLoading, isError, isFetching } = useQuery<{
+    data: VasRow[]; total: number; totalAmount: string; page: number; pageSize: number;
+    departmentSummary?: { department: string; amount: number }[];
+  }>({
+    queryKey: ["/api/office/vas", startDate, endDate, page],
+    queryFn: () => apiRequestJson("GET", `/api/office/vas?${queryParams.toString()}`),
+    placeholderData: (prev) => prev,
   });
 
   const handleView = () => {
     setStartDate(tempStartDate);
     setEndDate(tempEndDate);
+    setPage(1);
   };
 
-  const vasEntriesList = Array.isArray(vasEntries) ? vasEntries : [];
+  const vasEntriesList = vasPage?.data ?? [];
+  const total = vasPage?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageStart = (page - 1) * PAGE_SIZE;
+  const pageButtons: (number | "gap")[] = [];
+  for (let n = 1; n <= totalPages; n++) {
+    if (n === 1 || n === totalPages || Math.abs(n - page) <= 1) pageButtons.push(n);
+    else if (pageButtons[pageButtons.length - 1] !== "gap") pageButtons.push("gap");
+  }
+  const methodClass = (m: string) =>
+    /free/i.test(m)
+      ? "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-100"
+      : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-50";
 
   const formatCurrency = (amount: string | null, currency = "PKR") => {
     if (!amount) return "-";
@@ -118,7 +149,7 @@ export default function OfficeVasPage() {
                   vasEntriesList.map((entry, index) => (
                     <TableRow key={entry.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800">
                       <TableCell className="text-center text-[13px] text-gray-700 py-3">
-                        {index + 1}
+                        {pageStart + index + 1}
                       </TableCell>
                       <TableCell className="text-center text-[13px] text-gray-700 py-3 font-medium">
                         {entry.companyName}
@@ -128,7 +159,7 @@ export default function OfficeVasPage() {
                       </TableCell>
                       <TableCell className="text-center py-3">
                         {entry.method && entry.method !== "-" ? (
-                          <Badge variant="secondary" className="font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200">
+                          <Badge variant="secondary" className={`font-medium border ${methodClass(entry.method)}`}>
                             {entry.method}
                           </Badge>
                         ) : (
@@ -136,7 +167,7 @@ export default function OfficeVasPage() {
                         )}
                       </TableCell>
                       <TableCell className="text-center text-[13px] text-gray-700 py-3">
-                        {entry.vasDate ? format(new Date(entry.vasDate), "dd-MM-yyyy") : "-"}
+                        {entry.vasDate || "-"}
                       </TableCell>
                     </TableRow>
                   ))
@@ -144,6 +175,74 @@ export default function OfficeVasPage() {
               </TableBody>
             </Table>
           </div>
+
+          {/* Pagination: 50 per page */}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-[12px] text-gray-500 dark:text-zinc-400">
+            <span>
+              {total === 0
+                ? "Showing 0 entries"
+                : `Showing ${(pageStart + 1).toLocaleString()} to ${(pageStart + vasEntriesList.length).toLocaleString()} of ${total.toLocaleString()} entries`}
+              {total > 0 && (
+                <span className="ml-3 font-semibold text-gray-700 dark:text-zinc-300">
+                  Total: {formatCurrency(vasPage?.totalAmount ?? "0", "PKR")}
+                </span>
+              )}
+              {isFetching && <span className="ml-2 text-gray-400">Loading…</span>}
+            </span>
+            <div className="flex flex-wrap gap-1">
+              <Button variant="outline" size="sm" className="h-8 px-3" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
+              {pageButtons.map((n, i) =>
+                n === "gap" ? (
+                  <span key={`gap-${i}`} className="flex h-8 items-center px-1.5">…</span>
+                ) : (
+                  <Button
+                    key={n}
+                    size="sm"
+                    variant={n === page ? "default" : "outline"}
+                    className={n === page ? "h-8 min-w-8 px-2 bg-[#009a54] hover:bg-[#008246]" : "h-8 min-w-8 px-2"}
+                    onClick={() => setPage(n)}
+                  >
+                    {n}
+                  </Button>
+                ),
+              )}
+              <Button variant="outline" size="sm" className="h-8 px-3" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button>
+            </div>
+          </div>
+
+          {/* Old DRM: Department Wise Summary under the payments (whole date range, all pages) */}
+          {(vasPage?.departmentSummary?.length ?? 0) > 0 && (
+            <div className="mt-6 rounded-lg border border-gray-100 overflow-hidden dark:border-zinc-800">
+              <div className="bg-gray-50 px-4 py-3 text-center text-[13px] font-bold text-gray-700 dark:bg-zinc-900 dark:text-zinc-200">
+                Department Wise Summary
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-sky-50 dark:bg-zinc-900">
+                    <TableHead className="w-16 text-center font-bold">#</TableHead>
+                    <TableHead className="text-center font-bold">Department</TableHead>
+                    <TableHead className="text-center font-bold">Amount</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {vasPage!.departmentSummary!.map((d, i) => (
+                    <TableRow key={d.department}>
+                      <TableCell className="text-center">{i + 1}</TableCell>
+                      <TableCell className="text-center">{d.department}</TableCell>
+                      <TableCell className="text-center">{formatCurrency(String(d.amount), "PKR")}</TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow className="bg-amber-50 font-bold dark:bg-zinc-800">
+                    <TableCell>Dept Total</TableCell>
+                    <TableCell />
+                    <TableCell className="text-center">
+                      {formatCurrency(String(vasPage!.departmentSummary!.reduce((sum, d) => sum + (Number(d.amount) || 0), 0)), "PKR")}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </div>
       </div>
     </ScrollArea>

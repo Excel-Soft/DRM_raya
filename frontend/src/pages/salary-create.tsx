@@ -15,8 +15,10 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Pencil } from "lucide-react";
+import { SalaryMakeDialog } from "@/components/salary-make-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 // ---------------------------------------------------------------------------
 // Types mirror the server preview/run shapes.
@@ -47,6 +49,35 @@ type PreviewItem = {
   totalDeductions: number;
   netSalary: number;
   payableSalary: number;
+  // old salary-create.php columns
+  legacyUserId?: string | null;
+  attId?: string | null;
+  gender?: string | null;
+  attendanceMonthId?: string;
+  month?: number;
+  year?: number;
+  relaxationMin?: number;
+  totalLateMin?: number;
+  lateComingWithoutInform?: number;
+  paidLeave?: number;
+  earnDays?: number;
+  absentsRs?: number;
+  cuttingMinRs?: number;
+  perDayRs?: number;
+  totalCutting?: number;
+  totalSalary?: number;
+  salarySource?: "old" | "new";
+  suggested?: { overtimeMinutes: number; overtimeAmount: number; penalty: number; loan: number; reward: number };
+  oldSlip?: OldSlip | null;
+};
+
+type OldSlip = {
+  id: string; createDate: string; grossSalary: number; present: number; leave: number; cuttingMin: number;
+  overtimeMin: number; overtimeRs: number; reward: number; penalty: number; loan: number;
+  vas: number; commission3: number; alibaba: number; projectCommission: number; pppCommission: number;
+  postingCommission: number; cusPaidLeave: number; cusUnpaidLeave: number; pendingLeave: number;
+  basicCutting: number; tcutting: number; totalSalary: number; salaryStatus: string;
+  name?: string; attId?: string | null; modernUserId?: string | null;
 };
 
 type PreviewResponse = {
@@ -55,6 +86,7 @@ type PreviewResponse = {
   totals: { totalGross: number; totalDeductions: number; totalNet: number; totalPayable: number };
   employeeCount: number;
   finalizedConflicts: string[];
+  oldSlips?: { createdMonth: string; rows: OldSlip[]; total: number };
 };
 
 type SalaryRun = {
@@ -104,12 +136,18 @@ export default function SalaryCreate() {
   const { toast } = useToast();
   const flags = useMemo(roleFlags, []);
 
-  const [month, setMonth] = useState(String(now.getMonth() + 1));
-  const [year, setYear] = useState(String(now.getFullYear()));
+  // Old page default: last month.
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const [month, setMonth] = useState(String(lastMonth.getMonth() + 1));
+  const [year, setYear] = useState(String(lastMonth.getFullYear()));
+  const [genderTab, setGenderTab] = useState<"Male" | "Female">("Male");
+  const [includePaid, setIncludePaid] = useState(false);
+  const [editUserId, setEditUserId] = useState<string | null>(null);
   const [branch, setBranch] = useState("all");
   const [department, setDepartment] = useState("all");
   const [employeeId, setEmployeeId] = useState("all");
   const [search, setSearch] = useState("");
+  const [showOldSlips, setShowOldSlips] = useState(true);
   const [adjustments, setAdjustments] = useState<Record<string, Partial<Record<ManualKey, string>>>>({});
   // Confirmation dialog for terminal run actions (Finalize / Cancel).
   const [pendingAction, setPendingAction] = useState<{ id: string; status: "FINALIZED" | "CANCELLED"; period: string } | null>(null);
@@ -117,7 +155,7 @@ export default function SalaryCreate() {
 
   const years = Array.from({ length: 6 }, (_, i) => String(now.getFullYear() - i));
 
-  const employeesQuery = useQuery<{ users: { id: string; fullName: string }[] }>({
+  const employeesQuery = useQuery<{ users: { id: string; fullName: string; branch?: string | null; department?: string | null }[] }>({
     queryKey: ["/api/users", "salary-create"],
     queryFn: async () => apiRequestJson("GET", "/api/users"),
     enabled: flags.canGenerate,
@@ -129,8 +167,9 @@ export default function SalaryCreate() {
     if (branch !== "all") p.set("branch", branch);
     if (department !== "all") p.set("department", department);
     if (employeeId !== "all") p.set("employeeId", employeeId);
+    if (includePaid) p.set("includePaid", "1");
     return p.toString();
-  }, [month, year, branch, department, employeeId]);
+  }, [month, year, branch, department, employeeId, includePaid]);
 
   const preview = useQuery<PreviewResponse>({
     queryKey: ["/api/salary/preview", qs],
@@ -224,9 +263,29 @@ export default function SalaryCreate() {
 
   const items = preview.data?.items ?? [];
   const term = search.trim().toLowerCase();
-  const filtered = term
-    ? items.filter((it) => it.employeeName.toLowerCase().includes(term) || it.userId.toLowerCase().includes(term))
-    : items;
+  const genderOf = (it: PreviewItem) => (it.gender === "Female" ? "Female" : "Male");
+  const branchOptions = useMemo(() => {
+    const s = new Set<string>(["Sialkot", "Lahore", "Karachi"]);
+    for (const u of employees) if (u.branch) s.add(String(u.branch).trim());
+    for (const it of items) if (it.branch) s.add(String(it.branch).trim());
+    return Array.from(s).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [employees, items]);
+  const departmentOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const u of employees) if (u.department) s.add(String(u.department).trim());
+    for (const it of items) if (it.department) s.add(String(it.department).trim());
+    return Array.from(s).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  }, [employees, items]);
+  const matchesSearch = (it: PreviewItem) =>
+    !term
+    || it.employeeName.toLowerCase().includes(term)
+    || it.userId.toLowerCase().includes(term)
+    || String(it.legacyUserId ?? "").toLowerCase().includes(term)
+    || String(it.attId ?? "").toLowerCase().includes(term);
+  const filteredAll = term ? items.filter(matchesSearch) : items;
+  const filtered = filteredAll.filter((it) => genderOf(it) === genderTab);
+  const genderCount = (g: "Male" | "Female") => filteredAll.filter((it) => genderOf(it) === g).length;
+  const editItem = editUserId ? items.find((it) => it.userId === editUserId) ?? null : null;
 
   const liveTotals = filtered.reduce(
     (a, it) => { const l = liveRow(it); a.gross += l.gross; a.ded += l.totalDed; a.net += l.net; a.payable += l.payable; return a; },
@@ -285,25 +344,43 @@ export default function SalaryCreate() {
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Branch</Label>
-                <Input value={branch === "all" ? "" : branch} placeholder="All branches"
-                  onChange={(e) => setBranch(e.target.value || "all")}
-                  className="h-9 w-[150px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
+                <Select value={branch} onValueChange={setBranch}>
+                  <SelectTrigger className="h-9 w-[150px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0">
+                    <SelectValue placeholder="All branches" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All branches</SelectItem>
+                    {branchOptions.map((b) => (
+                      <SelectItem key={b} value={b}>{b}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Department</Label>
-                <Input value={department === "all" ? "" : department} placeholder="All departments"
-                  onChange={(e) => setDepartment(e.target.value || "all")}
-                  className="h-9 w-[170px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
+                <Select value={department} onValueChange={setDepartment}>
+                  <SelectTrigger className="h-9 w-[170px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0">
+                    <SelectValue placeholder="All departments" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All departments</SelectItem>
+                    {departmentOptions.map((d) => (
+                      <SelectItem key={d} value={d}>{d}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Employee</Label>
-                <Select value={employeeId} onValueChange={setEmployeeId}>
-                  <SelectTrigger className="h-9 w-[200px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="All employees" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All employees</SelectItem>
-                    {employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.fullName || e.id}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  grouped={false}
+                  users={employees}
+                  value={employeeId}
+                  onChange={setEmployeeId}
+                  extraOptions={[{ value: "all", label: "All employees" }]}
+                  placeholder="All employees"
+                  className="h-9 w-[200px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"
+                />
               </div>
               <Button onClick={() => saveRun.mutate("DRAFT")}
                 disabled={saveRun.isPending || preview.isLoading || items.length === 0}
@@ -318,10 +395,16 @@ export default function SalaryCreate() {
             </div>
 
             <p className="text-xs text-slate-500">
-              Preview from live HR data. Gross = basic + allowance + bonus + overtime.
-              Deductions = unpaid-leave + absence + penalties + loan + other. Net = gross − deductions
-              (payable is never below 0). Allowance, bonus, overtime, loan and other are manual.
+              Old Salary Create: worked month {MONTHS[Number(month) - 1]} {year} (attendance month); employees that already
+              have a salary slip for it are hidden{includePaid ? " (shown now)" : ""}. Cutting Min = late minutes − relaxation
+              (+ late coming without inform). Cutting applies only when leaves &gt; 1: absents = leaves − 2 × net/30, plus
+              cutting minutes × net/30/8/60. With 0–1 leaves nothing is cut, as on the old page. The pencil opens the old
+              Salary Make form (bonuses, overtime, loan, penalty, holidays); Submit saves that employee's salary.
             </p>
+            <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-zinc-400">
+              <input type="checkbox" checked={includePaid} onChange={(e) => setIncludePaid(e.target.checked)} />
+              Show employees who already have a slip for this month
+            </label>
 
             {conflicts.length > 0 && (
               <div className="flex items-start gap-2 bg-[#fcf8e3] border border-[#faebcc] text-[#8a6d3b] dark:bg-amber-950 dark:border-amber-900 dark:text-amber-400 rounded-sm px-3 py-2 text-xs">
@@ -332,54 +415,81 @@ export default function SalaryCreate() {
             )}
 
             <div className="flex justify-end">
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name..."
-                className="w-[220px] h-8 bg-white dark:bg-zinc-900 border-slate-300 rounded-sm text-xs focus-visible:ring-0" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, Att ID, User ID..."
+                className="w-[260px] h-8 bg-white dark:bg-zinc-900 border-slate-300 rounded-sm text-xs focus-visible:ring-0" />
             </div>
 
-            {/* Preview table */}
-            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 mt-2">
+            {/* Old salary-create.php: Male / Female tabs */}
+            <div className="flex gap-1 border-b border-slate-200 dark:border-zinc-800">
+              {(["Male", "Female"] as const).map((g) => (
+                <button key={g} type="button" onClick={() => setGenderTab(g)}
+                  className={`px-4 py-1.5 text-[12.5px] font-semibold rounded-t-sm ${genderTab === g ? "bg-[#00a65a] text-white" : "text-[#555] dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800"}`}>
+                  {g} ({genderCount(g)})
+                </button>
+              ))}
+            </div>
+            <div className="max-h-[70vh] overflow-auto border border-slate-100 dark:border-zinc-800 mt-2">
               <Table className="w-full text-[12.5px] whitespace-nowrap">
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-10">
                   <TableRow className="border-b border-slate-200 dark:border-zinc-800 hover:bg-transparent bg-[#fdf3db] dark:bg-zinc-900">
-                    {["Name", "Dept", "Basic", "Present", "Absent", "Unpaid Lv", "OT Min",
-                      "Allowance", "Bonus", "OT Amt", "Loan", "Other", "Penalty",
-                      "Gross", "Deductions", "Net", "Payable"].map((h) => (
-                      <TableHead key={h} className="py-2.5 px-2 font-bold text-[#555] dark:text-zinc-300 text-left text-[11px]">{h}</TableHead>
+                    {["Att ID", "User ID", "Name", "Net Salary", "Paid Leave", "Earn Days", "Absents Days", "Absents RS",
+                      "Total Late Min", "Cutting Min", "Cutting Min RS", "Per Day RS", "Total Cutting", "Total Salary",
+                      "Month / Year", "Salary", "Adjustments", "Payable", "Old slip"].map((h) => (
+                      <TableHead key={h} className="py-2.5 px-2 font-bold text-[#555] dark:text-zinc-300 text-left text-[11px] bg-[#fdf3db] dark:bg-zinc-900">{h}</TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody className="bg-white dark:bg-zinc-900">
                   {preview.isLoading ? (
-                    <TableRow><TableCell colSpan={17} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={19} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
                   ) : preview.isError ? (
-                    <TableRow><TableCell colSpan={17} className="text-center py-8">
+                    <TableRow><TableCell colSpan={19} className="text-center py-8">
                       <div className="text-[#d9534f] dark:text-red-400 mb-2">Could not load the salary preview.</div>
                       <Button size="sm" variant="outline" onClick={() => preview.refetch()} className="h-7 px-3 text-xs">Retry</Button>
                     </TableCell></TableRow>
                   ) : filtered.length === 0 ? (
-                    <TableRow><TableCell colSpan={17} className="text-center text-muted-foreground py-8">No employees found for the selected period/scope.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={19} className="text-center text-muted-foreground py-8">No employees left to create salary for in this month.</TableCell></TableRow>
                   ) : (
                     filtered.map((item) => {
                       const l = liveRow(item);
+                      const adjTotal = l.gross - item.basicSalary - ((l.totalDed) - item.absenceDeduction - item.lateDeduction - item.penaltyAmount - item.unpaidLeaveDeduction);
+                      const noCutTip = (item.leaveDays ?? 0) <= 1
+                        ? "Old rule: with 0-1 leaves nothing is cut (not even late minutes)."
+                        : "Absents (leaves - 2) x net/30 + max(0, cutting min) x net/30/8/60";
                       return (
                         <TableRow key={item.userId} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800">
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300 font-semibold">{item.attId ?? "-"}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.legacyUserId ?? "-"}</TableCell>
                           <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300 font-semibold">{item.employeeName || "-"}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.department || "-"}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(item.basicSalary)}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.daysPresent}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.basicSalary}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.paidLeave ?? 0}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">26 - {item.leaveDays}={item.earnDays ?? item.daysPresent}</TableCell>
                           <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.daysAbsent}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.unpaidLeaveDays}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.overtimeMinutes}</TableCell>
-                          <TableCell className="py-2 px-2">{manualInput(item, "allowanceAmount")}</TableCell>
-                          <TableCell className="py-2 px-2">{manualInput(item, "bonusAmount")}</TableCell>
-                          <TableCell className="py-2 px-2">{manualInput(item, "overtimeAmount")}</TableCell>
-                          <TableCell className="py-2 px-2">{manualInput(item, "loanDeduction")}</TableCell>
-                          <TableCell className="py-2 px-2">{manualInput(item, "otherDeductions")}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(item.penaltyAmount)}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(l.gross)}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#c0392b] dark:text-red-400">{fmt(l.totalDed)}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300 font-semibold">{fmt(l.net)}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.absentsRs ?? 0}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.totalLateMin ?? 0}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300"
+                            title={item.lateComingWithoutInform ? `includes ${item.lateComingWithoutInform} min late coming without inform` : undefined}>
+                            {item.totalLateMin ?? 0} - {item.relaxationMin ?? 0} = {item.lateMinutes}
+                          </TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300" title={noCutTip}>{item.cuttingMinRs ?? 0}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.perDayRs ?? 0}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#c0392b] dark:text-red-400" title={noCutTip}>{item.totalCutting ?? 0}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300 font-semibold">{item.totalSalary ?? Math.round(item.netSalary)}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.month ?? month} / {item.year ?? year}</TableCell>
+                          <TableCell className="py-2 px-2">
+                            <button type="button" className="text-[#3c8dbc] hover:text-[#367fa9]" title="Salary Make (old per-employee salary form)"
+                              onClick={() => setEditUserId(item.userId)} disabled={!flags.canGenerate}>
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                          </TableCell>
+                          <TableCell className={`py-2 px-2 ${adjTotal === 0 ? "text-slate-400" : adjTotal > 0 ? "text-[#00733e]" : "text-[#c0392b]"}`}>
+                            {adjTotal === 0 ? "-" : fmt(adjTotal)}
+                          </TableCell>
                           <TableCell className="py-2 px-2 text-[#00733e] dark:text-green-400 font-bold">{fmt(l.payable)}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300"
+                            title={item.oldSlip ? `Old slip #${item.oldSlip.id} saved ${item.oldSlip.createDate}` : "No old slip for this month"}>
+                            {item.oldSlip ? Math.round(item.oldSlip.totalSalary) : "-"}
+                          </TableCell>
                         </TableRow>
                       );
                     })
@@ -388,19 +498,80 @@ export default function SalaryCreate() {
                 {filtered.length > 0 && (
                   <tfoot>
                     <TableRow className="bg-[#f7f7f7] dark:bg-zinc-900 border-t border-slate-300 dark:border-zinc-700 font-bold">
-                      <TableCell colSpan={13} className="py-2 px-2 text-right text-[#555] dark:text-zinc-300">Totals ({filtered.length})</TableCell>
-                      <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(liveTotals.gross)}</TableCell>
-                      <TableCell className="py-2 px-2 text-[#c0392b] dark:text-red-400">{fmt(liveTotals.ded)}</TableCell>
-                      <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(liveTotals.net)}</TableCell>
+                      <TableCell colSpan={12} className="py-2 px-2 text-right text-[#555] dark:text-zinc-300">Totals ({filtered.length})</TableCell>
+                      <TableCell className="py-2 px-2 text-[#c0392b]">{filtered.reduce((a, it) => a + (it.totalCutting ?? 0), 0)}</TableCell>
+                      <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{filtered.reduce((a, it) => a + (it.totalSalary ?? 0), 0)}</TableCell>
+                      <TableCell colSpan={3} />
                       <TableCell className="py-2 px-2 text-[#00733e] dark:text-green-400">{fmt(liveTotals.payable)}</TableCell>
+                      <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">
+                        {Math.round(filtered.reduce((a, it) => a + (it.oldSlip?.totalSalary ?? 0), 0))}
+                      </TableCell>
                     </TableRow>
                   </tfoot>
                 )}
               </Table>
             </div>
+
+            {/* Old DRM slips saved for this worked month (legacy webxl_tem_salary_ship). */}
+            {preview.data?.oldSlips && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[13px] font-bold text-[#555] dark:text-zinc-300">
+                    Old DRM slips for {MONTHS[Number(month) - 1]} {year}
+                    <span className="font-normal text-slate-500"> (saved in {preview.data.oldSlips.createdMonth}) — {preview.data.oldSlips.rows.length} slips, total {fmt(preview.data.oldSlips.total)}</span>
+                  </h3>
+                  {preview.data.oldSlips.rows.length > 0 && (
+                    <Button variant="outline" className="h-7 px-3 text-xs" onClick={() => setShowOldSlips((v) => !v)}>
+                      {showOldSlips ? "Hide" : "Show"}
+                    </Button>
+                  )}
+                </div>
+                {preview.data.oldSlips.rows.length === 0 ? (
+                  <p className="text-xs text-slate-500">The old DRM saved no slips for this month.</p>
+                ) : showOldSlips && (
+                  <div className="max-h-[60vh] overflow-auto border border-slate-100 dark:border-zinc-800">
+                    <table className="w-full text-[12px] whitespace-nowrap">
+                      <thead className="sticky top-0 bg-[#e0f3e8] dark:bg-zinc-800">
+                        <tr>
+                          {["#", "Att ID", "Name", "Gross Salary", "Present", "Leave", "CuttingMin", "OT Min", "OT RS", "VAS",
+                            "3 % Bonus", "AB Bonus", "Project Bonus", "PPP Bonus", "PP Bonus", "Reward", "Penalty", "Loan",
+                            "Paid Leave", "Unpaid Leave", "Basic Cutting", "Total Cutting", "Total Salary", "Status"].map((h) => (
+                            <th key={h} className="py-2 px-2 text-left font-bold text-[#333] dark:text-zinc-200">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white dark:bg-zinc-900">
+                        {preview.data.oldSlips.rows
+                          .filter((r) => !term || [r.name, r.attId, r.id].some((v) => String(v ?? "").toLowerCase().includes(term)))
+                          .map((r) => (
+                          <tr key={r.id} className="border-b border-slate-100 dark:border-zinc-800">
+                            {[r.id, r.attId ?? "", r.name ?? "", r.grossSalary, r.present, r.leave, r.cuttingMin, r.overtimeMin, r.overtimeRs,
+                              r.vas, r.commission3, r.alibaba, r.projectCommission, r.pppCommission, r.postingCommission, r.reward,
+                              r.penalty, r.loan, r.cusUnpaidLeave, r.cusPaidLeave, r.basicCutting, r.tcutting,
+                              Math.round(r.totalSalary), r.salaryStatus || "-"].map((v, i) => (
+                              <td key={i} className="py-1.5 px-2 text-[#555] dark:text-zinc-300">{v}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
         )}
+
+        {/* Pencil: the old SALARY MAKE page (salary-make=<attendance_month id>-<user_id>). */}
+        <SalaryMakeDialog
+          open={!!editUserId}
+          onClose={() => setEditUserId(null)}
+          userId={editUserId}
+          month={editItem?.month ?? Number(month)}
+          year={editItem?.year ?? Number(year)}
+          canSubmit={flags.canGenerate}
+        />
 
         {/* Recent runs + lifecycle actions */}
         <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">

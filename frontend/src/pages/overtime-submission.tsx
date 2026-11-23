@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -60,6 +60,7 @@ import {
   X,
 } from "lucide-react";
 import type { OvertimeRecord } from "@shared/schema";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type OvertimeStats = {
   totalRecords: number;
@@ -93,6 +94,8 @@ export default function OvertimeSubmissionPage() {
   const [isAddMode, setIsAddMode] = useState(false);
   const [confirmData, setConfirmData] = useState<OvertimeFormValues | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     updateVisibleData({
@@ -150,14 +153,22 @@ export default function OvertimeSubmissionPage() {
       if (data.userId && data.userId !== "self") {
         payload.userId = data.userId;
       }
-      return apiRequest("POST", "/api/overtime", payload);
+      const res = await apiRequest("POST", "/api/overtime", payload);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error?.message || body?.error || "Failed to submit");
+      }
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/overtime"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/overtime/all"] });
       queryClient.invalidateQueries({ queryKey: ["/api/overtime/stats"] });
+      setCurrentPage(1);
+      setSearchTerm("");
       toast({ title: "Overtime record submitted successfully" });
       form.reset();
-      setActiveTab("history");
+      setIsAddMode(false);
     },
     onError: (error: any) => {
       toast({
@@ -247,20 +258,48 @@ export default function OvertimeSubmissionPage() {
     ? overtimeStats.totalMinutesApproved % 60
     : 0;
 
-  const filteredRecords = overtimeRecords?.filter((record) => {
-    if (!searchTerm) return true;
-    const term = searchTerm.toLowerCase();
-    const userName = (record as any).userName || (record as any).full_name || "Employee";
-    return (
-      userName.toLowerCase().includes(term) ||
-      (record.taskTitle || "").toLowerCase().includes(term) ||
-      (record.taskDetails || "").toLowerCase().includes(term) ||
-      (record.status || "Pending").toLowerCase().includes(term)
-    );
-  }) || [];
+  const filteredRecords = useMemo(() => {
+    const list = (overtimeRecords ?? []).filter((record) => {
+      if (!searchTerm) return true;
+      const term = searchTerm.toLowerCase();
+      const userName = (record as any).userName || (record as any).full_name || "Employee";
+      return (
+        userName.toLowerCase().includes(term) ||
+        (record.taskTitle || "").toLowerCase().includes(term) ||
+        (record.taskDetails || "").toLowerCase().includes(term) ||
+        (record.status || "Pending").toLowerCase().includes(term)
+      );
+    });
+    return [...list].sort((a, b) => {
+      const tb = new Date(b.createdAt).getTime();
+      const ta = new Date(a.createdAt).getTime();
+      if (tb !== ta) return tb - ta;
+      return String(b.id).localeCompare(String(a.id));
+    });
+  }, [overtimeRecords, searchTerm]);
+
+  const totalFiltered = filteredRecords.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageStart = totalFiltered === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const pageEnd = Math.min(safePage * pageSize, totalFiltered);
+  const paginatedRecords = filteredRecords.slice(
+    (safePage - 1) * pageSize,
+    safePage * pageSize,
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, pageSize]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   return (
-    <div className="p-6 bg-[#f8f9fa] min-h-[calc(100vh-60px)] font-sans dark:bg-zinc-950">
+    <div className="p-6 bg-[#f8f9fa] min-h-0 flex-1 overflow-y-auto font-sans dark:bg-zinc-950">
         <h1 className="text-[16px] font-bold tracking-wide uppercase mb-6 flex items-center">
             <span className="text-[#495057] dark:text-zinc-400">OVERTIME</span>
             <span className="mx-1 text-[#495057] dark:text-zinc-400">/</span>
@@ -278,20 +317,15 @@ export default function OvertimeSubmissionPage() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-4">
                 <div className="space-y-1.5 flex flex-col">
                     <Label className="text-[13px] font-medium text-[#495057] dark:text-zinc-400">Employee (Optional)</Label>
-                    <Select
+                    <RoleGroupedUserSelect
+                        grouped={false}
+                        users={users}
                         value={form.watch('userId') || "self"}
-                        onValueChange={(val) => form.setValue('userId', val, { shouldValidate: true })}
-                    >
-                        <SelectTrigger className="h-9 w-full bg-white text-[13px] text-gray-500 shadow-sm border-gray-200 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800">
-                            <SelectValue placeholder="Select Employee (Self)" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="self">{typeof window !== 'undefined' ? sessionStorage.getItem("userName") || "Self" : "Self"} (Logged in user)</SelectItem>
-                            {users?.map(u => (
-                                <SelectItem key={u.id} value={u.id}>{u.fullName || u.username}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                        onChange={(val) => form.setValue('userId', val, { shouldValidate: true })}
+                        extraOptions={[{ value: "self", label: `${typeof window !== 'undefined' ? sessionStorage.getItem("userName") || "Self" : "Self"} (Logged in user)` }]}
+                        placeholder="Select Employee (Self)"
+                        className="h-9 w-full bg-white text-[13px] text-gray-500 shadow-sm border-gray-200 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800"
+                    />
                 </div>
                 <div className="space-y-1.5 flex flex-col">
                     <Label className="text-[13px] font-medium text-[#495057] dark:text-zinc-400">Task</Label>
@@ -344,7 +378,10 @@ export default function OvertimeSubmissionPage() {
             <div className="flex justify-between items-center mb-4">
                 <div className="flex items-center gap-2">
                     <span className="text-[13px] text-[#495057] dark:text-zinc-400">Show</span>
-                    <Select defaultValue="10">
+                    <Select
+                        value={String(pageSize)}
+                        onValueChange={(val) => setPageSize(Number(val))}
+                    >
                         <SelectTrigger className="h-8 w-[70px] bg-white text-[13px] text-gray-600 border-gray-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
                             <SelectValue />
                         </SelectTrigger>
@@ -369,9 +406,9 @@ export default function OvertimeSubmissionPage() {
                 </div>
             </div>
 
-          <div className="w-full border border-gray-200 overflow-hidden mb-4 mt-2 dark:border-zinc-800">
-            <table className="w-full text-center border-collapse">
-              <thead>
+          <div className="w-full border border-gray-200 mb-4 mt-2 dark:border-zinc-800 max-h-[min(70vh,720px)] overflow-auto rounded-sm">
+            <table className="w-full min-w-[900px] text-center border-collapse">
+              <thead className="sticky top-0 z-10">
                 <tr className="bg-[#f2f2f2] border-b border-gray-200 dark:bg-zinc-800 dark:border-zinc-800">
                   <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white w-[50px] dark:text-zinc-400">#</th>
                   <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white dark:text-zinc-400">Name</th>
@@ -384,20 +421,26 @@ export default function OvertimeSubmissionPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRecords.length === 0 ? (
+                {loadingRecords ? (
+                  <tr>
+                    <td colSpan={8} className="px-3 py-8 text-[13px] text-[#495057] dark:text-zinc-400">
+                      Loading overtime records…
+                    </td>
+                  </tr>
+                ) : totalFiltered === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-3 py-4 text-[13px] text-[#495057] dark:text-zinc-400">
                       No data available in table
                     </td>
                   </tr>
                 ) : (
-                  filteredRecords.map((record, index) => (
+                  paginatedRecords.map((record, index) => (
                     <tr key={record.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
-                      <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{index + 1}</td>
-                      <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{(record as any).userName || (record as any).full_name || "Employee"}</td>
-                      <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{record.taskTitle}</td>
+                      <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{(safePage - 1) * pageSize + index + 1}</td>
+                      <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300 max-w-[140px] truncate" title={(record as any).userName || ""}>{(record as any).userName || (record as any).full_name || "Employee"}</td>
+                      <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300 max-w-[160px] truncate" title={record.taskTitle || ""}>{record.taskTitle}</td>
                       <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{record.timeSpent}</td>
-                      <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{record.taskDetails}</td>
+                      <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300 max-w-[200px] truncate text-left" title={record.taskDetails || ""}>{record.taskDetails}</td>
                       <td className="py-4 px-4 text-[13px] font-medium">
                         <span className={`font-semibold text-[11px] px-2 py-0.5 rounded-full ${
                           record.status === 'Approved' ? 'bg-emerald-50 text-emerald-600' :
@@ -442,15 +485,33 @@ export default function OvertimeSubmissionPage() {
               </tbody>
             </table>
           </div>
-            <div className="flex justify-between items-center text-[13px] text-[#495057] dark:text-zinc-400">
-                <div>Showing {filteredRecords.length ? 1 : 0} to {filteredRecords.length} of {filteredRecords.length} entries</div>
-                <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-zinc-800">
-                    <button className="px-3 py-1.5 bg-[#f9f9f9] text-[#b0b0b0] cursor-not-allowed border-r border-gray-200 dark:border-zinc-800 dark:bg-zinc-900">
-                        Previous
+            <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center text-[13px] text-[#495057] dark:text-zinc-400">
+                <div>
+                  Showing {pageStart} to {pageEnd} of {totalFiltered} entries
+                  {searchTerm ? ` (filtered from ${overtimeRecords?.length ?? 0})` : ""}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[#495057] dark:text-zinc-400">
+                    Page {safePage} of {totalPages}
+                  </span>
+                  <div className="flex rounded-md overflow-hidden border border-gray-200 dark:border-zinc-800">
+                    <button
+                      type="button"
+                      disabled={safePage <= 1}
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="px-3 py-1.5 border-r border-gray-200 dark:border-zinc-800 bg-white hover:bg-gray-50 disabled:bg-[#f9f9f9] disabled:text-[#b0b0b0] disabled:cursor-not-allowed dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                    >
+                      Previous
                     </button>
-                    <button className="px-3 py-1.5 bg-white text-[#b0b0b0] cursor-not-allowed dark:bg-zinc-900">
-                        Next
+                    <button
+                      type="button"
+                      disabled={safePage >= totalPages}
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      className="px-3 py-1.5 bg-white hover:bg-gray-50 disabled:bg-[#f9f9f9] disabled:text-[#b0b0b0] disabled:cursor-not-allowed dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                    >
+                      Next
                     </button>
+                  </div>
                 </div>
             </div>
         </CardContent>

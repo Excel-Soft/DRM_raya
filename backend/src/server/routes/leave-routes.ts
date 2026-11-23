@@ -169,41 +169,50 @@ export function registerLeaveRoutes(app: Express) {
         time: nullableString.optional(),
         alternative: nullableString.optional(),
       }).transform((data) => {
-        const pick = (val?: string | string[]) => {
+        const pick = (val?: string | string[] | null) => {
           if (Array.isArray(val)) return val[0];
           return val;
         };
-        const type = pick(data.leaveType) || pick(data.type);
+        const leaveType = pick(data.leaveType) || pick(data.type);
+        const purpose =
+          pick(data.purpose) ||
+          pick(data.reason) ||
+          pick(data.description) ||
+          "Leave request";
+        const alternative = pick(data.alternative) || "N/A";
         return {
           fromDate: data.fromDate,
           toDate: data.toDate,
-          type,
+          leaveType,
+          purpose,
+          alternative,
+          time: pick(data.time) ?? null,
+          description: pick(data.description) || pick(data.reason) || null,
           duration: data.duration || "Full Day",
-          reason: data.reason || data.description || data.purpose || null,
         };
       }).superRefine((data, ctx) => {
-        if (!data.type || `${data.type}`.trim() === "") {
+        if (!data.leaveType || `${data.leaveType}`.trim() === "") {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: "type is required",
-            path: ["type"],
+            message: "leaveType is required",
+            path: ["leaveType"],
           });
         }
-        if (data.toDate < data.fromDate) {
+        if (data.toDate.getTime() < data.fromDate.getTime()) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: "toDate must be after fromDate",
+            message: "toDate must be on or after fromDate",
             path: ["toDate"],
           });
         }
       });
 
       const parsed = ValidationService.parse(schema, req.body);
-      if (!parsed.type) {
+      if (!parsed.leaveType) {
         return sendApiError(res, {
           status: 400,
           code: "VALIDATION_ERROR",
-          message: "type is required",
+          message: "leaveType is required",
         });
       }
 
@@ -211,9 +220,12 @@ export function registerLeaveRoutes(app: Express) {
         userId,
         fromDate: parsed.fromDate,
         toDate: parsed.toDate,
-        type: parsed.type,
+        leaveType: parsed.leaveType,
+        purpose: parsed.purpose,
+        alternative: parsed.alternative,
+        time: parsed.time,
+        description: parsed.description,
         duration: parsed.duration,
-        reason: parsed.reason,
       });
       res.status(201).json(request);
     } catch (error) {

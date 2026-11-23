@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeader } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -18,7 +19,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { Search, Plus, Trash2, Edit } from "lucide-react";
+import { Search, Plus, Trash2, Edit, AlertTriangle } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -38,8 +39,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
 export default function RelatedCustomerPage() {
+    const [, setLocation] = useLocation();
     const [activeTab, setActiveTab] = useState("related");
     const [searchTerm, setSearchTerm] = useState("");
+    const [page, setPage] = useState(1);
+    const pageSize = 50;
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [isEditMode, setIsEditMode] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -135,14 +139,37 @@ export default function RelatedCustomerPage() {
         );
     }, [targetRelatedCompany, relatedDupCheck]);
 
-    // Fetch related customers
-    const { data: relatedCustomers = [], isLoading: loadingRelated } = useQuery({
-        queryKey: ["/api/crm/related-customers"],
+    const relatedSearchQ = searchTerm.trim();
+
+    useEffect(() => {
+        setPage(1);
+    }, [relatedSearchQ]);
+
+    // Fetch related customers (legacy company list)
+    const { data: relatedListResponse, isLoading: loadingRelated } = useQuery({
+        queryKey: ["/api/crm/related-customers", relatedSearchQ, page],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/crm/related-customers");
-            return res.json();
+            const params = new URLSearchParams();
+            params.set("page", String(page));
+            params.set("pageSize", String(pageSize));
+            if (relatedSearchQ) params.set("q", relatedSearchQ);
+            const res = await apiRequest("GET", `/api/crm/related-customers?${params.toString()}`);
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                return { items: data, total: data.length, page, pageSize, source: "legacy" as const };
+            }
+            return {
+                items: Array.isArray(data.items) ? data.items : [],
+                total: typeof data.total === "number" ? data.total : 0,
+                page: typeof data.page === "number" ? data.page : page,
+                pageSize: typeof data.pageSize === "number" ? data.pageSize : pageSize,
+                source: data.source,
+            };
         },
     });
+
+    const relatedCustomers = relatedListResponse?.items ?? [];
+    const totalRecords = relatedListResponse?.total ?? 0;
 
     // Add related customer mutation
     const addRelatedMutation = useMutation({
@@ -206,7 +233,7 @@ export default function RelatedCustomerPage() {
         },
     });
 
-    // Delete related customer mutation
+    // Delete related customer mutation (modern relationship rows only)
     const deleteRelatedMutation = useMutation({
         mutationFn: async (id: string) => {
             await apiRequest("DELETE", `/api/crm/related-customers/${id}`);
@@ -219,6 +246,46 @@ export default function RelatedCustomerPage() {
             toast({ title: "Error", description: "Failed to delete related customer", variant: "destructive" });
         },
     });
+
+    const disableCompanyMutation = useMutation({
+        mutationFn: async (legacyCompanyId: string) => {
+            const res = await apiRequest(
+                "POST",
+                `/api/crm/related-customers/${encodeURIComponent(legacyCompanyId)}/disable`,
+            );
+            return res.json();
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["/api/crm/related-customers"] });
+            toast({ title: "Success", description: "Company disabled" });
+        },
+        onError: () => {
+            toast({ title: "Error", description: "Failed to disable company", variant: "destructive" });
+        },
+    });
+
+    const handleCompanyEdit = (item: any) => {
+        if (item.crmCustomerId) {
+            setLocation(`/customers/attribute/${item.crmCustomerId}`);
+            return;
+        }
+        if (item.legacySource) {
+            toast({
+                title: "No CRM profile",
+                description: "This company is not linked in the new CRM yet. Open Add Customer to register it.",
+            });
+            setLocation(`/sales/add-customer?crmId=${encodeURIComponent(item.companyId || "")}`);
+            return;
+        }
+        handleEditRelated(item);
+    };
+
+    const handleCompanyDisable = (item: any) => {
+        const legacyId = item.legacyCompanyId || item.id;
+        if (!legacyId) return;
+        if (!confirm("Disable this company? (Legacy: sets disable = Yes)")) return;
+        disableCompanyMutation.mutate(String(legacyId));
+    };
 
     // Add GM mutation
     const addGmMutation = useMutation({
@@ -317,14 +384,6 @@ export default function RelatedCustomerPage() {
         });
     };
 
-    const filteredCustomers = relatedCustomers.filter((customer: any) =>
-        customer.customerName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.relatedCustomer?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.personName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.invoiceNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.receiptNumber?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
     return (
         <div className="p-8 space-y-6">
             <div className="flex items-center justify-between">
@@ -344,16 +403,19 @@ export default function RelatedCustomerPage() {
                     <Card className="border-t-4 border-t-[#008d4c] shadow-sm">
                         <CardHeader className="pb-4">
                             <div className="flex items-center justify-between">
-                                <CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">Customer Relationships</CardTitle>
-                                <div className="flex gap-3">
-                                    <div className="relative w-64">
-                                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-                                        <Input
-                                            placeholder="Search customers..."
-                                            value={searchTerm}
-                                            onChange={(e) => setSearchTerm(e.target.value)}
-                                            className="pl-9"
-                                        />
+                                <CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">RELATED CUSTOMERS</CardTitle>
+                                <div className="flex gap-3 flex-wrap items-end">
+                                    <div className="space-y-1 min-w-[280px] flex-1 max-w-xl">
+                                        <Label className="text-slate-600">Company Name</Label>
+                                        <div className="relative">
+                                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                                            <Input
+                                                placeholder="Enter company name Or id"
+                                                value={searchTerm}
+                                                onChange={(e) => setSearchTerm(e.target.value)}
+                                                className="pl-9"
+                                            />
+                                        </div>
                                     </div>
                                     <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
                                         <DialogTrigger asChild>
@@ -483,6 +545,7 @@ export default function RelatedCustomerPage() {
                                 <TableHeader className="bg-slate-50 dark:bg-zinc-900">
                                     <TableRow>
                                         <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">No</TableHead>
+                                        <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Id</TableHead>
                                         <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Company</TableHead>
                                         <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Person</TableHead>
                                         <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Follow</TableHead>
@@ -498,27 +561,30 @@ export default function RelatedCustomerPage() {
                                 <TableBody>
                                     {loadingRelated ? (
                                         <TableRow>
-                                            <TableCell colSpan={11} className="text-center py-8">
+                                            <TableCell colSpan={12} className="text-center py-8">
                                                 Loading...
                                             </TableCell>
                                         </TableRow>
-                                    ) : filteredCustomers.length === 0 ? (
+                                    ) : relatedCustomers.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
-                                                {searchTerm ? "No customers found matching your search." : "No related customers yet."}
+                                            <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                                                {searchTerm ? "No data" : "No active companies found."}
                                             </TableCell>
                                         </TableRow>
                                     ) : (
-                                        filteredCustomers.map((item: any, index: number) => (
-                                            <TableRow key={item.id}>
-                                                <TableCell className="font-medium text-slate-700 dark:text-zinc-400">{index + 1}</TableCell>
+                                        relatedCustomers.map((item: any, index: number) => (
+                                            <TableRow key={`${item.id}-${item.companyId}-${index}`}>
+                                                <TableCell className="font-medium text-slate-700 dark:text-zinc-400">
+                                                    {(page - 1) * pageSize + index + 1}
+                                                </TableCell>
+                                                <TableCell className="font-medium text-slate-700 dark:text-zinc-400">{item.companyId || "-"}</TableCell>
                                                 <TableCell className="font-medium text-slate-700 dark:text-zinc-400">{item.customerName}</TableCell>
                                                 <TableCell className="text-slate-700 dark:text-zinc-400">{item.personName || '-'}</TableCell>
                                                 <TableCell className="text-slate-700 dark:text-zinc-400">{item.followStatus || '-'}</TableCell>
                                                 <TableCell className="text-slate-700 dark:text-zinc-400">{item.invoiceNumber || '-'}</TableCell>
                                                 <TableCell className="text-slate-700 dark:text-zinc-400">{item.receiptNumber || '-'}</TableCell>
                                                 <TableCell className="text-slate-700 dark:text-zinc-400">{item.packageType || '-'}</TableCell>
-                                                <TableCell className="text-slate-700 dark:text-zinc-400">{item.gmAmount ? `$${item.gmAmount}` : '-'}</TableCell>
+                                                <TableCell className="text-slate-700 dark:text-zinc-400">{item.gmAmount || '-'}</TableCell>
                                                 <TableCell className="text-slate-700 dark:text-zinc-400">{item.payDate || '-'}</TableCell>
                                                 <TableCell className="text-slate-700 dark:text-zinc-400">{item.bvDate || '-'}</TableCell>
                                                 <TableCell className="text-center">
@@ -526,23 +592,37 @@ export default function RelatedCustomerPage() {
                                                         <Button
                                                             variant="ghost"
                                                             size="sm"
+                                                            title="Edit company"
                                                             className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
-                                                            onClick={() => handleEditRelated(item)}
+                                                            onClick={() => handleCompanyEdit(item)}
                                                         >
                                                             <Edit className="w-4 h-4" />
                                                         </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                                            onClick={() => {
-                                                                if (confirm("Are you sure?")) {
-                                                                    deleteRelatedMutation.mutate(item.id);
-                                                                }
-                                                            }}
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </Button>
+                                                        {item.legacySource !== false ? (
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                title="Disable company"
+                                                                className="h-8 w-8 text-slate-500 hover:text-amber-700 hover:bg-amber-50"
+                                                                disabled={disableCompanyMutation.isPending}
+                                                                onClick={() => handleCompanyDisable(item)}
+                                                            >
+                                                                <AlertTriangle className="w-4 h-4" />
+                                                            </Button>
+                                                        ) : (
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                                                onClick={() => {
+                                                                    if (confirm("Are you sure?")) {
+                                                                        deleteRelatedMutation.mutate(item.id);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <Trash2 className="w-4 h-4" />
+                                                            </Button>
+                                                        )}
                                                     </div>
                                                 </TableCell>
                                             </TableRow>
@@ -550,6 +630,40 @@ export default function RelatedCustomerPage() {
                                     )}
                                 </TableBody>
                             </Table>
+                            {totalRecords > 0 && (
+                                <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 dark:border-zinc-800">
+                                    <span className="text-sm text-muted-foreground">
+                                        Showing {(page - 1) * pageSize + (relatedCustomers.length ? 1 : 0)} to{" "}
+                                        {(page - 1) * pageSize + relatedCustomers.length} of {totalRecords.toLocaleString()} entries
+                                        {relatedListResponse?.source === "legacy" ? " (legacy archive)" : ""}
+                                    </span>
+                                    <div className="flex gap-1 items-center">
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            disabled={page <= 1 || loadingRelated}
+                                            onClick={() => setPage((p) => Math.max(1, p - 1))}
+                                            className="h-8 px-2"
+                                        >
+                                            ‹ Prev
+                                        </Button>
+                                        <span className="text-sm font-semibold text-white bg-[#008d4c] rounded-full min-w-8 h-8 px-2 flex items-center justify-center">
+                                            {page}
+                                        </span>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            disabled={page * pageSize >= totalRecords || loadingRelated}
+                                            onClick={() => setPage((p) => p + 1)}
+                                            className="h-8 px-2"
+                                        >
+                                            Next ›
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>

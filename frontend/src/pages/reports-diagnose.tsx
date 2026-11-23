@@ -8,6 +8,8 @@ import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 type DiagnoseRow = {
   id: string;
@@ -32,10 +34,21 @@ type AppliedFilters = { userId: string; startDate: string; endDate: string };
 export default function ReportsDiagnose() {
   const { toast } = useToast();
   const [showFilters, setShowFilters] = useState(true);
-  const [selectedUser, setSelectedUser] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [applied, setApplied] = useState<AppliedFilters | null>(null);
+  // Opens on the current month for everyone (like the old page after View).
+  const monthStart = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+  }, []);
+  const today = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }, []);
+  const [selectedUser, setSelectedUser] = useState("All");
+  const [startDate, setStartDate] = useState(monthStart);
+  const [endDate, setEndDate] = useState(today);
+  const [applied, setApplied] = useState<AppliedFilters | null>({ userId: "all", startDate: monthStart, endDate: today });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [exporting, setExporting] = useState(false);
 
   // Same role-grouping convention as the other Select User pickers built this
@@ -49,24 +62,16 @@ export default function ReportsDiagnose() {
     },
   });
 
-  const groupedUsers = useMemo(() => {
-    const grouped: Record<string, any[]> = {};
-    users.forEach((u: any) => {
-      const role = u.role || "Unassigned Role";
-      if (!grouped[role]) grouped[role] = [];
-      grouped[role].push(u);
-    });
-    return Object.entries(grouped)
-      .map(([role, users]) => ({ role, users }))
-      .sort((a, b) => a.role.localeCompare(b.role));
-  }, [users]);
+  // One section per role title; multi-role users under each role; disabled (role 54) excluded.
+  const groupedUsers = useMemo(() => groupUsersByRoleTitle(users), [users]);
 
-  const { data: reportData, isLoading } = useQuery<{ rows: DiagnoseRow[] }>({
-    queryKey: ["/api/reports/diagnose", applied],
+  const { data: reportData, isLoading, isFetching } = useQuery<{ rows: DiagnoseRow[]; total?: number }>({
+    queryKey: ["/api/reports/diagnose", applied, page, pageSize],
+    placeholderData: (prev) => prev,
     queryFn: async () => {
       if (!applied) return { rows: [] };
-      const params = new URLSearchParams();
-      params.set("userId", applied.userId || "all");
+      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+      params.set("userId", applied.userId && applied.userId !== "All" ? applied.userId : "all");
       if (applied.startDate) params.set("startDate", applied.startDate);
       if (applied.endDate) params.set("endDate", applied.endDate);
       const res = await apiRequest("GET", `/api/reports/diagnose?${params}`);
@@ -82,6 +87,7 @@ export default function ReportsDiagnose() {
 
   const handleView = () => {
     setApplied({ userId: selectedUser, startDate, endDate });
+    setPage(1);
   };
 
   const handleExport = async () => {
@@ -111,6 +117,8 @@ export default function ReportsDiagnose() {
   };
 
   const rows = reportData?.rows ?? [];
+  const total = Number(reportData?.total ?? rows.length);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
@@ -139,24 +147,14 @@ export default function ReportsDiagnose() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Person</label>
-                <Select value={selectedUser} onValueChange={setSelectedUser}>
-                  <SelectTrigger className="bg-white dark:bg-zinc-800">
-                    <SelectValue placeholder="Choose..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="All">All</SelectItem>
-                    {groupedUsers.map(({ role, users }) => (
-                      <SelectGroup key={role}>
-                        <SelectLabel>{role}</SelectLabel>
-                        {users.filter((u) => u.fullName || u.username).map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.fullName || u.username}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <RoleGroupedUserSelect
+                  users={users}
+                  value={selectedUser}
+                  onChange={setSelectedUser}
+                  extraOptions={[{ value: "All", label: "All" }]}
+                  placeholder="Choose..."
+                  className="bg-white dark:bg-zinc-800"
+                />
               </div>
 
               <div className="space-y-2 relative">
@@ -243,7 +241,7 @@ export default function ReportsDiagnose() {
                 ) : (
                   rows.map((row, index) => (
                     <tr key={row.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/50 transition-colors">
-                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{index + 1}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{(page - 1) * pageSize + index + 1}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">
                         {row.createDate ? format(new Date(row.createDate), "dd-MM-yyyy hh:mm a") : "-"}
                       </td>
@@ -266,6 +264,27 @@ export default function ReportsDiagnose() {
               </tbody>
             </table>
           </div>
+          {applied && total > 0 && (
+            <div className={`mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500 ${isFetching ? "opacity-60" : ""}`}>
+              <div className="flex items-center gap-2">
+                <span>
+                  Showing <b>{(page - 1) * pageSize + 1}</b> to <b>{Math.min(page * pageSize, total)}</b> of <b>{total.toLocaleString()}</b>
+                </span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                  className="h-8 rounded border border-slate-200 bg-white px-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                >
+                  {[25, 50, 100, 200].map((n) => <option key={n} value={n}>{n} / page</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
+                <span>Page <b>{page}</b> of <b>{totalPages}</b></span>
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Next</Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

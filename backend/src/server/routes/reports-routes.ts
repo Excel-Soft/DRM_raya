@@ -37,6 +37,38 @@ import {
   gmReportsRepository,
 } from "../repositories/generic-report.repository";
 import { isManagerialRole } from "../utils/role-utils";
+
+/** Columns that exist on all deployed DBs (invoice_number may be absent until ensure runs). */
+const productPostingInvoiceVasFields = {
+  id: productPostingInvoices.id,
+  companyName: productPostingInvoices.companyName,
+  projectName: productPostingInvoices.projectName,
+  amount: productPostingInvoices.amount,
+  paymentMethod: productPostingInvoices.paymentMethod,
+  updatedAt: productPostingInvoices.updatedAt,
+  status: productPostingInvoices.status,
+  salesExecId: productPostingInvoices.salesExecId,
+  accountsApprovedAt: productPostingInvoices.accountsApprovedAt,
+};
+
+/** Omit schema-only columns (e.g. quotation_id) that may not exist until ensure runs. */
+const standardInvoiceVasFields = {
+  id: invoices.id,
+  customerName: invoices.customerName,
+  total: invoices.total,
+  paymentMethod: invoices.paymentMethod,
+  updatedAt: invoices.updatedAt,
+  status: invoices.status,
+  createdByUserId: invoices.createdByUserId,
+  currency: invoices.currency,
+  dollarRate: invoices.dollarRate,
+  items: invoices.items, // item names -> Department Wise Summary (new-app invoices)
+  paidAt: invoices.paidAt,
+};
+// Paid invoices are dated by paid_at; new-app approvals may not stamp paid_at, so fall
+// back to updated_at. (Migrated old-DRM invoices all have updated_at = import day, which
+// put every old VAS invoice on 2026-11-04 instead of its real payment date.)
+const invoicePaidDate = sql`COALESCE(${invoices.paidAt}, ${invoices.updatedAt})`;
 import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound, sendApiError } from "../utils/api-error";
 import { requireReportPermission, resolveReportRoles } from "./middleware/report-permission";
 import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES } from "./middleware/financial-permission";
@@ -48,6 +80,7 @@ import {
   buildDayTargetCsv,
   type DayTargetQuery,
 } from "./services/day-target.service";
+import { loadRoleTitles, userRoleInfo } from "../utils/user-role-titles";
 
 const router = Router();
 
@@ -81,7 +114,7 @@ router.get(
         `${reconNorm("g.company_name")} like $$`,
         `%${String(req.query.customer).toLowerCase().replace(/[^a-z0-9]/g, "")}%`,
       );
-    if (req.query.status) add("g.status = $$", String(req.query.status));
+    if (req.query.status) add("g.status::text = $$", String(req.query.status));
     if (req.query.department) add("u.department = $$", String(req.query.department));
 
     const reconSql = `
@@ -126,7 +159,7 @@ router.get(
              coalesce(ref.refunded, 0)::numeric as refunded
         from gm
         left join inv on inv.ckey = ${reconNorm("gm.company_name")}
-        left join led on led.reference_id = gm.id
+        left join led on led.reference_id::text = gm.id::text
         left join ref on ref.ckey = ${reconNorm("gm.company_name")}
     `;
 
@@ -216,6 +249,8 @@ interface ReportData {
   };
   reportCount?: number;
   personAchievement?: { personId: string; targetName: string; targetQuota: number | null; achievedCount: number }[];
+  // BV Report (?scope=company), single user selected: the old DRM footer row.
+  footer?: BvLegacyFooter | null;
 }
 
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -661,11 +696,66 @@ buildReportCrud("loan-reports", loanReportsRepository, loanPayloadSchema);
 buildReportCrud("vas-reports", vasReportsRepository, vasPayloadSchema);
 buildReportCrud("gm-reports", gmReportsRepository, insertGmReportSchema);
 
+function mapLegacyAdvanceStatus(row: { status?: string | null; manager?: string | null; hod?: string | null }): string {
+  const s = String(row.status ?? "").trim();
+  if (s === "Rejected" || s === "Complete" || s === "Completed") return s === "Complete" ? "Completed" : s;
+  if (String(row.hod ?? "").trim() === "Approved") return "HODApproved";
+  if (String(row.manager ?? "").trim() === "Approved") return "ManagerApproved";
+  return s || "Pending";
+}
+
+/** Old webxl_addvance_salary rows not linked to drm.loan_requests (migration gaps). */
+async function legacyAdvanceLoanDetails(userIds: string[] | null, userNames: Record<string, string>): Promise<any[]> {
+  const params: unknown[] = [];
+  let userWhere = "";
+  if (userIds && userIds.length > 0) {
+    params.push(userIds);
+    userWhere = `AND m.modern_id = ANY($${params.length}::text[])`;
+  }
+  const r = await pool.query(
+    `SELECT a.id::text AS legacy_id, m.modern_id AS user_id, a.salary, a.instalment, a.detail, a.remaning,
+            a.status, a.manager, a.hod, a.create_date, u.name AS legacy_name
+       FROM legacy_archive.webxl_addvance_salary a
+       JOIN legacy_archive.webxl_user u ON u.user_id = a.user_id
+       JOIN migration_meta.migration_legacy_ids m
+         ON m.entity_type = 'user' AND m.legacy_table = 'webxl_user' AND m.legacy_id = a.user_id
+      WHERE m.modern_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM migration_meta.migration_legacy_ids ml
+           WHERE ml.legacy_table = 'webxl_addvance_salary' AND ml.legacy_id = a.id::text
+        )
+        ${userWhere}`,
+    params,
+  );
+  return r.rows.map((a: any) => {
+    const uid = String(a.user_id);
+    const amount = parseFloat(String(a.salary ?? "0")) || 0;
+    const installment = parseFloat(String(a.instalment ?? "0")) || 0;
+    const remaining = parseFloat(String(a.remaning ?? "0")) || 0;
+    const created = a.create_date && /^\d{4}-\d{2}/.test(String(a.create_date))
+      ? new Date(String(a.create_date).replace(" ", "T"))
+      : new Date();
+    return {
+      id: `legacy-adv-${a.legacy_id}`,
+      userId: uid,
+      employeeName: userNames[uid] || a.legacy_name || "N/A",
+      amount,
+      detail: a.detail ?? "",
+      status: mapLegacyAdvanceStatus(a),
+      date: created,
+      installmentAmount: installment,
+      remainingAmount: remaining,
+      managerName: null,
+      hodName: null,
+      source: "legacy",
+    };
+  });
+}
+
 async function getLoanReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
-  const whereConditions = [
-    gte(loanRequests.createdAt, fromDate),
-    lte(loanRequests.createdAt, toDate)
-  ];
+  // Old DRM's Advance Salary List shows every loan (no date window), newest first.
+  // The page has no date picker, so the from/to range is not applied to loans.
+  const whereConditions: any[] = [];
   if (userIds && userIds.length > 0) {
     whereConditions.push(inArray(loanRequests.userId, userIds));
   }
@@ -673,7 +763,8 @@ async function getLoanReport(userIds: string[] | null, fromDate: Date, toDate: D
   const loans = await db
     .select()
     .from(loanRequests)
-    .where(and(...whereConditions));
+    .where(whereConditions.length ? and(...whereConditions) : undefined)
+    .orderBy(desc(loanRequests.createdAt));
 
   const totalLoans = loans.length;
   const approvedLoans = loans.filter(l => l.status === "HODApproved" || l.status === "Completed");
@@ -715,10 +806,14 @@ async function getLoanReport(userIds: string[] | null, fromDate: Date, toDate: D
     .select()
     .from(loanReports)
     .where(and(...loanReportConditions));
-  const combinedValue = totalValue + customReports.reduce((s, r) => s + Number(r.valueSold || 0), 0);
+  const legacyExtra = await legacyAdvanceLoanDetails(userIds, userNames);
+  const combinedValue =
+    totalValue + legacyExtra.reduce((s, r) => s + Number(r.amount || 0), 0)
+    + customReports.reduce((s, r) => s + Number(r.valueSold || 0), 0);
   const combinedDetails = [
     ...loans.map(l => ({
       id: l.id,
+      userId: l.userId,
       employeeName: userNames[l.userId] || "N/A",
       amount: l.amount,
       detail: l.detail,
@@ -729,8 +824,10 @@ async function getLoanReport(userIds: string[] | null, fromDate: Date, toDate: D
       managerName: l.managerApprovedByUserId ? (userNames[l.managerApprovedByUserId] || "N/A") : null,
       hodName: l.hodApprovedByUserId ? (userNames[l.hodApprovedByUserId] || "N/A") : null,
     })),
+    ...legacyExtra,
     ...customReports.map(r => ({
       id: r.id,
+      userId: r.userId ?? null,
       employeeName: "Custom Report",
       amount: r.valueSold ?? 0,
       detail: r.title || r.summary || "",
@@ -741,7 +838,7 @@ async function getLoanReport(userIds: string[] | null, fromDate: Date, toDate: D
       managerName: null,
       hodName: null,
     })),
-  ];
+  ].sort((a, b) => new Date(b.date as Date).getTime() - new Date(a.date as Date).getTime());
 
   return {
     type: "loan",
@@ -763,8 +860,110 @@ async function getLoanReport(userIds: string[] | null, fromDate: Date, toDate: D
     totals: {
       totalAdvance: combinedValue,
       totalRemaining,
+      totalRepaid: combinedValue - totalRemaining,
     },
   };
+}
+
+/**
+ * VAS Report -> "Department Wise Summary" (old DRM vasreport): the value of each
+ * paid invoice split across the departments of its items.
+ *  - Old-DRM invoices: webxl_dep_project_comm per invoice - items[i] (pkr) and deps[i]
+ *    (department id -> webxl_department name) line up by position; the invoice value is
+ *    split in proportion to item pkr (equally when all items are 0). Items without a
+ *    department -> "Unknown" (same as the old report).
+ *  - New-app invoices: by item name, using the department that item name was most
+ *    often routed to in the old data; otherwise "Unknown".
+ *  - Product-posting invoices: "Product Posting".
+ */
+// Old item name -> department map is static archive data; rebuild at most every 10 min.
+let vasNameToDepCache: { at: number; map: Map<string, string> } | null = null;
+
+async function vasDepartmentSummary(
+  rows: { invoiceId: string; source: string; value: number; itemNames: string[] }[],
+): Promise<{ department: string; amount: number }[]> {
+  const totals = new Map<string, number>();
+  const add = (dep: string, amt: number) => totals.set(dep, (totals.get(dep) ?? 0) + amt);
+  const invoiceRows = rows.filter((r) => r.source === "invoice" && r.value !== 0);
+  for (const r of rows) if (r.source === "product_posting_invoice" && r.value !== 0) add("Product Posting", r.value);
+  if (invoiceRows.length === 0) return Array.from(totals, ([department, amount]) => ({ department, amount }));
+
+  const depNames = new Map<string, string>();
+  const byInvoice = new Map<string, { pkr: number; dep: string | null }[]>();
+  const nameToDep = new Map<string, string>();
+  try {
+    const { rows: deps } = await pool.query(
+      `SELECT id::text AS id, btrim(name) AS name FROM legacy_archive.webxl_department`,
+    );
+    for (const d of deps) depNames.set(String(d.id), String(d.name).replace(/\s+/g, " ").trim());
+    const { rows: comm } = await pool.query(
+      `SELECT m.modern_id, c.items, c.deps
+         FROM migration_meta.migration_legacy_ids m
+         JOIN legacy_archive.webxl_dep_project_comm c ON c.inv_id = m.legacy_id
+        WHERE m.legacy_table = 'webxl_invoice' AND m.modern_id = ANY($1::text[])`,
+      [invoiceRows.map((r) => r.invoiceId)],
+    );
+    for (const c of comm) {
+      let items: any[] = [];
+      let depList: any[] = [];
+      try { items = JSON.parse(c.items || "[]"); } catch { items = []; }
+      try { depList = JSON.parse(c.deps || "[]"); } catch { depList = []; }
+      const list = byInvoice.get(c.modern_id) ?? [];
+      const n = Math.max(items.length, depList.length);
+      for (let i = 0; i < n; i++) {
+        const depId = depList[i]?.dep != null ? String(depList[i].dep) : null;
+        list.push({ pkr: Number(items[i]?.pkr) || 0, dep: depId ? depNames.get(depId) ?? null : null });
+      }
+      byInvoice.set(c.modern_id, list);
+    }
+    if (invoiceRows.some((r) => !byInvoice.has(r.invoiceId)) && vasNameToDepCache && Date.now() - vasNameToDepCache.at < 600_000) {
+      for (const [k, v] of Array.from(vasNameToDepCache.map)) nameToDep.set(k, v);
+    } else if (invoiceRows.some((r) => !byInvoice.has(r.invoiceId))) {
+      // item name -> most common old department (for invoices created in the new app)
+      const { rows: allComm } = await pool.query(`SELECT items, deps FROM legacy_archive.webxl_dep_project_comm`);
+      const counts = new Map<string, Map<string, number>>();
+      for (const c of allComm) {
+        let items: any[] = [];
+        let depList: any[] = [];
+        try { items = JSON.parse(c.items || "[]"); } catch { continue; }
+        try { depList = JSON.parse(c.deps || "[]"); } catch { continue; }
+        items.forEach((it: any, idx: number) => {
+          const project = String(it?.project ?? "").trim().toLowerCase();
+          const dep = depList[idx]?.dep != null ? String(depList[idx].dep) : "";
+          if (!project || !dep) return;
+          const m = counts.get(project) ?? new Map<string, number>();
+          m.set(dep, (m.get(dep) ?? 0) + 1);
+          counts.set(project, m);
+        });
+      }
+      for (const [project, m] of Array.from(counts)) {
+        const best = Array.from(m).sort((a, b) => b[1] - a[1])[0];
+        const name = best ? depNames.get(best[0]) : undefined;
+        if (name) nameToDep.set(project, name);
+      }
+      vasNameToDepCache = { at: Date.now(), map: new Map(nameToDep) };
+    }
+  } catch (err) {
+    console.error("[vas-report] department summary lookup failed", err);
+  }
+
+  for (const r of invoiceRows) {
+    let parts = byInvoice.get(r.invoiceId);
+    if (!parts || parts.length === 0) {
+      parts = (r.itemNames.length ? r.itemNames : [""]).map((nm) => ({
+        pkr: 0,
+        dep: nameToDep.get(nm.trim().toLowerCase()) ?? null,
+      }));
+    }
+    const weightSum = parts.reduce((s, p) => s + p.pkr, 0);
+    for (const p of parts) {
+      const share = weightSum > 0 ? p.pkr / weightSum : 1 / parts.length;
+      add(p.dep || "Unknown", r.value * share);
+    }
+  }
+  return Array.from(totals, ([department, amount]) => ({ department, amount: Math.round(amount * 100) / 100 }))
+    .filter((d) => d.amount !== 0)
+    .sort((a, b) => b.amount - a.amount);
 }
 
 export async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
@@ -839,22 +1038,33 @@ export async function getVasReport(userIds: string[] | null, fromDate: Date, toD
     productInvoiceConditions.push(inArray(productPostingInvoices.salesExecId, userIds));
   }
   const approvedProductInvoices = await db
-    .select()
+    .select(productPostingInvoiceVasFields)
     .from(productPostingInvoices)
     .where(and(...productInvoiceConditions));
 
   const standardInvoiceConditions = [
     eq(invoices.status, "Paid"),
-    gte(invoices.updatedAt, fromDate),
-    lte(invoices.updatedAt, toDate),
+    sql`${invoicePaidDate} >= ${fromDate}`,
+    sql`${invoicePaidDate} <= ${toDate}`,
   ];
   if (userIds && userIds.length > 0) {
     standardInvoiceConditions.push(inArray(invoices.createdByUserId, userIds));
   }
   const approvedStandardInvoices = await db
-    .select()
+    .select(standardInvoiceVasFields)
     .from(invoices)
     .where(and(...standardInvoiceConditions));
+  // Old-DRM invoices were migrated with currency "USD", but their totals are already
+  // PKR (legacy grand_total; doller_rate was only informational) - never convert them.
+  const legacyInvoiceIds = new Set<string>();
+  if (approvedStandardInvoices.length > 0) {
+    const { rows: legacyRows } = await pool.query(
+      `SELECT modern_id FROM migration_meta.migration_legacy_ids
+        WHERE legacy_table = 'webxl_invoice' AND modern_id = ANY($1::text[])`,
+      [approvedStandardInvoices.map((i) => i.id)],
+    );
+    for (const r of legacyRows) legacyInvoiceIds.add(String(r.modern_id));
+  }
 
   const invoiceDetails: any[] = [
     ...approvedProductInvoices.map(i => ({
@@ -889,8 +1099,8 @@ export async function getVasReport(userIds: string[] | null, fromDate: Date, toD
       company: i.customerName || null,
       method: i.paymentMethod || null,
       status: i.status,
-      date: i.updatedAt,
-      createdAt: i.updatedAt,
+      date: i.paidAt ?? i.updatedAt,
+      createdAt: i.paidAt ?? i.updatedAt,
       summary: null,
       notes: null,
       totalTasks: null,
@@ -904,7 +1114,9 @@ export async function getVasReport(userIds: string[] | null, fromDate: Date, toD
       // record happens to carry.
       valueSold: (i.paymentMethod || "").toLowerCase() === "free"
         ? 0
-        : (i.currency === "USD" ? (Number(i.total) || 0) * (Number(i.dollarRate) || 0) : (Number(i.total) || 0)),
+        : (i.currency === "USD" && !legacyInvoiceIds.has(String(i.id))
+            ? (Number(i.total) || 0) * (Number(i.dollarRate) || 0)
+            : (Number(i.total) || 0)),
       successRate: null,
       followUpsDone: null,
       missedLeads: null,
@@ -938,8 +1150,24 @@ export async function getVasReport(userIds: string[] | null, fromDate: Date, toD
 
   const chartData = generateChartData(combinedDetails, fromDate, toDate, 'valueSold');
 
+  const itemNamesById = new Map<string, string[]>();
+  for (const inv of approvedStandardInvoices as any[]) {
+    let list: any[] = [];
+    try { list = Array.isArray(inv.items) ? inv.items : JSON.parse(inv.items || "[]"); } catch { list = []; }
+    itemNamesById.set(inv.id, list.map((it: any) => String(it?.name ?? it?.project ?? "")).filter(Boolean));
+  }
+  const departmentSummary = await vasDepartmentSummary(
+    invoiceDetails.map((d) => ({
+      invoiceId: String(d.id),
+      source: d.source,
+      value: Number(d.valueSold) || 0,
+      itemNames: itemNamesById.get(String(d.id)) ?? [],
+    })),
+  );
+
   return {
     type: "vas",
+    departmentSummary,
     dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
     meta: {
       from: fromDate.toISOString(),
@@ -994,22 +1222,22 @@ async function getVasReportLegacyOfficeVas(userIds: string[] | null, fromDate: D
   }
 
   const invoiceEntriesRaw = await db
-    .select()
+    .select(productPostingInvoiceVasFields)
     .from(productPostingInvoices)
     .where(and(...invoiceConditions));
 
   // Fetch approved standard invoices
   const stdInvoiceConditions = [
-    gte(invoices.updatedAt, fromDate),
-    lte(invoices.updatedAt, toDate),
-    inArray(invoices.status, ['Paid', 'APPROVED'] as any) // Account approved
+    sql`${invoicePaidDate} >= ${fromDate}`,
+    sql`${invoicePaidDate} <= ${toDate}`,
+    inArray(invoices.status, ["Paid"]) // Account-approved standard invoices (enum has no APPROVED)
   ];
   if (userIds && userIds.length > 0) {
     stdInvoiceConditions.push(inArray(invoices.createdByUserId, userIds));
   }
 
   const stdInvoiceEntriesRaw = await db
-    .select()
+    .select(standardInvoiceVasFields)
     .from(invoices)
     .where(and(...stdInvoiceConditions));
 
@@ -1040,7 +1268,7 @@ async function getVasReportLegacyOfficeVas(userIds: string[] | null, fromDate: D
       companyName: i.customerName || 'Standard Invoice',
       amount: i.total,
       method: i.paymentMethod || "BankTransfer",
-      date: i.updatedAt,
+      date: i.paidAt ?? i.updatedAt,
       notes: `Invoice Status: ${i.status}`,
       type: "Invoice",
       userId: i.createdByUserId || null,
@@ -1159,8 +1387,18 @@ async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Dat
       hod_status: string | null;
       accountant_status: string | null;
     }>(
+      // gm_entries has no pay_date column (selecting it made this whole
+      // report fail with a 500); old-DRM GMs keep it on webxl_verify_gm.
       `SELECT id, status, approval_status, account_manager_status, final_status,
-              hod_approved_at, gm_bv_submitted_at, gm_bv_date, pay_date, hod_status, accountant_status
+              hod_approved_at, gm_bv_submitted_at, gm_bv_date,
+              (SELECT CASE WHEN v.pay_date ~ '^[1-9]\\d{3}-\\d{2}-\\d{2}' THEN left(v.pay_date, 10)::timestamp END
+                 FROM migration_meta.migration_legacy_ids m
+                 JOIN legacy_archive.webxl_verify_gm v
+                   ON v._source_table = 'webxl_verify_gm' AND v._legacy_pk = m.legacy_id
+                WHERE m.modern_table = 'gm_entries' AND m.legacy_table = 'webxl_verify_gm'
+                  AND m.modern_id = gm_entries.id::text
+                LIMIT 1) AS pay_date,
+              hod_status, accountant_status
          FROM drm.gm_entries WHERE id::text = ANY($1::text[])`,
       [ids]
     );
@@ -1374,7 +1612,17 @@ async function getBvReportCompanyWide(
       account_bv_date: Date | null;
       customer_id: string | null;
     }>(
-      `SELECT id, gm_bv_date, pay_date, gm_bv_submitted_at, account_bv_date,
+      // gm_entries has no pay_date column: old-DRM GMs keep it on webxl_verify_gm.
+      `SELECT id, gm_bv_date,
+              (SELECT CASE WHEN v.pay_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND v.pay_date NOT LIKE '0000%'
+                           THEN left(v.pay_date, 10)::timestamp END
+                 FROM migration_meta.migration_legacy_ids m
+                 JOIN legacy_archive.webxl_verify_gm v
+                   ON v._source_table = 'webxl_verify_gm' AND v._legacy_pk = m.legacy_id
+                WHERE m.modern_table = 'gm_entries' AND m.legacy_table = 'webxl_verify_gm'
+                  AND m.modern_id = gm_entries.id::text
+                LIMIT 1) AS pay_date,
+              gm_bv_submitted_at, account_bv_date,
               COALESCE(
                 customer_id::text,
                 (SELECT c.id::text FROM drm.customers c
@@ -1557,6 +1805,1691 @@ async function getBvReportCompanyWide(
     },
     reportCount: entries.length,
     personAchievement,
+  };
+}
+
+// "BV Pending EC/NC Only" (?scope=pending) — old-DRM parity.
+//
+// Migrated gm_entries carry no BV state (gm_bv_date / account_bv_date /
+// gm_bv_submitted_at are empty on every copied row), so the modern rules can't
+// reproduce the old page. For GMs that came from the old DRM this reads the
+// archived tables directly and applies func.php's `user_id_gm_bv_view2` rules:
+//   base: webxl_verify_gm with acc_disc_status/ceo_disc_status 'Approved',
+//         create_date in [from, to] (end day INCLUSIVE — PHP compared the
+//         datetime text to 'Y-m-d', which silently dropped the last day),
+//         package not Kwa/Ai/Cat (MySQL ci compare; NULL package excluded),
+//         optional user_id = selected user's old webxl_user id.
+//   pending (Pending Bv checkbox): the company has a webxl_gmaccount row with
+//         empty bvDate whose create_data is in [from, to]; BV Date = Pending.
+//   normal: the first webxl_gmaccount row for (com_id, user_id) has a bvDate
+//         within [from, to].
+//   BV Submit = first gmaccount row's user_bv_date for the company;
+//   Person = name of the company's assignee (webxl_company.assignId).
+// GMs created in the new app (not mapped from webxl_verify_gm) still come from
+// getBvReportCompanyWide's modern logic; mapped ones are dropped from that half
+// so nothing is counted twice.
+// Rc/New label — same mapping as the Create GM page's gmTypeLabel
+// (frontend/src/pages/account-gm-entries.tsx GM_TYPE_BY_CODE): codes from the
+// old DRM (webxl_verify_gm.renwal / migrated entry_type) become labels, blank
+// or unknown codes -> "None", and text labels new entries already store pass
+// through unchanged.
+const GM_TYPE_BY_CODE: Record<string, string> = { "1": "New", "0": "Rc", "2": "Ec", "3": "Rc-Up", "4": "Kwa" };
+function gmTypeLabel(raw: unknown): string {
+  const v = String(raw ?? "").trim();
+  if (v === "") return "None";
+  if (/^\d+$/.test(v)) return GM_TYPE_BY_CODE[v] ?? "None";
+  return v;
+}
+
+// Old dates are Pakistan wall-clock text. Return them as offset-less ISO
+// ("YYYY-MM-DDTHH:mm:ss"), which browsers parse as local time, so the page
+// prints the same day/time the old DRM showed regardless of timezone.
+function legacyWallClock(value: string | null | undefined): string | null {
+  const s = (value ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(s) || s.startsWith("0000")) return null;
+  const time = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s) ? s.slice(11, 19) : "00:00:00";
+  return `${s.slice(0, 10)}T${time}`;
+}
+
+function localYmd(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+export async function getBvPendingLegacyReport(
+  userIds: string[] | null,
+  fromDate: Date,
+  toDate: Date,
+  pendingOnly: boolean,
+): Promise<ReportData> {
+  const startYmd = localYmd(fromDate);
+  const endYmd = localYmd(toDate);
+
+  // Selected modern user uuid(s) -> old webxl_user ids. A user with no old id
+  // matches no legacy rows (empty array), null = no user filter ("All").
+  let legacyUserIds: string[] | null = null;
+  if (userIds && userIds.length > 0) {
+    const mapped = await pool.query<{ legacy_id: string }>(
+      `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+        WHERE modern_table = 'users' AND legacy_table = 'webxl_user' AND modern_id = ANY($1::text[])`,
+      [userIds],
+    );
+    legacyUserIds = mapped.rows.map((r) => r.legacy_id);
+  }
+
+  const [legacyResult, modern] = await Promise.all([
+    pool.query<{
+      legacy_id: string;
+      com_id: string;
+      package: string | null;
+      price: string | null;
+      status: string | null;
+      renwal: string | null;
+      create_date: string | null;
+      pay_date: string | null;
+      cname: string | null;
+      contact: string | null;
+      phone: string | null;
+      person_name: string | null;
+      person_id: string | null;
+      customer_id: string | null;
+      gm_entry_id: string | null;
+      user_bv_date: string | null;
+      bv_date: string | null;
+      ab_paid_date: string | null;
+    }>(
+      `WITH base AS (
+         SELECT v._legacy_pk, v.com_id, v.user_id, v.package, v.price, v.status, v.renwal,
+                v.create_date, v.pay_date
+           FROM legacy_archive.webxl_verify_gm v
+          WHERE lower(rtrim(v.acc_disc_status)) = 'approved'
+            AND lower(rtrim(v.ceo_disc_status)) = 'approved'
+            AND v.create_date >= $1::text AND v.create_date < ($2::date + 1)::text
+            AND v.package IS NOT NULL
+            AND lower(rtrim(v.package)) NOT IN ('kwa', 'ai', 'cat')
+            AND ($3::text[] IS NULL OR v.user_id = ANY($3::text[]))
+       ),
+       ga AS (
+         SELECT g._legacy_pk::bigint AS gid, g.com_id, g.user_id, g."bvDate" AS bv_date,
+                g.user_bv_date, g.create_data
+           FROM legacy_archive.webxl_gmaccount g
+          WHERE g.com_id IN (SELECT com_id FROM base)
+       ),
+       ga_first_com AS (
+         SELECT DISTINCT ON (com_id) com_id, user_bv_date FROM ga ORDER BY com_id, gid
+       ),
+       ga_first_com_user AS (
+         SELECT DISTINCT ON (com_id, user_id) com_id, user_id, bv_date FROM ga ORDER BY com_id, user_id, gid
+       ),
+       ga_pending AS (
+         SELECT DISTINCT com_id FROM ga
+          WHERE COALESCE(bv_date, '') IN ('', '0000-00-00')
+            AND create_data >= $1::text AND create_data < ($2::date + 1)::text
+       ),
+       cd AS (
+         SELECT DISTINCT ON (d.com_id) d.com_id, d.phone
+           FROM legacy_archive.webxl_com_detail d
+          WHERE d.com_id IN (SELECT com_id FROM base)
+          ORDER BY d.com_id, d._legacy_pk::bigint
+       )
+       SELECT b._legacy_pk AS legacy_id, b.com_id, b.package, b.price, b.status, b.renwal,
+              b.create_date, b.pay_date,
+              c.cname, c.contact, cd.phone,
+              u.name AS person_name, mu.modern_id AS person_id,
+              mc.modern_id AS customer_id, mg.modern_id AS gm_entry_id,
+              f.user_bv_date, fu.bv_date,
+              (SELECT MAX(ap.paid_date)::text FROM drm.ab_payments ap
+                WHERE mg.modern_id IS NOT NULL AND ap.gm_entry_id = mg.modern_id::uuid
+                  AND ap.status = 'paid' AND COALESCE(ap.is_deleted, false) = false) AS ab_paid_date
+         FROM base b
+         LEFT JOIN legacy_archive.webxl_company c
+           ON c._source_table = 'webxl_company' AND c._legacy_pk = b.com_id
+         LEFT JOIN cd ON cd.com_id = b.com_id
+         LEFT JOIN legacy_archive.webxl_user u
+           ON u._source_table = 'webxl_user' AND u._legacy_pk = c."assignId"
+         LEFT JOIN migration_meta.migration_legacy_ids mu
+           ON mu.entity_type = 'user' AND mu.legacy_table = 'webxl_user' AND mu.legacy_id = c."assignId"
+         LEFT JOIN migration_meta.migration_legacy_ids mc
+           ON mc.entity_type = 'customer' AND mc.legacy_table = 'webxl_company' AND mc.legacy_id = b.com_id
+         LEFT JOIN migration_meta.migration_legacy_ids mg
+           ON mg.entity_type = 'gm_entry' AND mg.legacy_table = 'webxl_verify_gm' AND mg.legacy_id = b._legacy_pk
+         LEFT JOIN ga_first_com f ON f.com_id = b.com_id
+         LEFT JOIN ga_first_com_user fu ON fu.com_id = b.com_id AND fu.user_id = b.user_id
+        WHERE CASE WHEN $4::boolean
+                   THEN b.com_id IN (SELECT com_id FROM ga_pending)
+                   ELSE fu.bv_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND fu.bv_date NOT LIKE '0000%'
+                        AND left(fu.bv_date, 10) >= $1::text AND left(fu.bv_date, 10) <= $2::text
+              END
+        ORDER BY b._legacy_pk::bigint DESC`,
+      [startYmd, endYmd, legacyUserIds, pendingOnly],
+    ),
+    getBvReportCompanyWide(userIds, fromDate, toDate, { bvFilter: pendingOnly ? "pending" : "submitted" }),
+  ]);
+
+  // Drop old-DRM GMs from the modern half — the legacy query above owns them.
+  const modernIds = modern.details.map((d: any) => String(d.gmEntryId ?? d.id));
+  const mappedIds = new Set<string>();
+  if (modernIds.length > 0) {
+    const mapped = await pool.query<{ modern_id: string }>(
+      `SELECT modern_id FROM migration_meta.migration_legacy_ids
+        WHERE modern_table = 'gm_entries' AND legacy_table = 'webxl_verify_gm' AND modern_id = ANY($1::text[])`,
+      [modernIds],
+    );
+    for (const r of mapped.rows) mappedIds.add(r.modern_id);
+  }
+  const modernDetails = modern.details
+    .filter((d: any) => !mappedIds.has(String(d.gmEntryId ?? d.id)))
+    .map((d: any) => ({ ...d, rcNew: gmTypeLabel(d.rcNew), status: gmTypeLabel(d.status), source: "modern" }));
+
+  const legacyDetails = legacyResult.rows.map((r) => {
+    const rcNew = gmTypeLabel(r.renwal);
+    const paymentReceived = legacyWallClock(r.create_date);
+    const price = Number(r.price);
+    return {
+      id: r.gm_entry_id ?? `legacy-gm-${r.legacy_id}`,
+      gmEntryId: r.gm_entry_id,
+      legacyGmId: r.legacy_id,
+      comId: r.com_id,
+      customerId: r.customer_id,
+      companyName: r.cname,
+      mobile: `${r.contact ?? ""}/${r.phone ?? ""}`,
+      package: r.package,
+      price: Number.isFinite(price) ? price : 0,
+      method: r.status || "-",
+      personName: r.person_name,
+      personId: r.person_id,
+      bvSubmit: legacyWallClock(r.user_bv_date),
+      // Pending mode prints "Pending" (null); normal mode the real bvDate.
+      bv: pendingOnly ? null : legacyWallClock(r.bv_date),
+      accountBvDate: pendingOnly ? null : legacyWallClock(r.bv_date),
+      rcNew,
+      paymentReceived,
+      abPayDate: legacyWallClock(r.pay_date) ?? legacyWallClock(r.ab_paid_date),
+      status: rcNew,
+      type: rcNew,
+      date: paymentReceived,
+      source: "legacy",
+    };
+  });
+
+  const details = [...legacyDetails, ...modernDetails];
+  const totalValue = details.reduce((sum, d: any) => sum + (Number(d.price) || 0), 0);
+  return {
+    ...modern,
+    metrics: { ...modern.metrics, totalTasks: details.length, valueOfServiceSold: totalValue },
+    chartData: generateChartData(
+      details.map((d: any) => ({ createdAt: d.date, price: d.price })),
+      fromDate,
+      toDate,
+      "price",
+    ),
+    details,
+    totals: { ...(modern.totals ?? { totalRemaining: 0 }), totalAdvance: totalValue },
+    reportCount: details.length,
+  };
+}
+
+// "Reports" sidebar BV Report (?scope=company) — old-DRM parity.
+//
+// Port of func.php's `user_id_gm_bv_view` ("View Gm BV Reports"). Migrated
+// gm_entries have no BV dates, so old-DRM GMs are read from legacy_archive:
+//   targets: webxl_setterget (terget_cat '1') whose [start_date, end_date]
+//            covers the whole selected range, joined to webxl_terget for
+//            package / conversion / price / reward / vas / kwa.
+//   rows:    per target, approved webxl_verify_gm rows of the target's user and
+//            package created from (start - 8 months) through the end date, kept
+//            when the company has a webxl_gmaccount row for that user whose
+//            bvDate falls in [start, end] (both inclusive, as in PHP's DATE()).
+//            A user with two targets for the same package shows the GM twice,
+//            exactly as the old page did.
+//   Comm:    finalComm when set, else the PHP cascade (see legacyBvComm).
+// The Select Status filter (old type_fillter = renwal code) is applied by the
+// page on `status`, which carries the same gmTypeLabel as Rc/New.
+// GMs created in the new app keep getBvReportCompanyWide's modern logic; GMs
+// mapped from webxl_verify_gm are dropped from that half (no double count).
+const LEGACY_DROPOUT_LABELS: Record<string, string> = {
+  "1": "Basic Drop",
+  "2": "Basic Plus Drop",
+  "3": "Basic P/D",
+  "4": "Basic Plus P/D",
+  "5": "Pkg Update",
+};
+
+// PHP 8 loose `$value == $n` for a TEXT column: NULL == 0, numeric strings by
+// value, '' never equals a number.
+function phpLooseEq(value: string | null, n: number): boolean {
+  if (value === null) return n === 0;
+  const v = value.trim();
+  return v !== "" && /^-?\d+(\.\d+)?$/.test(v) && Number(v) === n;
+}
+
+// date('Y-m-d', strtotime("$ymd +N month")) — PHP lets the day overflow into
+// the next month, like JS Date does.
+function phpAddMonths(ymd: string, months: number): Date {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, m - 1 + months, d);
+}
+
+function legacyBvComm(
+  r: { package: string | null; renwal: string | null; droupout: string | null; final_comm: string | null; conversion: string | null },
+  ctx: { achieved: number; achievedLastMonth: number; target: number; inLastMonth: boolean },
+): number | string {
+  const fc = r.final_comm;
+  // if ($row['finalComm'] >= 0 && $row['finalComm'] != '')
+  if (fc !== null && fc !== "" && !(/^-?\d+(\.\d+)?$/.test(fc.trim()) && Number(fc) < 0)) {
+    return Number.isFinite(Number(fc)) ? Number(fc) : fc;
+  }
+  const conv = Number(r.conversion) || 0;
+  const pkg = r.package ?? "";
+  const rcOrEc = phpLooseEq(r.renwal, 0) || phpLooseEq(r.renwal, 2);
+  const isNew = phpLooseEq(r.renwal, 1);
+  const dropout = (c: number) => {
+    if (phpLooseEq(r.droupout, 1) || phpLooseEq(r.droupout, 2)) c = 5000;
+    if (phpLooseEq(r.droupout, 3)) c = 3000;
+    if (phpLooseEq(r.droupout, 4)) c = 5000;
+    if (phpLooseEq(r.droupout, 5)) c = 6000;
+    return c;
+  };
+  // Package-rate branch (Basic 3000 / GGS 2500 / Basic Plus & Standard 5000).
+  const packageRule = () => {
+    let c: number;
+    if (pkg === "Basic") c = 3000;
+    else if (pkg === "GGS Digital" || pkg === "GGS Lite") c = 2500;
+    else if (pkg === "Basic Plus" || pkg === "Standard") c = 5000;
+    else return conv;
+    if (rcOrEc) c = dropout(1000);
+    if (isNew) c = dropout(c);
+    return c;
+  };
+  // Target-conversion branch.
+  const conversionRule = () => {
+    let c = conv;
+    if (rcOrEc) {
+      c = dropout(1000);
+      if (pkg === "Verified Supplier") c = conv;
+    }
+    if (isNew) c = dropout(c);
+    return c;
+  };
+  // The PHP nests the same two rules several times; every path reduces to:
+  const { achieved, achievedLastMonth, target, inLastMonth } = ctx;
+  if (achieved < target) {
+    return achievedLastMonth >= target && inLastMonth ? conversionRule() : packageRule();
+  }
+  return achievedLastMonth < target && inLastMonth ? packageRule() : conversionRule();
+}
+
+// Old BV report footer (func.php user_id_gm_bv_view, <tfoot>) for one user:
+//   "T.No# P/T/Team"  P = userABtargetAchiveCountNumPay(user, start, end)
+//                       (gmaccount rows of the user joined to renwal=1 GMs of
+//                       the company created in range), T = target_num of the
+//                       LAST covering webxl_setterget row (/3 for a 1-month view),
+//                       Team = userABtargetAchiveCountNumTotalPayDate (all
+//                       renwal=1 GMs created in range).
+//   "Achive (x%)"     round(P*100 / T of the last displayed row's target).
+//   Reward            sum of the rows' target reward, replaced by 5000 / 0 when
+//                       the target is reached (P>=T, x>=100) — see rewardOverride.
+//   "Total Rc"        count of Rc (renwal 0) rows × 1000 (display only).
+//   "Final Com"       P>=T ? round(Comm + Reward) : Comm (team bonus is always 0),
+//                       plus the HOD-typed Reward AB on the page.
+export type BvLegacyFooter = {
+  personId: string;
+  legacyUserId: string;
+  targetName: string | null;
+  achieved: number;
+  targetQuota: number;
+  teamTotal: number;
+  achievePct: number;
+  // null = use the Reward column sum; a number = the old override.
+  rewardOverride: number | null;
+  rewardInFinal: boolean;
+  rcRate: number;
+  totals: {
+    price: number;
+    extraDisc: number;
+    comm: number;
+    reward: number;
+    vas: number;
+    kwa: number;
+    rcCount: number;
+    rcAmount: number;
+    finalCom: number;
+  };
+};
+
+export async function getBvCompanyLegacyReport(
+  userIds: string[] | null,
+  fromDate: Date,
+  toDate: Date,
+): Promise<ReportData> {
+  const startYmd = localYmd(fromDate);
+  const endYmd = localYmd(toDate);
+  // PHP: $last_m = start -8 month; $startDataLast = start -1 month;
+  // $endDataLast = date('Y-m-31', end -1 month) (string, may be e.g. 09-31).
+  const lastM = localYmd(phpAddMonths(startYmd, -8));
+  const startLast = localYmd(phpAddMonths(startYmd, -1));
+  const endLastBase = phpAddMonths(endYmd, -1);
+  const endLast = `${localYmd(endLastBase).slice(0, 7)}-31`;
+  // $howeverManyMonths: DateTime diff in whole months, forced to 1 when the
+  // start and end month numbers match; a 1-month view uses target_num / 3.
+  const [sy, sm, sd] = startYmd.split("-").map(Number);
+  const [ey, em, ed] = endYmd.split("-").map(Number);
+  let monthsDiff = (ey - sy) * 12 + (em - sm) - (ed < sd ? 1 : 0);
+  if (sm === em) monthsDiff = 1;
+  const targetDivisor = monthsDiff === 1 ? 3 : 1;
+
+  let legacyUserIds: string[] | null = null;
+  if (userIds && userIds.length > 0) {
+    const mapped = await pool.query<{ legacy_id: string }>(
+      `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+        WHERE modern_table = 'users' AND legacy_table = 'webxl_user' AND modern_id = ANY($1::text[])`,
+      [userIds],
+    );
+    legacyUserIds = mapped.rows.map((r) => r.legacy_id);
+  }
+  // Achievement counts (userABtargetAchiveCountNumPay) are taken for the one
+  // selected user; with "All" PHP passed 'All' as the user, so they are 0.
+  const achievementUser = legacyUserIds && legacyUserIds.length === 1 ? legacyUserIds[0] : null;
+
+  const footerStatsPromise = achievementUser
+    ? pool.query<{
+        achieved: string;
+        team_total: string;
+        target_num: string | null;
+        terget_name: string | null;
+        role_id: string | null;
+      }>(
+        `SELECT
+           (SELECT COUNT(*) FROM legacy_archive.webxl_gmaccount g
+              JOIN legacy_archive.webxl_verify_gm v ON v.com_id = g.com_id
+             WHERE g.user_id = $3 AND trim(v.renwal) = '1'
+               AND left(v.create_date, 10) >= $1 AND left(v.create_date, 10) <= $2) AS achieved,
+           (SELECT COUNT(*) FROM legacy_archive.webxl_verify_gm v
+             WHERE trim(v.renwal) = '1'
+               AND left(v.create_date, 10) >= $1 AND left(v.create_date, 10) <= $2) AS team_total,
+           lt.target_num, lt.terget_name,
+           (SELECT u."roleId" FROM legacy_archive.webxl_user u
+             WHERE u._source_table = 'webxl_user' AND u._legacy_pk = $3) AS role_id
+         FROM (SELECT 1) one
+         LEFT JOIN LATERAL (
+           SELECT st.target_num, t.terget_name
+             FROM legacy_archive.webxl_setterget st
+             LEFT JOIN legacy_archive.webxl_terget t
+               ON t._source_table = 'webxl_terget' AND t._legacy_pk = st.terget_id
+            WHERE rtrim(st.terget_cat) = '1' AND st.user_id = $3
+              AND st.start_date <= $1 AND st.end_date >= $2
+            ORDER BY st._legacy_pk::bigint DESC
+            LIMIT 1
+         ) lt ON true`,
+        [startYmd, endYmd, achievementUser],
+      )
+    : Promise.resolve(null);
+
+  const [legacyResult, modern] = await Promise.all([
+    pool.query<{
+      st_id: string;
+      t_user: string;
+      target_num: string | null;
+      terget_name: string | null;
+      conversion: string | null;
+      t_price: string | null;
+      reward: string | null;
+      kwa: string | null;
+      vas: string | null;
+      legacy_id: string;
+      com_id: string;
+      package: string | null;
+      extra_discount: string | null;
+      status: string | null;
+      renwal: string | null;
+      droupout: string | null;
+      final_comm: string | null;
+      create_date: string | null;
+      pay_date: string | null;
+      bv_date: string | null;
+      user_bv_date: string | null;
+      cname: string | null;
+      person_name: string | null;
+      person_id: string | null;
+      customer_id: string | null;
+      gm_entry_id: string | null;
+      achieved: string;
+      achieved_last: string;
+    }>(
+      // MATERIALIZED: archive tables have no planner stats, and inlining tg
+      // made PG re-scan webxl_setterget once per verify_gm row (~8 s).
+      `WITH tg AS MATERIALIZED (
+         SELECT st._legacy_pk AS st_id, st.user_id AS t_user, st.target_num,
+                t.terget_name, COALESCE(t.package, '') AS t_package,
+                t.conversion, t.price AS t_price, t.reward, t.kwa, t.vas
+           FROM legacy_archive.webxl_setterget st
+           LEFT JOIN legacy_archive.webxl_terget t
+             ON t._source_table = 'webxl_terget' AND t._legacy_pk = st.terget_id
+          WHERE rtrim(st.terget_cat) = '1'
+            AND st.start_date <= $1::text AND st.end_date >= $2::text
+            AND ($6::text[] IS NULL OR st.user_id = ANY($6::text[]))
+       ),
+       base AS (
+         SELECT tg.*, v._legacy_pk AS legacy_id, v.com_id, v.user_id, v.package, v.extra_discount,
+                v.status, v.renwal, v.droupout, v."finalComm" AS final_comm, v.create_date, v.pay_date
+           FROM tg
+           JOIN legacy_archive.webxl_verify_gm v
+             ON v.user_id = tg.t_user AND lower(rtrim(v.package)) = lower(rtrim(tg.t_package))
+          WHERE lower(rtrim(v.acc_disc_status)) = 'approved'
+            AND lower(rtrim(v.ceo_disc_status)) = 'approved'
+            AND left(v.create_date, 10) >= $3::text AND left(v.create_date, 10) <= $2::text
+       ),
+       ga AS (
+         SELECT g._legacy_pk::bigint AS gid, g.com_id, g.user_id, g."bvDate" AS bv_date, g.user_bv_date
+           FROM legacy_archive.webxl_gmaccount g
+          WHERE g.com_id IN (SELECT com_id FROM base)
+       ),
+       bv AS (
+         SELECT DISTINCT ON (com_id, user_id) com_id, user_id, bv_date
+           FROM ga
+          WHERE bv_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+            AND left(bv_date, 10) >= $1::text AND left(bv_date, 10) <= $2::text
+          ORDER BY com_id, user_id, gid
+       ),
+       first_com AS (
+         SELECT DISTINCT ON (com_id) com_id, user_bv_date FROM ga ORDER BY com_id, gid
+       ),
+       ach AS (
+         SELECT COUNT(*) FILTER (WHERE left(v.create_date, 10) >= $1::text AND left(v.create_date, 10) <= $2::text) AS achieved,
+                COUNT(*) FILTER (WHERE left(v.create_date, 10) >= $4::text AND left(v.create_date, 10) <= $5::text) AS achieved_last
+           FROM legacy_archive.webxl_gmaccount g
+           JOIN legacy_archive.webxl_verify_gm v ON v.com_id = g.com_id
+          WHERE $7::text IS NOT NULL AND g.user_id = $7::text AND trim(v.renwal) = '1'
+       )
+       SELECT b.st_id, b.t_user, b.target_num, b.terget_name, b.conversion, b.t_price, b.reward, b.kwa, b.vas,
+              b.legacy_id, b.com_id, b.package, b.extra_discount, b.status, b.renwal, b.droupout,
+              b.final_comm, b.create_date, b.pay_date,
+              bv.bv_date, f.user_bv_date,
+              c.cname, u.name AS person_name,
+              mu.modern_id AS person_id, mc.modern_id AS customer_id, mg.modern_id AS gm_entry_id,
+              ge.final_comm AS app_final_comm,
+              ach.achieved, ach.achieved_last
+         FROM base b
+         JOIN bv ON bv.com_id = b.com_id AND bv.user_id = b.user_id
+         CROSS JOIN ach
+         LEFT JOIN first_com f ON f.com_id = b.com_id
+         LEFT JOIN legacy_archive.webxl_company c
+           ON c._source_table = 'webxl_company' AND c._legacy_pk = b.com_id
+         LEFT JOIN legacy_archive.webxl_user u
+           ON u._source_table = 'webxl_user' AND u._legacy_pk = c."assignId"
+         LEFT JOIN migration_meta.migration_legacy_ids mu
+           ON mu.entity_type = 'user' AND mu.legacy_table = 'webxl_user' AND mu.legacy_id = b.user_id
+         LEFT JOIN migration_meta.migration_legacy_ids mc
+           ON mc.entity_type = 'customer' AND mc.legacy_table = 'webxl_company' AND mc.legacy_id = b.com_id
+         LEFT JOIN migration_meta.migration_legacy_ids mg
+           ON mg.entity_type = 'gm_entry' AND mg.legacy_table = 'webxl_verify_gm' AND mg.legacy_id = b.legacy_id
+         -- commission edited in the new app (wins over the old finalComm / computed value)
+         LEFT JOIN drm.gm_entries ge ON ge.id::text = mg.modern_id
+        ORDER BY b.st_id::bigint, b.legacy_id::bigint DESC`,
+      [startYmd, endYmd, lastM, startLast, endLast, legacyUserIds, achievementUser],
+    ),
+    getBvReportCompanyWide(userIds, fromDate, toDate),
+  ]);
+
+  const modernIds = modern.details.map((d: any) => String(d.gmEntryId ?? d.id));
+  const mappedIds = new Set<string>();
+  if (modernIds.length > 0) {
+    const mapped = await pool.query<{ modern_id: string }>(
+      `SELECT modern_id FROM migration_meta.migration_legacy_ids
+        WHERE modern_table = 'gm_entries' AND legacy_table = 'webxl_verify_gm' AND modern_id = ANY($1::text[])`,
+      [modernIds],
+    );
+    for (const r of mapped.rows) mappedIds.add(r.modern_id);
+  }
+  const modernDetails = modern.details
+    .filter((d: any) => !mappedIds.has(String(d.gmEntryId ?? d.id)))
+    .map((d: any) => ({ ...d, rcNew: gmTypeLabel(d.rcNew), status: gmTypeLabel(d.status), source: "modern" }));
+  // Commission edited in the new app wins for new-app GMs too.
+  if (modernDetails.length > 0) {
+    const fc = await pool.query<{ id: string; final_comm: string | null }>(
+      `SELECT id::text AS id, final_comm FROM drm.gm_entries WHERE id::text = ANY($1::text[]) AND final_comm IS NOT NULL`,
+      [modernDetails.map((d: any) => String(d.gmEntryId ?? d.id))],
+    );
+    const byId = new Map(fc.rows.map((r) => [r.id, Number(r.final_comm)]));
+    for (const d of modernDetails as any[]) {
+      const v = byId.get(String(d.gmEntryId ?? d.id));
+      if (v != null) { d.comm = v; d.commEdited = true; }
+    }
+  }
+
+  // Old dates as plain 'YYYY-MM-DD' (what the old page printed); invalid -> null.
+  const ymd = (s: string | null) => {
+    const v = (s ?? "").trim();
+    return /^\d{4}-\d{2}-\d{2}/.test(v) && !v.startsWith("0000") ? v.slice(0, 10) : null;
+  };
+  const num = (s: string | null) => (Number.isFinite(Number(s)) ? Number(s) : 0);
+
+  let lastTarget: { personId: string | null; targetName: string; targetQuota: number; achieved: number } | null = null;
+  let lastRowTarget: number | null = null;
+  let legacyRcCount = 0;
+  const legacyDetails = legacyResult.rows.map((r, idx) => {
+    const target = num(r.target_num) / targetDivisor;
+    lastRowTarget = target;
+    if (phpLooseEq(r.renwal, 0)) legacyRcCount++;
+    const achieved = Number(r.achieved) || 0;
+    const createdYmd = ymd(r.create_date) ?? "";
+    const commEdited = (r as any).app_final_comm != null;
+    const comm = commEdited
+      ? Number((r as any).app_final_comm)
+      : legacyBvComm(r, {
+          achieved,
+          achievedLastMonth: Number(r.achieved_last) || 0,
+          target,
+          inLastMonth: createdYmd >= startLast && createdYmd <= endLast,
+        });
+    lastTarget = { personId: r.person_id, targetName: r.terget_name ?? "", targetQuota: Math.round(target * 10) / 10, achieved };
+    const rcNew = gmTypeLabel(r.renwal);
+    return {
+      // A GM can appear under two targets — keep React keys unique.
+      id: `${r.gm_entry_id ?? `legacy-gm-${r.legacy_id}`}:${r.st_id}:${idx}`,
+      gmEntryId: r.gm_entry_id,
+      legacyGmId: r.legacy_id,
+      comId: r.com_id,
+      customerId: r.customer_id,
+      companyName: r.cname,
+      package: r.package,
+      price: num(r.t_price),
+      extraDisc: num(r.extra_discount),
+      comm,
+      commEdited,
+      reward: num(r.reward),
+      vas: num(r.vas),
+      kwa: num(r.kwa),
+      method: r.status || "-",
+      personName: r.person_name,
+      personId: r.person_id,
+      pay: ymd(r.pay_date),
+      bvSubmit: ymd(r.user_bv_date),
+      bv: ymd(r.bv_date),
+      accountBvDate: ymd(r.bv_date),
+      rcNew,
+      status: rcNew,
+      // DropoutTiltle(): 1..5 -> label, anything else "None".
+      dropout: LEGACY_DROPOUT_LABELS[String([1, 2, 3, 4, 5].find((n) => phpLooseEq(r.droupout, n)))] ?? "None",
+      type: rcNew,
+      targetName: r.terget_name,
+      paymentReceived: createdYmd || null,
+      date: createdYmd || null,
+      source: "legacy",
+    };
+  });
+
+  const details = [...legacyDetails, ...modernDetails];
+  const sum = (key: string) => details.reduce((s, d: any) => s + (Number(d[key]) || 0), 0);
+  const personAchievement = [...(modern.personAchievement ?? [])];
+  const lt = lastTarget as { personId: string | null; targetName: string; targetQuota: number; achieved: number } | null;
+  if (achievementUser && lt?.personId && !personAchievement.some((a) => a.personId === lt.personId)) {
+    // Footer "T.No# achieved/target" of the old page (last target processed).
+    personAchievement.push({ personId: lt.personId, targetName: lt.targetName, targetQuota: lt.targetQuota, achievedCount: lt.achieved });
+  }
+  let footer: BvLegacyFooter | null = null;
+  const footerStats = await footerStatsPromise;
+  if (footerStats && achievementUser && userIds && userIds.length === 1) {
+    const fs = footerStats.rows[0];
+    const achieved = Number(fs?.achieved) || 0;
+    const targetQuota = num(fs?.target_num ?? null) / targetDivisor;
+    const rowT = lastRowTarget as number | null;
+    const achievePct = rowT ? Math.round((achieved * 100) / rowT) : 0;
+    const legacySum = (key: string) => legacyDetails.reduce((s2, d: any) => s2 + (Number(d[key]) || 0), 0);
+    let rewardOverride: number | null = null;
+    if (achieved >= targetQuota && achievePct >= 100 && !["39", "54", "47", "35"].includes(achievementUser)) {
+      const roles = String(fs?.role_id ?? "").split(",").map((x) => x.trim());
+      const dAndDAssistant = roles.includes("27") || roles.includes("28") || roles.includes("29");
+      rewardOverride = monthsDiff === 1 && !dAndDAssistant ? 5000 : 0;
+    }
+    const comm = legacySum("comm");
+    const reward = rewardOverride ?? legacySum("reward");
+    const rewardInFinal = achieved >= targetQuota;
+    footer = {
+      personId: userIds[0],
+      legacyUserId: achievementUser,
+      targetName: fs?.terget_name ?? null,
+      achieved,
+      targetQuota,
+      teamTotal: Number(fs?.team_total) || 0,
+      achievePct,
+      rewardOverride,
+      rewardInFinal,
+      rcRate: 1000,
+      totals: {
+        price: legacySum("price"),
+        extraDisc: Math.round(legacySum("extraDisc") * 100) / 100,
+        comm,
+        reward,
+        vas: legacySum("vas"),
+        kwa: legacySum("kwa"),
+        rcCount: legacyRcCount,
+        rcAmount: legacyRcCount * 1000,
+        finalCom: rewardInFinal ? Math.round(comm + reward) : comm,
+      },
+    };
+  }
+
+  return {
+    ...modern,
+    footer,
+    metrics: { ...modern.metrics, totalTasks: details.length, valueOfServiceSold: sum("price") },
+    chartData: generateChartData(
+      details.map((d: any) => ({ createdAt: d.date, price: d.price })),
+      fromDate,
+      toDate,
+      "price",
+    ),
+    details,
+    totals: {
+      totalAdvance: sum("price"),
+      totalRemaining: 0,
+      totalComm: sum("comm"),
+      totalReward: sum("reward"),
+      totalVas: sum("vas"),
+      totalKwa: sum("kwa"),
+    },
+    reportCount: details.length,
+    personAchievement,
+  };
+}
+
+// GM SYSTEM page (/analytics/gm) — old-DRM parity.
+//
+// Port of func.php's `user_id_gm_view`. Migrated gm_entries lack most of the
+// old columns (KWA/PSA, BV dates, accountant/HOD status), so old-DRM GMs are
+// read from legacy_archive.webxl_verify_gm. Filters, as in PHP:
+//   user     -> verify_gm.user_id = selected user's old id; City and Package
+//               only apply when "All" users is selected (PHP ignored them
+//               otherwise); City = webxl_user.branch of the GM's user.
+//   type     -> renwal code (gmTypeLabel: New 1, Rc 0, Ec 2, Rc-Up 3, Kwa 4,
+//               None = anything else).
+//   behalf   -> Payment Type: Full = empty webxl_behalf, else exact value
+//               (Installment / Delay / Extra Discount).
+//   normal   -> acc_disc_status & ceo_disc_status 'Approved', package not
+//               Kwa/Psa, date(create_request) in [from, to].
+//   abPay    -> the date tested is pay_date instead (create_date in Q Wise).
+//   qWise    -> no approval / package exclusion; date(create_date) in
+//               [from, to]; one table per Alibaba quarter overlapping the
+//               range (Q1 Apr-Jun ... Q4 Jan-Mar), each listing the SAME rows
+//               with that quarter's target and a running amount total — the
+//               old page did exactly that.
+export type GmSystemFilters = {
+  city?: string | null;
+  pkg?: string | null;
+  type?: string | null;
+  behalf?: string | null;
+  qWise?: boolean;
+  abPayDate?: boolean;
+  /** Server-side pagination for GM View (/analytics/gm) — avoids loading every row at once. */
+  page?: number;
+  pageSize?: number;
+};
+
+const GM_TYPE_CODE_BY_LABEL: Record<string, string> = { New: "1", Rc: "0", Ec: "2", "Rc-Up": "3", Kwa: "4" };
+
+const GM_LEGACY_GEM_ENTRIES_APPROVED_PRED = `
+       lower(coalesce(ge.approval_status, '')) = 'approved'
+       OR lower(coalesce(ge.final_status, '')) = 'approved'
+       OR lower(coalesce(ge.status::text, '')) IN ('approved', 'completed')
+       OR lower(coalesce(ge.account_manager_status, '')) = 'approved'
+       OR lower(coalesce(ge.accountant_status, '')) = 'approved'`;
+
+/**
+ * Narrow verify_gm by user/date first, then hit gm_entries only for rows whose
+ * archive acc_disc is not already Approved (avoids scanning all migrated GMs).
+ */
+const GM_LEGACY_FILTERED_CTE = `
+candidates AS (
+  SELECT v._legacy_pk, v.com_id, v.user_id, v.member_id, v.package, v.amount, v.discount,
+         v.extra_discount, v.status, v.renwal, v.pay_date, v.create_request, v.create_date,
+         v.updated_at, v.acc_disc_status, v.ceo_disc_status, v.webxl_behalf
+    FROM legacy_archive.webxl_verify_gm v
+    LEFT JOIN legacy_archive.webxl_user wu
+      ON wu._source_table = 'webxl_user' AND wu._legacy_pk = v.user_id
+   WHERE ($1::text[] IS NULL OR v.user_id = ANY($1::text[]))
+     AND ($1::text[] IS NOT NULL OR $2::text IS NULL OR lower(rtrim(wu.branch)) = lower(rtrim($2::text)))
+     AND ($1::text[] IS NOT NULL OR $3::text IS NULL OR lower(rtrim(v.package)) = lower(rtrim($3::text)))
+     AND ($4::text IS NULL OR trim(v.renwal) = $4::text)
+     AND (NOT $5::boolean OR COALESCE(trim(v.renwal), '') NOT IN ('0', '1', '2', '3', '4'))
+     AND ($6::text IS NULL
+          OR ($6::text = 'Full' AND COALESCE(v.webxl_behalf, '') = '')
+          OR lower(rtrim(v.webxl_behalf)) = lower(rtrim($6::text)))
+     AND (CASE WHEN $8::boolean THEN v.pay_date
+               WHEN $7::boolean THEN v.create_date
+               ELSE v.create_request END) ~ '^[1-9]\\d{3}-\\d{2}-\\d{2}'
+     AND left(CASE WHEN $8::boolean THEN v.pay_date
+                   WHEN $7::boolean THEN v.create_date
+                   ELSE v.create_request END, 10) BETWEEN $9::text AND $10::text
+),
+stale_acc AS (
+  SELECT c._legacy_pk FROM candidates c
+   WHERE NOT $7::boolean
+     AND lower(rtrim(c.ceo_disc_status)) = 'approved'
+     AND lower(rtrim(c.acc_disc_status)) <> 'approved'
+),
+approved_overlay AS (
+  SELECT DISTINCT mg.legacy_id
+    FROM migration_meta.migration_legacy_ids mg
+    INNER JOIN drm.gm_entries ge ON ge.id::text = mg.modern_id
+   WHERE mg.modern_table = 'gm_entries'
+     AND mg.legacy_table = 'webxl_verify_gm'
+     AND mg.legacy_id IN (SELECT _legacy_pk FROM stale_acc)
+     AND (${GM_LEGACY_GEM_ENTRIES_APPROVED_PRED})
+),
+filtered AS (
+  SELECT c.*
+    FROM candidates c
+   WHERE $7::boolean
+      OR (
+        lower(rtrim(c.ceo_disc_status)) = 'approved'
+        AND (
+          lower(rtrim(c.acc_disc_status)) = 'approved'
+          OR c._legacy_pk IN (SELECT legacy_id FROM approved_overlay)
+        )
+      )
+)`;
+
+// aliBabaQuesMontAccordingToYears(): Q1..Q4 of each year, Q4 = Jan-Mar of
+// that same year (listed last), kept when it overlaps the range.
+function alibabaQuarters(startYmd: string, endYmd: string) {
+  const defs: [string, string, string][] = [
+    ["Q1", "-04-01", "-06-30"],
+    ["Q2", "-07-01", "-09-30"],
+    ["Q3", "-10-01", "-12-31"],
+    ["Q4", "-01-01", "-03-31"],
+  ];
+  const out: { year: number; quarter: string; startDate: string; endDate: string }[] = [];
+  for (let y = Number(startYmd.slice(0, 4)); y <= Number(endYmd.slice(0, 4)); y++) {
+    for (const [quarter, s, e] of defs) {
+      const qs = `${y}${s}`;
+      const qe = `${y}${e}`;
+      if ((qs >= startYmd && qs <= endYmd) || (qe >= startYmd && qe <= endYmd) || (startYmd >= qs && endYmd <= qe)) {
+        out.push({ year: y, quarter, startDate: qs, endDate: qe });
+      }
+    }
+  }
+  return out;
+}
+
+export async function getGmSystemLegacyReport(
+  userIds: string[] | null,
+  fromDate: Date,
+  toDate: Date,
+  filters: GmSystemFilters = {},
+): Promise<ReportData & { qWise?: unknown; gmTotals?: unknown; pagination?: { page: number; pageSize: number; total: number; totalPages: number } }> {
+  const startYmd = localYmd(fromDate);
+  const endYmd = localYmd(toDate);
+  const qWise = Boolean(filters.qWise);
+  const abPay = Boolean(filters.abPayDate);
+  const usePagination = !qWise && !abPay;
+  const page = Math.max(1, filters.page ?? 1);
+  const pageSize = Math.min(100, Math.max(5, filters.pageSize ?? 25));
+  const legacyLimit = usePagination ? pageSize : 50_000;
+  const legacyOffset = usePagination ? (page - 1) * pageSize : 0;
+  const typeLabel = filters.type && filters.type !== "all" ? filters.type : null;
+  const renwalCode = typeLabel ? (GM_TYPE_CODE_BY_LABEL[typeLabel] ?? null) : null;
+  const typeNone = typeLabel === "None";
+  const behalf = filters.behalf && filters.behalf !== "all" ? filters.behalf : null;
+  const city = filters.city && filters.city !== "all" ? filters.city : null;
+  const pkg = filters.pkg && filters.pkg !== "all" ? filters.pkg : null;
+
+  let legacyUserIds: string[] | null = null;
+  if (userIds && userIds.length > 0) {
+    const mapped = await pool.query<{ legacy_id: string }>(
+      `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+        WHERE modern_table = 'users' AND legacy_table = 'webxl_user' AND modern_id = ANY($1::text[])`,
+      [userIds],
+    );
+    legacyUserIds = mapped.rows.map((r) => r.legacy_id);
+  }
+
+  const legacyBaseParams = [legacyUserIds, city, pkg, renwalCode, typeNone, behalf, qWise, abPay, startYmd, endYmd];
+
+  type LegacyRow = {
+    legacy_id: string;
+    com_id: string;
+    member_id: string | null;
+    package: string | null;
+    amount: string | null;
+    discount: string | null;
+    extra_discount: string | null;
+    status: string | null;
+    renwal: string | null;
+    pay_date: string | null;
+    create_request: string | null;
+    create_date: string | null;
+    updated_at: string | null;
+    acc_disc_status: string | null;
+    ceo_disc_status: string | null;
+    webxl_behalf: string | null;
+    cname: string | null;
+    person_name: string | null;
+    person_id: string | null;
+    seller_id: string | null;
+    customer_id: string | null;
+    gm_entry_id: string | null;
+    user_bv_date: string | null;
+    gm_start: string | null;
+    kwa_type: string | null;
+    kwa_value: string | null;
+    package_price: string | null;
+  };
+
+  let legacyStats: { total: number; discount_sum: string; extra_sum: string; amount_sum: string } | undefined;
+
+  const legacyPageSelect = `
+     ga AS (
+       SELECT DISTINCT ON (g.com_id) g.com_id, g.user_bv_date, g."startData" AS gm_start
+         FROM legacy_archive.webxl_gmaccount g
+        WHERE g.com_id IN (SELECT com_id FROM page_slice)
+        ORDER BY g.com_id, g._legacy_pk::bigint
+     ),
+     kw AS (
+       SELECT DISTINCT ON (k.com_id) k.com_id, k.type AS kwa_type, k.kwa AS kwa_value
+         FROM legacy_archive.webxl_kwa k
+        WHERE k.com_id IN (SELECT com_id FROM page_slice)
+        ORDER BY k.com_id, k._legacy_pk::bigint
+     ),
+     pk AS (
+       SELECT DISTINCT ON (lower(rtrim(p.name))) lower(rtrim(p.name)) AS name_key, p.price
+         FROM legacy_archive.webxl_ab_packages p
+        ORDER BY lower(rtrim(p.name)), p._legacy_pk::bigint
+     )
+     SELECT b._legacy_pk AS legacy_id, b.com_id, b.member_id, b.package, b.amount, b.discount,
+            b.extra_discount, b.status, b.renwal, b.pay_date, b.create_request, b.create_date,
+            b.updated_at, b.acc_disc_status, b.ceo_disc_status, b.webxl_behalf,
+            c.cname, u.name AS person_name, mu.modern_id AS person_id, ms.modern_id AS seller_id,
+            mc.modern_id AS customer_id, mg.modern_id AS gm_entry_id,
+            ga.user_bv_date, ga.gm_start, kw.kwa_type, kw.kwa_value, pk.price AS package_price
+       FROM page_slice b
+       LEFT JOIN legacy_archive.webxl_company c
+         ON c._source_table = 'webxl_company' AND c._legacy_pk = b.com_id
+       LEFT JOIN legacy_archive.webxl_user u
+         ON u._source_table = 'webxl_user' AND u._legacy_pk = c."assignId"
+       LEFT JOIN migration_meta.migration_legacy_ids mu
+         ON mu.entity_type = 'user' AND mu.legacy_table = 'webxl_user' AND mu.legacy_id = c."assignId"
+       LEFT JOIN migration_meta.migration_legacy_ids ms
+         ON ms.entity_type = 'user' AND ms.legacy_table = 'webxl_user' AND ms.legacy_id = b.user_id
+       LEFT JOIN migration_meta.migration_legacy_ids mc
+         ON mc.entity_type = 'customer' AND mc.legacy_table = 'webxl_company' AND mc.legacy_id = b.com_id
+       LEFT JOIN migration_meta.migration_legacy_ids mg
+         ON mg.entity_type = 'gm_entry' AND mg.legacy_table = 'webxl_verify_gm' AND mg.legacy_id = b._legacy_pk
+       LEFT JOIN ga ON ga.com_id = b.com_id
+       LEFT JOIN kw ON kw.com_id = b.com_id
+       LEFT JOIN pk ON pk.name_key = lower(rtrim(b.package))
+      ORDER BY b._legacy_pk::bigint DESC`;
+
+  let legacy: { rows: LegacyRow[] };
+
+  if (usePagination) {
+    const combined = await pool.query<{
+      stats: { total: number; discount_sum: string; extra_sum: string; amount_sum: string };
+      rows: LegacyRow[];
+    }>(
+      `WITH ${GM_LEGACY_FILTERED_CTE},
+       stats AS (
+         SELECT COUNT(*)::int AS total,
+                COALESCE(SUM(CASE WHEN trim(discount) ~ '^-?[0-9.]+$' THEN trim(discount)::numeric ELSE 0 END), 0)::text AS discount_sum,
+                COALESCE(SUM(CASE WHEN trim(extra_discount) ~ '^-?[0-9.]+$' THEN trim(extra_discount)::numeric ELSE 0 END), 0)::text AS extra_sum,
+                COALESCE(SUM(CASE WHEN trim(amount) ~ '^-?[0-9.]+$' THEN trim(amount)::numeric ELSE 0 END), 0)::text AS amount_sum
+           FROM filtered
+       ),
+       page_slice AS (
+         SELECT * FROM filtered
+         ORDER BY _legacy_pk::bigint DESC
+         LIMIT $11::int OFFSET $12::int
+       ),
+       ga AS (
+         SELECT DISTINCT ON (g.com_id) g.com_id, g.user_bv_date, g."startData" AS gm_start
+           FROM legacy_archive.webxl_gmaccount g
+          WHERE g.com_id IN (SELECT com_id FROM page_slice)
+          ORDER BY g.com_id, g._legacy_pk::bigint
+       ),
+       kw AS (
+         SELECT DISTINCT ON (k.com_id) k.com_id, k.type AS kwa_type, k.kwa AS kwa_value
+           FROM legacy_archive.webxl_kwa k
+          WHERE k.com_id IN (SELECT com_id FROM page_slice)
+          ORDER BY k.com_id, k._legacy_pk::bigint
+       ),
+       pk AS (
+         SELECT DISTINCT ON (lower(rtrim(p.name))) lower(rtrim(p.name)) AS name_key, p.price
+           FROM legacy_archive.webxl_ab_packages p
+          ORDER BY lower(rtrim(p.name)), p._legacy_pk::bigint
+       )
+       SELECT (SELECT row_to_json(s) FROM stats s) AS stats,
+              COALESCE(
+                (SELECT json_agg(row_to_json(p) ORDER BY (p.legacy_id)::bigint DESC)
+                   FROM (
+                     SELECT b._legacy_pk AS legacy_id, b.com_id, b.member_id, b.package, b.amount, b.discount,
+                            b.extra_discount, b.status, b.renwal, b.pay_date, b.create_request, b.create_date,
+                            b.updated_at, b.acc_disc_status, b.ceo_disc_status, b.webxl_behalf,
+                            c.cname, u.name AS person_name, mu.modern_id AS person_id, ms.modern_id AS seller_id,
+                            mc.modern_id AS customer_id, mg.modern_id AS gm_entry_id,
+                            ga.user_bv_date, ga.gm_start, kw.kwa_type, kw.kwa_value, pk.price AS package_price
+                       FROM page_slice b
+                       LEFT JOIN legacy_archive.webxl_company c
+                         ON c._source_table = 'webxl_company' AND c._legacy_pk = b.com_id
+                       LEFT JOIN legacy_archive.webxl_user u
+                         ON u._source_table = 'webxl_user' AND u._legacy_pk = c."assignId"
+                       LEFT JOIN migration_meta.migration_legacy_ids mu
+                         ON mu.entity_type = 'user' AND mu.legacy_table = 'webxl_user' AND mu.legacy_id = c."assignId"
+                       LEFT JOIN migration_meta.migration_legacy_ids ms
+                         ON ms.entity_type = 'user' AND ms.legacy_table = 'webxl_user' AND ms.legacy_id = b.user_id
+                       LEFT JOIN migration_meta.migration_legacy_ids mc
+                         ON mc.entity_type = 'customer' AND mc.legacy_table = 'webxl_company' AND mc.legacy_id = b.com_id
+                       LEFT JOIN migration_meta.migration_legacy_ids mg
+                         ON mg.entity_type = 'gm_entry' AND mg.legacy_table = 'webxl_verify_gm' AND mg.legacy_id = b._legacy_pk
+                       LEFT JOIN ga ON ga.com_id = b.com_id
+                       LEFT JOIN kw ON kw.com_id = b.com_id
+                       LEFT JOIN pk ON pk.name_key = lower(rtrim(b.package))
+                   ) p),
+                '[]'::json
+              ) AS rows`,
+      [...legacyBaseParams, legacyLimit, legacyOffset],
+    );
+    const row0 = combined.rows[0];
+    legacyStats = row0?.stats ?? undefined;
+    const rawRows = row0?.rows;
+    legacy = { rows: Array.isArray(rawRows) ? rawRows : [] };
+  } else {
+    legacy = await pool.query<LegacyRow>(
+      `WITH ${GM_LEGACY_FILTERED_CTE},
+       page_slice AS (
+         SELECT * FROM filtered
+         ORDER BY _legacy_pk::bigint DESC
+         LIMIT $11::int OFFSET $12::int
+       ),
+       ${legacyPageSelect}`,
+      [...legacyBaseParams, legacyLimit, legacyOffset],
+    );
+  }
+
+  const numOrNull = (s: string | null) => (s != null && s.trim() !== "" && Number.isFinite(Number(s)) ? Number(s) : null);
+  const legacyDetails = legacy.rows.map((r) => {
+    const rcNew = gmTypeLabel(r.renwal);
+    return {
+      id: r.gm_entry_id ?? `legacy-gm-${r.legacy_id}`,
+      gmEntryId: r.gm_entry_id,
+      legacyGmId: r.legacy_id,
+      comId: r.com_id,
+      customerId: r.customer_id,
+      memberId: r.member_id,
+      companyName: r.cname,
+      package: r.package,
+      // First webxl_kwa row of the company: type Kwa -> KWA column, Psa -> PSA.
+      kwa: r.kwa_type === "Kwa" ? r.kwa_value : null,
+      psa: r.kwa_type === "Psa" ? r.kwa_value : null,
+      // P.A = webxl_ab_packages.price for the package name.
+      packagePriceUsd: numOrNull(r.package_price),
+      amount: numOrNull(r.amount),
+      discount: numOrNull(r.discount),
+      extraDiscount: numOrNull(r.extra_discount),
+      method: r.status,
+      payDate: legacyWallClock(r.pay_date),
+      bvSubmitDate: legacyWallClock(r.user_bv_date),
+      // Old "BV Date" = gmCom(com_id)['startData'] (first gmaccount row).
+      bvDate: legacyWallClock(r.gm_start),
+      person: r.person_name,
+      personName: r.person_name,
+      personId: r.person_id,
+      salesPersonId: r.seller_id,
+      rcNew,
+      type: rcNew,
+      paymentType: (r.webxl_behalf ?? "").trim() === "" ? "Full" : r.webxl_behalf,
+      accountantStatus: r.acc_disc_status,
+      hodStatus: r.ceo_disc_status,
+      gmCreationDate: legacyWallClock(r.create_request),
+      // Q Wise "HOD Approvel Date" = create_date; normal view = updated_at.
+      hodApprovedDate: qWise ? legacyWallClock(r.create_date) : legacyWallClock(r.updated_at),
+      lastUpdateDate: legacyWallClock(r.updated_at),
+      date: legacyWallClock(r.create_request),
+      source: "legacy",
+    };
+  });
+
+  // Modern gm_entries in range (account-approved): fills gaps where legacy
+  // webxl_verify_gm dates/status are stale, plus brand-new rows with no legacy row.
+  let modernDetails: any[] = [];
+  // Paginated GM View: skip full gm_entries scan — legacy page + small orphan batch is enough.
+  const modern = usePagination
+    ? { details: [] as any[], metrics: { totalTasks: 0 }, chartData: [] as any[], type: "gm" as const, dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() }, meta: { from: fromDate.toISOString(), to: toDate.toISOString(), timezone: tz } }
+    : await getGmReport(userIds, fromDate, toDate, true);
+  if (!qWise && !abPay && !usePagination && modern.details.length > 0) {
+    const legacyMemberIds = new Set(
+      legacyDetails.map((d) => String(d.memberId ?? "").trim().toLowerCase()).filter(Boolean),
+    );
+    const legacyGmIds = new Set(
+      legacyDetails.map((d) => String(d.gmEntryId ?? d.id ?? "").trim()).filter(Boolean),
+    );
+    modernDetails = modern.details
+      .filter((d: any) => {
+        const mid = String(d.memberId ?? "").trim().toLowerCase();
+        if (mid && legacyMemberIds.has(mid)) return false;
+        const gid = String(d.id ?? "").trim();
+        if (gid && legacyGmIds.has(gid)) return false;
+        return true;
+      })
+      .map((d: any) => ({
+        ...d,
+        rcNew: gmTypeLabel(d.rcNew),
+        type: gmTypeLabel(d.rcNew),
+        gmEntryId: d.id,
+        source: "modern",
+      }))
+      .filter((d: any) => !typeLabel || d.rcNew === typeLabel)
+      .filter(
+        (d: any) =>
+          (userIds && userIds.length > 0) ||
+          !pkg ||
+          String(d.package ?? "").toLowerCase() === pkg.toLowerCase(),
+      );
+  }
+
+  // Legacy rows never migrated to gm_entries — any user / "All" (not only single-user pick).
+  if (!qWise && !abPay && !usePagination) {
+    const orphanLegacy = await pool.query<typeof legacy.rows[0]>(
+      `WITH base AS (
+         SELECT v._legacy_pk, v.com_id, v.user_id, v.member_id, v.package, v.amount, v.discount,
+                v.extra_discount, v.status, v.renwal, v.pay_date, v.create_request, v.create_date,
+                v.updated_at, v.acc_disc_status, v.ceo_disc_status, v.webxl_behalf
+           FROM legacy_archive.webxl_verify_gm v
+           LEFT JOIN legacy_archive.webxl_user wu
+             ON wu._source_table = 'webxl_user' AND wu._legacy_pk = v.user_id
+          WHERE ($1::text[] IS NULL OR v.user_id = ANY($1::text[]))
+            AND ($1::text[] IS NOT NULL OR $2::text IS NULL OR lower(rtrim(wu.branch)) = lower(rtrim($2::text)))
+            AND ($1::text[] IS NOT NULL OR $3::text IS NULL OR lower(rtrim(v.package)) = lower(rtrim($3::text)))
+            AND NOT EXISTS (
+              SELECT 1 FROM migration_meta.migration_legacy_ids mg
+               WHERE mg.legacy_table = 'webxl_verify_gm' AND mg.legacy_id = v._legacy_pk
+            )
+            AND lower(rtrim(v.ceo_disc_status)) = 'approved'
+            AND (
+              lower(rtrim(v.acc_disc_status)) = 'approved'
+              OR lower(rtrim(v.acc_disc_status)) = 'pending'
+            )
+            AND v.create_request ~ '^[1-9]\\d{3}-\\d{2}-\\d{2}'
+            AND left(v.create_request, 10) BETWEEN $4::text AND $5::text
+          ORDER BY v._legacy_pk::bigint DESC
+          LIMIT CASE WHEN $6::boolean THEN 40 ELSE 500 END
+       )
+       SELECT b._legacy_pk AS legacy_id, b.com_id, b.member_id, b.package, b.amount, b.discount,
+              b.extra_discount, b.status, b.renwal, b.pay_date, b.create_request, b.create_date,
+              b.updated_at, b.acc_disc_status, b.ceo_disc_status, b.webxl_behalf,
+              c.cname, u.name AS person_name, mu.modern_id AS person_id, ms.modern_id AS seller_id,
+              mc.modern_id AS customer_id, NULL::text AS gm_entry_id,
+              ga.user_bv_date, ga.gm_start, kw.kwa_type, kw.kwa_value, pk.price AS package_price
+         FROM base b
+         LEFT JOIN legacy_archive.webxl_company c
+           ON c._source_table = 'webxl_company' AND c._legacy_pk = b.com_id
+         LEFT JOIN legacy_archive.webxl_user u
+           ON u._source_table = 'webxl_user' AND u._legacy_pk = c."assignId"
+         LEFT JOIN migration_meta.migration_legacy_ids mu
+           ON mu.entity_type = 'user' AND mu.legacy_table = 'webxl_user' AND mu.legacy_id = c."assignId"
+         LEFT JOIN migration_meta.migration_legacy_ids ms
+           ON ms.entity_type = 'user' AND ms.legacy_table = 'webxl_user' AND ms.legacy_id = b.user_id
+         LEFT JOIN migration_meta.migration_legacy_ids mc
+           ON mc.entity_type = 'customer' AND mc.legacy_table = 'webxl_company' AND mc.legacy_id = b.com_id
+         LEFT JOIN LATERAL (
+           SELECT g.user_bv_date, g."startData" AS gm_start
+             FROM legacy_archive.webxl_gmaccount g
+            WHERE g.com_id = b.com_id
+            ORDER BY g._legacy_pk::bigint
+            LIMIT 1
+         ) ga ON true
+         LEFT JOIN LATERAL (
+           SELECT k.type AS kwa_type, k.kwa AS kwa_value
+             FROM legacy_archive.webxl_kwa k
+            WHERE k.com_id = b.com_id
+            ORDER BY k._legacy_pk::bigint
+            LIMIT 1
+         ) kw ON true
+         LEFT JOIN LATERAL (
+           SELECT p.price
+             FROM legacy_archive.webxl_ab_packages p
+            WHERE lower(rtrim(p.name)) = lower(rtrim(b.package))
+            ORDER BY p._legacy_pk::bigint
+            LIMIT 1
+         ) pk ON true`,
+      [legacyUserIds, city, pkg, startYmd, endYmd, usePagination],
+    );
+    const seenMemberIds = new Set(
+      [...legacyDetails, ...modernDetails]
+        .map((d) => String(d.memberId ?? "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    for (const r of orphanLegacy.rows) {
+      const mid = String(r.member_id ?? "").trim().toLowerCase();
+      if (mid && seenMemberIds.has(mid)) continue;
+      const rcNew = gmTypeLabel(r.renwal);
+      legacyDetails.push({
+        id: `legacy-gm-${r.legacy_id}`,
+        gmEntryId: null,
+        legacyGmId: r.legacy_id,
+        comId: r.com_id,
+        customerId: r.customer_id,
+        memberId: r.member_id,
+        companyName: r.cname,
+        package: r.package,
+        kwa: r.kwa_type === "Kwa" ? r.kwa_value : null,
+        psa: r.kwa_type === "Psa" ? r.kwa_value : null,
+        packagePriceUsd: numOrNull(r.package_price),
+        amount: numOrNull(r.amount),
+        discount: numOrNull(r.discount),
+        extraDiscount: numOrNull(r.extra_discount),
+        method: r.status,
+        payDate: legacyWallClock(r.pay_date),
+        bvSubmitDate: legacyWallClock(r.user_bv_date),
+        bvDate: legacyWallClock(r.gm_start),
+        person: r.person_name,
+        personName: r.person_name,
+        personId: r.person_id,
+        salesPersonId: r.seller_id,
+        rcNew,
+        type: rcNew,
+        paymentType: (r.webxl_behalf ?? "").trim() === "" ? "Full" : r.webxl_behalf,
+        accountantStatus: r.acc_disc_status,
+        hodStatus: r.ceo_disc_status,
+        gmCreationDate: legacyWallClock(r.create_request),
+        hodApprovedDate: qWise ? legacyWallClock(r.create_date) : legacyWallClock(r.updated_at),
+        lastUpdateDate: legacyWallClock(r.updated_at),
+        date: legacyWallClock(r.create_request),
+        source: "legacy-unmigrated",
+      });
+      if (mid) seenMemberIds.add(mid);
+    }
+  }
+
+  // Display: if legacy archive still says Pending but modern gm_entries is approved, show Approved (all users).
+  const linkedGmIds = legacyDetails
+    .map((d) => (d.gmEntryId ? String(d.gmEntryId) : null))
+    .filter(Boolean) as string[];
+  if (linkedGmIds.length > 0) {
+    const acctRows = await pool.query<{ id: string; accountant_status: string | null; account_manager_status: string | null }>(
+      `SELECT id::text AS id, accountant_status, account_manager_status FROM drm.gm_entries WHERE id::text = ANY($1::text[])`,
+      [linkedGmIds],
+    );
+    const acctById = new Map(acctRows.rows.map((r) => [r.id, r]));
+    for (const d of legacyDetails) {
+      if (!d.gmEntryId) continue;
+      const row = acctById.get(String(d.gmEntryId));
+      if (!row) continue;
+      const acc = String(row.accountant_status ?? "").trim();
+      const am = String(row.account_manager_status ?? "").trim();
+      if (acc || am) {
+        const legacyAcc = String(d.accountantStatus ?? "").toLowerCase();
+        if (legacyAcc !== "approved" && (acc.toLowerCase() === "approved" || am.toLowerCase() === "approved")) {
+          d.accountantStatus = "Approved";
+        }
+      }
+    }
+  }
+
+  const details = [...legacyDetails, ...modernDetails];
+  const sumOf = (rows: any[], key: string) => rows.reduce((s, d) => s + (Number(d[key]) || 0), 0);
+
+  let qWiseInfo: unknown = undefined;
+  if (qWise) {
+    const quarters = alibabaQuarters(startYmd, endYmd);
+    // Quarter target: the selected user's webxl_setterget row (terget_cat 1)
+    // for exactly that quarter; "All" has none (PHP looked up user 'All').
+    const targetUser = legacyUserIds && legacyUserIds.length === 1 ? legacyUserIds[0] : null;
+    const targets = new Map<string, number | null>();
+    if (targetUser && quarters.length > 0) {
+      const t = await pool.query<{ start_date: string; end_date: string; target_num: string | null }>(
+        `SELECT DISTINCT ON (start_date, end_date) start_date, end_date, target_num
+           FROM legacy_archive.webxl_setterget
+          WHERE rtrim(terget_cat) = '1' AND user_id = $1
+            AND (start_date, end_date) IN (SELECT * FROM unnest($2::text[], $3::text[]))
+          ORDER BY start_date, end_date, _legacy_pk::bigint`,
+        [targetUser, quarters.map((q) => q.startDate), quarters.map((q) => q.endDate)],
+      );
+      for (const r of t.rows) targets.set(`${r.start_date}|${r.end_date}`, numOrNull(r.target_num));
+    }
+    const amount = sumOf(legacyDetails, "amount");
+    qWiseInfo = {
+      quarters: quarters.map((q, i) => ({
+        ...q,
+        target: targets.get(`${q.startDate}|${q.endDate}`) ?? null,
+        count: legacyDetails.length,
+        // PHP never reset $TotalAmount between quarters.
+        achievedAmount: amount * (i + 1),
+      })),
+    };
+  }
+
+  const reportCount = usePagination && legacyStats
+    ? legacyStats.total
+    : details.length;
+  const gmTotals = usePagination && legacyStats
+    ? {
+        discount: Number(legacyStats.discount_sum) || 0,
+        extraDiscount: Math.round((Number(legacyStats.extra_sum) || 0) * 100) / 100,
+        amount: Number(legacyStats.amount_sum) || 0,
+      }
+    : {
+        discount: sumOf(details, "discount"),
+        extraDiscount: Math.round(sumOf(details, "extraDiscount") * 100) / 100,
+        amount: sumOf(details, "amount"),
+      };
+
+  return {
+    ...modern,
+    metrics: { ...modern.metrics, totalTasks: reportCount },
+    details,
+    reportCount,
+    qWise: qWiseInfo,
+    gmTotals,
+    ...(usePagination
+      ? {
+          pagination: {
+            page,
+            pageSize,
+            total: reportCount,
+            totalPages: Math.max(1, Math.ceil(reportCount / pageSize)),
+          },
+        }
+      : {}),
+  };
+}
+
+// Filter options of the GM SYSTEM page: the old package names
+// (webxl_ab_packages + names actually used on old GMs) and branches.
+export async function getGmSystemFilterOptions(): Promise<{ packages: string[]; cities: string[] }> {
+  const { rows } = await pool.query<{ kind: string; value: string }>(
+    `SELECT DISTINCT 'package' AS kind, rtrim(name) AS value FROM legacy_archive.webxl_ab_packages
+      WHERE COALESCE(rtrim(name), '') <> ''
+     UNION
+     SELECT DISTINCT 'package', rtrim(package) FROM legacy_archive.webxl_verify_gm
+      WHERE COALESCE(rtrim(package), '') NOT IN ('', '0')
+     UNION
+     SELECT DISTINCT 'city', rtrim(branch) FROM legacy_archive.webxl_user WHERE COALESCE(rtrim(branch), '') <> ''
+     UNION
+     SELECT DISTINCT 'city', rtrim(branch) FROM drm.users WHERE COALESCE(rtrim(branch), '') <> ''
+     ORDER BY 1, 2`,
+  );
+  return {
+    packages: rows.filter((r) => r.kind === "package").map((r) => r.value),
+    cities: rows.filter((r) => r.kind === "city").map((r) => r.value),
+  };
+}
+
+// "Reports" sidebar VAS Report (?scope=company) — old-DRM parity.
+//
+// The old VAS SYSTEM page posted to layouts/Controller/VasController.php,
+// which is not in this repo; its logic is reconstructed from func.php's VAS
+// helpers (also extracted in backend/VAS_Report_Code_For_Claude.md):
+//   list rows   = "VAS Payment Report": webxl_payments with date(create_date)
+//                 in [from, to]; Company = company cname, Amount, Method =
+//                 payment method, Status = the invoice's domain_renewal
+//                 (0 -> New, else Renewal), Date = payment create_date. A user
+//                 filter keeps payments whose invoice (same com_id +
+//                 invoice_id) belongs to that user — the rule every VAS
+//                 commission helper uses (userMonthlyAchiveTarget50Kor...).
+//   Month Wise  = one user: per month (months_between_dates, day range from
+//                 the start/end days) the user's payment total, matched to the
+//                 user's VAS targets (setterget terget_cat 3, terget type new)
+//                 of that quarter: % = conversion, Comm = round(% * total),
+//                 Amount = reward + Comm; footer Due =
+//                 AllDuePaymentsPendingByUserByDate. "All": the all-users
+//                 commission table (getVasAllUsersCommission).
+// New-app records keep getVasReport's logic; migrated invoices that were paid
+// in the old DRM (they have webxl_payments rows) are dropped from that half —
+// those payments are already listed above.
+const VAS_QUARTERS: [string, string][] = [["-01-01", "-03-31"], ["-04-01", "-06-30"], ["-07-01", "-09-30"], ["-10-01", "-12-31"]];
+
+function vasQuarterOf(ym: string): { start: string; end: string } {
+  const y = ym.slice(0, 4);
+  const m = Number(ym.slice(5, 7));
+  const [s, e] = VAS_QUARTERS[Math.floor((m - 1) / 3)];
+  return { start: `${y}${s}`, end: `${y}${e}` };
+}
+
+// months_between_dates(): 'Y-m' of start, +1 month while start < end.
+function phpMonthsBetween(startYmd: string, endYmd: string): string[] {
+  const [sy, sm, sd] = startYmd.split("-").map(Number);
+  const end = new Date(endYmd + "T00:00:00").getTime();
+  const out: string[] = [];
+  for (let i = 0; i < 600; i++) {
+    const d = new Date(sy, sm - 1 + i, sd);
+    if (d.getTime() >= end) break;
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return out;
+}
+
+const VAS_AMOUNT_SQL = (col: string) => `(CASE WHEN ${col} ~ '^-?\\d+(\\.\\d+)?$' THEN ${col}::numeric ELSE 0 END)`;
+
+// Old VasController::renderAllUsersVas — the VAS report's "All" users
+// commission table (shown for Select User = All, Month Wise or not):
+//   Total  = userMonthlyAchiveTarget50Kor100Kor150K2Inv: the user's
+//            webxl_payments in [start, end] (invoice of the same com_id +
+//            invoice_id belongs to the user; user 43 new invoices only).
+//   slabs  = userVAStargetPer: the user's VAS targets (setterget terget_cat 3,
+//            terget type 'new') inside AutoQueSystemDate() = TODAY's calendar
+//            quarter (not the selected range's), in table order.
+//   The FIRST slab with total >= price wins (the old code had no max_amount
+//   check here): % = conversion, Comm = round(% * total), System Reward =
+//   reward, Amount = reward + Comm. Users without a matching slab get no row.
+//   Paid Reward = reward of the user's first webxl_vas_comm_final row (any
+//   month/type), else Comm.
+//   Team (SalaryMakeFunTeamVasByDate): webxl_user.underWork = user, each
+//   member's payments total; team commission = 5% of the team total.
+//   "Already Created" = an hod-Approved 'Vas' / 'Team-Vas' row for the start
+//   date's month/year in drm.webxl_vas_comm_final (the old table's copy; user
+//   ids there are the old integer ids).
+const VAS_TEAM_PER_ALL = 5;
+const VAS_VERIFY_ROLES: string[] = [ROLES.ADMIN, ROLES.SUPER_HOD, ROLES.HOD, ROLES.ACCOUNT_MANAGER];
+const VAS_COMM_MONTH_SQL = `NULLIF(regexp_replace(COALESCE(f.comm_month, ''), '\\D', '', 'g'), '')::int`;
+
+function vasTodayQuarter(): { start: string; end: string } {
+  return vasQuarterOf(localYmd(new Date()).slice(0, 7));
+}
+
+export async function getVasAllUsersCommission(legacyUserIds: string[] | null, startYmd: string, endYmd: string) {
+  const q = vasTodayQuarter();
+  const commMonth = Number(startYmd.slice(5, 7));
+  const commYear = startYmd.slice(0, 4);
+  const fmtUs = (ymd: string) => `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}/${ymd.slice(0, 4)}`;
+  const period = `${fmtUs(startYmd)} To ${fmtUs(endYmd)}`;
+
+  const totals = await pool.query<{ user_id: string; name: string | null; total: string }>(
+    `SELECT u.user_id, u.name, SUM(${VAS_AMOUNT_SQL("p.amount")})::text AS total
+       FROM legacy_archive.webxl_payments p
+       JOIN legacy_archive.webxl_invoice inv
+         ON inv._source_table = 'webxl_invoice' AND inv._legacy_pk = p.invoice_id AND inv.com_id = p.com_id
+       JOIN legacy_archive.webxl_user u ON u._source_table = 'webxl_user' AND u._legacy_pk = inv.user_id
+      WHERE left(p.create_date, 10) >= $1 AND left(p.create_date, 10) <= $2
+        AND (inv.user_id <> '43' OR COALESCE(trim(inv.domain_renewal), '') IN ('0', ''))
+        AND ($3::text[] IS NULL OR inv.user_id = ANY($3::text[]))
+      GROUP BY u.user_id, u.name, u._archive_row_id
+     HAVING SUM(${VAS_AMOUNT_SQL("p.amount")}) > 0
+      ORDER BY u._archive_row_id`,
+    [startYmd, endYmd, legacyUserIds],
+  );
+  const ids = totals.rows.map((r) => r.user_id);
+  const intIds = ids.map((id) => Number(id)).filter((n) => Number.isInteger(n));
+  const [slabs, firstReward, created, team] = await Promise.all([
+    pool.query<{ user_id: string; price: string | null; conversion: string | null; reward: string | null }>(
+      `SELECT st.user_id, t.price, t.conversion, t.reward
+         FROM legacy_archive.webxl_setterget st
+         JOIN legacy_archive.webxl_terget t ON t._source_table = 'webxl_terget' AND t._legacy_pk = st.terget_id
+        WHERE rtrim(st.terget_cat) = '3' AND st.user_id = ANY($1::text[]) AND lower(rtrim(t.type)) = 'new'
+          AND st.start_date >= $2 AND st.end_date <= $3
+        ORDER BY st._legacy_pk::bigint`,
+      [ids, q.start, q.end],
+    ),
+    pool.query<{ user_id: number; reward: string | null }>(
+      `SELECT DISTINCT ON (f.user_id) f.user_id, f.reward::text AS reward
+         FROM drm.webxl_vas_comm_final f
+        WHERE f.user_id = ANY($1::int[])
+        ORDER BY f.user_id, f.id`,
+      [intIds],
+    ),
+    pool.query<{ user_id: number; comm_type: string }>(
+      `SELECT DISTINCT f.user_id, f.comm_type
+         FROM drm.webxl_vas_comm_final f
+        WHERE f.user_id = ANY($1::int[]) AND f.comm_type IN ('Vas', 'Team-Vas')
+          AND f.comm_year = $2 AND ${VAS_COMM_MONTH_SQL} = $3 AND f.hod_status = 'Approved'`,
+      [intIds, commYear, commMonth],
+    ),
+    pool.query<{ lead_id: string; member_id: string; name: string | null; total: string }>(
+      `SELECT m."underWork" AS lead_id, m.user_id AS member_id, m.name, SUM(${VAS_AMOUNT_SQL("p.amount")})::text AS total
+         FROM legacy_archive.webxl_user m
+         JOIN legacy_archive.webxl_invoice inv ON inv._source_table = 'webxl_invoice' AND inv.user_id = m.user_id
+         JOIN legacy_archive.webxl_payments p ON p.invoice_id = inv._legacy_pk AND p.com_id = inv.com_id
+        WHERE m._source_table = 'webxl_user' AND m."underWork" = ANY($1::text[])
+          AND left(p.create_date, 10) >= $2 AND left(p.create_date, 10) <= $3
+        GROUP BY m."underWork", m.user_id, m.name, m._archive_row_id
+        ORDER BY m._archive_row_id`,
+      [ids, startYmd, endYmd],
+    ),
+  ]);
+
+  const slabsByUser = new Map<string, { price: number; per: number; reward: number }[]>();
+  for (const s of slabs.rows) {
+    const list = slabsByUser.get(s.user_id) ?? [];
+    list.push({ price: Number(s.price) || 0, per: Number(s.conversion) || 0, reward: Number(s.reward) || 0 });
+    slabsByUser.set(s.user_id, list);
+  }
+  const paidReward = new Map(firstReward.rows.map((r) => [String(r.user_id), Number(r.reward) || 0]));
+  const createdKey = new Set(created.rows.map((r) => `${r.user_id}|${r.comm_type}`));
+  const teamByLead = new Map<string, { legacyUserId: string; name: string | null; total: number }[]>();
+  for (const t of team.rows) {
+    const list = teamByLead.get(t.lead_id) ?? [];
+    list.push({ legacyUserId: t.member_id, name: t.name, total: Number(t.total) || 0 });
+    teamByLead.set(t.lead_id, list);
+  }
+
+  const rows: any[] = [];
+  for (const u of totals.rows) {
+    const total = Number(u.total) || 0;
+    const slab = (slabsByUser.get(u.user_id) ?? []).find((s) => total >= s.price);
+    if (!slab) continue;
+    const comm = Math.round((slab.per / 100) * total);
+    const members = teamByLead.get(u.user_id) ?? [];
+    const teamTotal = members.reduce((s, m) => s + m.total, 0);
+    rows.push({
+      legacyUserId: u.user_id,
+      person: u.name,
+      period,
+      total,
+      per: slab.per,
+      reward: slab.reward,
+      paidReward: paidReward.has(u.user_id) ? paidReward.get(u.user_id) : comm,
+      comm,
+      amount: slab.reward + comm,
+      alreadyCreated: createdKey.has(`${u.user_id}|Vas`),
+      team: members.length
+        ? {
+            members,
+            total: teamTotal,
+            per: VAS_TEAM_PER_ALL,
+            comm: Math.round(teamTotal * VAS_TEAM_PER_ALL) / 100,
+            alreadyCreated: createdKey.has(`${u.user_id}|Team-Vas`),
+          }
+        : null,
+    });
+  }
+  const sum = (k: string) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  return {
+    mode: "allCommission" as const,
+    period,
+    from: startYmd,
+    to: endYmd,
+    commMonth,
+    commYear,
+    targetQuarter: q,
+    rows,
+    totals: { total: sum("total"), reward: sum("reward"), comm: sum("comm"), amount: sum("amount") },
+  };
+}
+
+export async function getVasCompanyLegacyReport(
+  userIds: string[] | null,
+  fromDate: Date,
+  toDate: Date,
+): Promise<ReportData & { legacyVas?: unknown }> {
+  const startYmd = localYmd(fromDate);
+  const endYmd = localYmd(toDate);
+
+  let legacyUserIds: string[] | null = null;
+  if (userIds && userIds.length > 0) {
+    const mapped = await pool.query<{ legacy_id: string }>(
+      `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+        WHERE modern_table = 'users' AND legacy_table = 'webxl_user' AND modern_id = ANY($1::text[])`,
+      [userIds],
+    );
+    legacyUserIds = mapped.rows.map((r) => r.legacy_id);
+  }
+  const singleUser = legacyUserIds && legacyUserIds.length === 1 ? legacyUserIds[0] : null;
+
+  const [modern, payments] = await Promise.all([
+    getVasReport(userIds, fromDate, toDate),
+    pool.query<{
+      legacy_id: string;
+      amount: string | null;
+      method: string | null;
+      create_date: string | null;
+      receipt_number: string | null;
+      invoice_id: string | null;
+      cname: string | null;
+      domain_renewal: string | null;
+      person_name: string | null;
+      invoice_modern_id: string | null;
+    }>(
+      `SELECT p._legacy_pk AS legacy_id, p.amount, p.method, p.create_date, p.receipt_number, p.invoice_id,
+              c.cname, inv.domain_renewal, u.name AS person_name, mi.modern_id AS invoice_modern_id
+         FROM legacy_archive.webxl_payments p
+         LEFT JOIN legacy_archive.webxl_invoice inv
+           ON inv._source_table = 'webxl_invoice' AND inv._legacy_pk = p.invoice_id
+         LEFT JOIN legacy_archive.webxl_company c
+           ON c._source_table = 'webxl_company' AND c._legacy_pk = p.com_id
+         LEFT JOIN legacy_archive.webxl_user u
+           ON u._source_table = 'webxl_user' AND u._legacy_pk = inv.user_id
+         LEFT JOIN migration_meta.migration_legacy_ids mi
+           ON mi.entity_type = 'invoice' AND mi.legacy_table = 'webxl_invoice' AND mi.legacy_id = p.invoice_id
+        WHERE left(p.create_date, 10) >= $1 AND left(p.create_date, 10) <= $2
+          AND ($3::text[] IS NULL OR (inv.user_id = ANY($3::text[]) AND inv.com_id = p.com_id))
+        ORDER BY p._legacy_pk::bigint DESC`,
+      [startYmd, endYmd, legacyUserIds],
+    ),
+  ]);
+
+  const legacyDetails = payments.rows.map((r) => {
+    const dr = (r.domain_renewal ?? "").trim();
+    // PHP: $domain_renewal == 0 ? 'New' : 'Renewal' (NULL == 0 -> New).
+    const status = r.domain_renewal === null || (dr !== "" && Number(dr) === 0) ? "New" : "Renewal";
+    const amount = Number(r.amount);
+    return {
+      id: `legacy-payment-${r.legacy_id}`,
+      legacyPaymentId: r.legacy_id,
+      invoiceId: r.invoice_modern_id,
+      legacyInvoiceId: r.invoice_id,
+      title: `Payment: ${r.cname ?? ""}`,
+      company: r.cname,
+      method: r.method,
+      receiptNumber: r.receipt_number,
+      status,
+      person: r.person_name,
+      date: legacyWallClock(r.create_date),
+      createdAt: legacyWallClock(r.create_date),
+      valueSold: Number.isFinite(amount) ? amount : 0,
+      totalTasks: null,
+      successRate: null,
+      followUpsDone: null,
+      missedLeads: null,
+      customerId: null,
+      source: "legacy_payment",
+    };
+  });
+
+  // Modern half: drop migrated invoices already paid in the old DRM.
+  const invoiceIds = modern.details.filter((d: any) => d.source === "invoice").map((d: any) => String(d.id));
+  const paidInOldDrm = new Set<string>();
+  if (invoiceIds.length > 0) {
+    const { rows } = await pool.query<{ modern_id: string }>(
+      `SELECT DISTINCT m.modern_id
+         FROM migration_meta.migration_legacy_ids m
+         JOIN legacy_archive.webxl_payments p ON p.invoice_id = m.legacy_id
+        WHERE m.modern_table = 'invoices' AND m.legacy_table = 'webxl_invoice' AND m.modern_id = ANY($1::text[])`,
+      [invoiceIds],
+    );
+    for (const r of rows) paidInOldDrm.add(r.modern_id);
+  }
+  const modernDetails = modern.details.filter((d: any) => !(d.source === "invoice" && paidInOldDrm.has(String(d.id))));
+
+  // ---- Month Wise (one user) / all-users commission ----
+  const startDay = startYmd.slice(8, 10);
+  const endDay = endYmd.slice(8, 10);
+  let legacyVas: any = { mode: "list" };
+  if (singleUser) {
+    const months = phpMonthsBetween(startYmd, endYmd);
+    const msArr = months.map((m) => `${m}-${startDay}`);
+    const meArr = months.map((m) => `${m}-${endDay}`);
+    const [totals, targets, due, nameRow] = await Promise.all([
+      months.length
+        ? pool.query<{ idx: string; total: string }>(
+            `SELECT r.idx::text AS idx, COALESCE(SUM(${VAS_AMOUNT_SQL("p.amount")}), 0)::text AS total
+               FROM unnest($2::text[], $3::text[]) WITH ORDINALITY AS r(ms, me, idx)
+               LEFT JOIN (legacy_archive.webxl_payments p
+                          JOIN legacy_archive.webxl_invoice inv
+                            ON inv._source_table = 'webxl_invoice' AND inv._legacy_pk = p.invoice_id
+                           AND inv.com_id = p.com_id AND inv.user_id = $1
+                           AND ($1 <> '43' OR COALESCE(trim(inv.domain_renewal), '') IN ('0', '')))
+                 ON left(p.create_date, 10) >= r.ms AND left(p.create_date, 10) <= r.me
+              GROUP BY r.idx ORDER BY r.idx`,
+            [singleUser, msArr, meArr],
+          )
+        : Promise.resolve({ rows: [] as { idx: string; total: string }[] }),
+      pool.query<{ start_date: string; end_date: string; price: string | null; max_amount: string | null; conversion: string | null; reward: string | null; terget_name: string | null }>(
+        `SELECT st.start_date, st.end_date, t.price, t.max_amount, t.conversion, t.reward, t.terget_name
+           FROM legacy_archive.webxl_setterget st
+           JOIN legacy_archive.webxl_terget t ON t._source_table = 'webxl_terget' AND t._legacy_pk = st.terget_id
+          WHERE rtrim(st.terget_cat) = '3' AND st.user_id = $1 AND lower(rtrim(t.type)) = 'new'
+          ORDER BY st._legacy_pk::bigint`,
+        [singleUser],
+      ),
+      // AllDuePaymentsPendingByUserByDate: invoices created in range that have a
+      // payment and a non-zero `pay`: sum of round(grand_total - pay).
+      pool.query<{ due: string }>(
+        `SELECT COALESCE(SUM(round(${VAS_AMOUNT_SQL("i.grand_total")} - ${VAS_AMOUNT_SQL("i.pay")})), 0)::text AS due
+           FROM legacy_archive.webxl_invoice i
+          WHERE i.user_id = $1 AND left(i.create_date, 10) >= $2 AND left(i.create_date, 10) <= $3
+            AND COALESCE(i.pay, '') <> '' AND ${VAS_AMOUNT_SQL("i.pay")} <> 0
+            AND EXISTS (SELECT 1 FROM legacy_archive.webxl_payments p WHERE p.invoice_id = i.invoice_id)`,
+        [singleUser, startYmd, endYmd],
+      ),
+      pool.query<{ name: string | null }>(
+        `SELECT name FROM legacy_archive.webxl_user WHERE _source_table = 'webxl_user' AND _legacy_pk = $1`,
+        [singleUser],
+      ),
+    ]);
+    const person = nameRow.rows[0]?.name ?? null;
+    const rows: any[] = [];
+    months.forEach((m, i) => {
+      const total = Number(totals.rows.find((r) => Number(r.idx) === i + 1)?.total ?? 0);
+      if (total === 0) return;
+      // userVAStargetPer(): the user's VAS targets inside the quarter (the old
+      // page used the quarter it was viewed in; here: the month's quarter).
+      const q = vasQuarterOf(m);
+      for (const t of targets.rows) {
+        if (!(t.start_date >= q.start && t.end_date <= q.end)) continue;
+        const price = Number(t.price) || 0;
+        const max = Number(t.max_amount) || 0;
+        if (!(total >= price && total <= max)) continue;
+        const per = Number(t.conversion) || 0;
+        const reward = Number(t.reward) || 0;
+        const comm = Math.round((per / 100) * total);
+        rows.push({ period: `${m}-${startDay} To ${m}-${endDay}`, person, total, per, reward, comm, amount: reward + comm });
+      }
+    });
+    const sum = (k: string) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+    legacyVas = {
+      mode: "monthWise",
+      rows,
+      due: Number(due.rows[0]?.due ?? 0),
+      totals: { total: sum("total"), reward: sum("reward"), comm: sum("comm"), amount: sum("amount") },
+    };
+  } else if (!userIds || userIds.length > 1) {
+    // Select User = All: old VasController::renderAllUsersVas (see
+    // getVasAllUsersCommission). A department-scoped role's "All" only covers
+    // the users it may see.
+    legacyVas = await getVasAllUsersCommission(legacyUserIds, startYmd, endYmd);
+  }
+
+  const details = [...legacyDetails, ...modernDetails].sort(
+    (a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime(),
+  );
+  const totalValue = details.reduce((s, d: any) => s + (Number(d.valueSold) || 0), 0);
+  return {
+    ...modern,
+    metrics: { ...modern.metrics, valueOfServiceSold: totalValue },
+    chartData: generateChartData(details.map((d: any) => ({ createdAt: d.date, valueSold: d.valueSold })), fromDate, toDate, "valueSold"),
+    details,
+    totals: { ...(modern.totals ?? { totalRemaining: 0 }), totalAdvance: totalValue },
+    reportCount: details.length,
+    legacyVas,
   };
 }
 
@@ -1885,6 +3818,41 @@ router.get(
 // Patch 2 Stage 7 — BV Report canonical source (bv_reports). Registered BEFORE
 // the /reports/:type catch-alls so it always wins for "bv". Gated by the BV
 // report permission matrix + row-scope; metrics come from bv-report.service.
+// PATCH /api/reports/bv/comm/:gmEntryId { comm: number | null } — edit a GM's BV commission
+// (old DRM finalComm). null clears the edit so the computed value shows again.
+// Admin / Super HOD / HOD / Account only.
+router.patch("/reports/bv/comm/:gmEntryId", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const u = req.user as any;
+    const roles = [u.activeRoleId, u.roleId, ...(Array.isArray(u.roles) ? u.roles : [])].filter(Boolean).map((r: any) => normalizeRole(String(r)));
+    if (!roles.some((r: string) => [ROLES.ADMIN, ROLES.SUPER_HOD, ROLES.HOD, ROLES.ACCOUNT_MANAGER].includes(r as any))) {
+      return res.status(403).json({ error: "Only admin, HOD or Account can edit commission" });
+    }
+    const raw = (req.body ?? {}).comm;
+    let value: number | null = null;
+    if (raw !== null && raw !== undefined && String(raw).trim() !== "") {
+      value = Number(raw);
+      if (!Number.isFinite(value) || value < 0 || value > 10_000_000) {
+        return res.status(400).json({ error: "Commission must be a number of 0 or more" });
+      }
+      value = Math.round(value * 100) / 100;
+    }
+    const { rows } = await pool.query(
+      `UPDATE drm.gm_entries
+          SET final_comm = $2, final_comm_by = $3::uuid, final_comm_at = now(), updated_at = now()
+        WHERE id::text = $1
+        RETURNING id, final_comm`,
+      [String(req.params.gmEntryId), value, u.userId],
+    );
+    if (!rows[0]) return res.status(404).json({ error: "GM entry not found" });
+    res.json({ id: rows[0].id, comm: rows[0].final_comm == null ? null : Number(rows[0].final_comm) });
+  } catch (error) {
+    console.error("Error updating BV commission:", error);
+    res.status(500).json({ error: "Failed to update commission" });
+  }
+});
+
 router.get("/reports/bv", requireReportPermission("bv_report", "view"), async (req, res) => {
   try {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
@@ -1901,18 +3869,25 @@ router.get("/reports/bv", requireReportPermission("bv_report", "view"), async (r
     // "Reports" sidebar group's BV Report link (?scope=company) shows the
     // gm_entries-backed company-wide view instead of the bv_reports
     // verification-workflow report "User Reports" -> BV Report keeps.
+    // Old-DRM GMs follow func.php's "View Gm BV Reports" rules
+    // (getBvCompanyLegacyReport); new-app GMs keep the modern logic.
     if (req.query.scope === "company") {
-      const report = await getBvReportCompanyWide(filterUserIds, fromDate, toDate);
+      const report = await getBvCompanyLegacyReport(filterUserIds, fromDate, toDate);
       return res.json(report);
     }
 
-    // "BV Pending EC/NC Only" report (?scope=pending) — same real gm_entries
-    // source. Default shows the selected user's full BV-submission worklist
-    // (confirmed or not); the page's "Pending Bv" checkbox sends
-    // pendingOnly=true to narrow it to entries still awaiting confirmation.
+    // "BV Pending EC/NC Only" report (?scope=pending) — old-DRM rules on the
+    // archived webxl_verify_gm/webxl_gmaccount data plus new-app GMs via the
+    // modern logic (see getBvPendingLegacyReport). Default = GMs whose BV date
+    // falls in the range; the "Pending Bv" checkbox sends pendingOnly=true for
+    // companies whose BV date is still empty.
     if (req.query.scope === "pending") {
-      const bvFilter = req.query.pendingOnly === "true" ? "pending" : "submitted";
-      const report = await getBvReportCompanyWide(filterUserIds, fromDate, toDate, { bvFilter });
+      const report = await getBvPendingLegacyReport(
+        filterUserIds,
+        fromDate,
+        toDate,
+        req.query.pendingOnly === "true",
+      );
       return res.json(report);
     }
 
@@ -1928,6 +3903,139 @@ router.get("/reports/bv", requireReportPermission("bv_report", "view"), async (r
   } catch (error) {
     console.error("Error fetching BV report:", error);
     res.status(500).json({ error: "Failed to fetch report" });
+  }
+});
+
+// "Bv Pending RC Only" (/reports/bv-pending-rc) — port of func.php
+// getPendingBVRecords ("Load All Records") / searchBVRecords ("Search with Filters"):
+// approved + paid (webxl_pay_status='Yes') Rc GMs (renwal = 0) joined to every
+// webxl_gmaccount row of the company with renwal = 0, DISTINCT on the shown fields.
+// Only renwal '0' counts: the live old page's totals (173 vs 171 here at the
+// 2026-11-03 snapshot) show its rows with an empty renwal are not included.
+// The date filter is the old OR across user_bv_date / bvDate / startData / endData.
+// AB Pay Date = vg.webxl_pay_date (the old SELECT forgot it, so it always printed blank).
+const MYSQL_ZERO = (col: string) =>
+  `(btrim(${col}) = '0')`;
+
+router.get("/reports/bv-pending-rc", requireReportPermission("bv_report", "view"), async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const scopeIds = await resolveBvScope(req);
+    let legacyUserIds: string[] | null = null;
+    if (scopeIds) {
+      const mapped = await pool.query<{ legacy_id: string }>(
+        `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+          WHERE modern_table = 'users' AND legacy_table = 'webxl_user' AND modern_id = ANY($1::text[])`,
+        [scopeIds],
+      );
+      legacyUserIds = mapped.rows.map((r) => r.legacy_id);
+    }
+    const ymd = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+    const start = ymd(req.query.start);
+    const end = ymd(req.query.end);
+    const q = typeof req.query.q === "string" && req.query.q.trim() ? req.query.q.trim() : null;
+
+    const runQuery = (st: string | null, en: string | null, qq: string | null) => pool.query(
+      `WITH ga AS (
+         -- Dates edited on this page (drm.legacy_bv_date_overrides) replace the archive's.
+         SELECT g.com_id, g.renwal,
+                CASE WHEN o.com_id IS NULL THEN g.user_bv_date ELSE o.user_bv_date::text END AS user_bv_date,
+                CASE WHEN o.com_id IS NULL THEN g."bvDate" ELSE o.bv_date::text END AS "bvDate",
+                CASE WHEN o.com_id IS NULL THEN g."startData" ELSE o.start_date::text END AS "startData",
+                CASE WHEN o.com_id IS NULL THEN g."endData" ELSE o.end_date::text END AS "endData"
+           FROM legacy_archive.webxl_gmaccount g
+           LEFT JOIN drm.legacy_bv_date_overrides o
+             ON o.com_id = g.com_id AND ${MYSQL_ZERO("g.renwal")}
+       )
+       SELECT vg.com_id AS "companyId", vg.member_id AS "memberId", u.name AS persons,
+              ga.user_bv_date AS "userBvDate", ga."bvDate" AS "bvDate",
+              ga."startData" AS "startDate", ga."endData" AS "endDate",
+              c.cname AS "companyName", MAX(vg.webxl_pay_date) AS "abPayDate"
+         FROM legacy_archive.webxl_verify_gm vg
+         JOIN ga ON ga.com_id = vg.com_id
+         LEFT JOIN legacy_archive.webxl_company c ON c._source_table = 'webxl_company' AND c._legacy_pk = vg.com_id
+         LEFT JOIN legacy_archive.webxl_user u ON u._source_table = 'webxl_user' AND u._legacy_pk = vg.user_id
+        WHERE lower(rtrim(vg.acc_disc_status)) = 'approved'
+          AND lower(rtrim(vg.ceo_disc_status)) = 'approved'
+          AND lower(rtrim(vg.webxl_pay_status)) = 'yes'
+          AND vg.webxl_pay_date IS NOT NULL
+          AND ${MYSQL_ZERO("vg.renwal")}
+          AND ${MYSQL_ZERO("ga.renwal")}
+          AND ($1::text[] IS NULL OR vg.user_id = ANY($1::text[]))
+          AND ($2::text IS NULL OR ga.user_bv_date >= $2 OR ga."bvDate" >= $2 OR ga."startData" >= $2 OR ga."endData" >= $2)
+          AND ($3::text IS NULL OR ga.user_bv_date <= $3 OR ga."bvDate" <= $3 OR ga."startData" <= $3 OR ga."endData" <= $3)
+          AND ($4::text IS NULL OR vg.com_id ILIKE '%' || $4 || '%' OR vg.member_id ILIKE '%' || $4 || '%'
+               OR c.cname ILIKE '%' || $4 || '%' OR u.name ILIKE '%' || $4 || '%')
+        GROUP BY vg.com_id, vg.member_id, vg.user_id, ga.user_bv_date, ga."bvDate", ga."startData", ga."endData", c.cname, u.name
+        ORDER BY vg.com_id ASC -- old com_id is varchar: text order (103205, 108082, 1109, ...)
+`,
+      [legacyUserIds, st, en, qq],
+    );
+    // Old page: Total Records = all records (user filter only); Filtered Results = with date/search.
+    const [{ rows }, all] = await Promise.all([
+      runQuery(start, end, q),
+      start || end || q ? runQuery(null, null, null) : null,
+    ]);
+    const clean = (d: string | null) => (d && !d.startsWith("0000") ? d.slice(0, 10) : "");
+    const data = rows.map((r: any, i: number) => ({
+      srNo: i + 1,
+      memberId: r.memberId || "N/A",
+      companyId: r.companyId ?? "",
+      companyName: r.companyName || "N/A",
+      persons: r.persons || "N/A",
+      type: "Rc",
+      userBvDate: clean(r.userBvDate),
+      bvDate: clean(r.bvDate),
+      abPayDate: clean(r.abPayDate),
+      startDate: clean(r.startDate),
+      endDate: clean(r.endDate),
+    }));
+    res.json({ total: all ? all.rowCount : data.length, filtered: data.length, data });
+  } catch (error) {
+    console.error("Error fetching pending RC BV report:", error);
+    res.status(500).json({ error: "Failed to fetch report" });
+  }
+});
+
+// Save on "Bv Pending RC Only" — old func.php updateBVRecord: sets the four
+// dates (empty = NULL) for the company's webxl_gmaccount rows with renwal = 0.
+router.patch("/reports/bv-pending-rc/:comId", requireReportPermission("bv_report", "edit"), async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const role = normalizeRole((req.user as any)?.activeRoleId ?? (req.user as any).roleId);
+    if (!["admin", "super_admin", "super_hod", "hod", ROLES.ACCOUNT_MANAGER].includes(role)) {
+      return res.status(403).json({ error: "Not allowed to edit BV dates" });
+    }
+    const comId = String(req.params.comId || "").trim();
+    if (!/^\d+$/.test(comId)) return res.status(400).json({ error: "Company ID is required" });
+    const d = (v: unknown) => {
+      if (v === null || v === undefined || v === "") return null;
+      if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+      throw new Error("Invalid date");
+    };
+    let vals: (string | null)[];
+    try {
+      vals = [d(req.body?.userBvDate), d(req.body?.bvDate), d(req.body?.startDate), d(req.body?.endDate)];
+    } catch {
+      return res.status(400).json({ error: "Dates must be YYYY-MM-DD" });
+    }
+    const exists = await pool.query(
+      `SELECT 1 FROM legacy_archive.webxl_gmaccount WHERE com_id = $1 AND ${MYSQL_ZERO("renwal")} LIMIT 1`,
+      [comId],
+    );
+    if (!exists.rowCount) return res.status(404).json({ error: `No record found for Company ID: ${comId}` });
+    await pool.query(
+      `INSERT INTO drm.legacy_bv_date_overrides (com_id, user_bv_date, bv_date, start_date, end_date, updated_by, updated_at)
+       VALUES ($1, $2::date, $3::date, $4::date, $5::date, $6, now())
+       ON CONFLICT (com_id) DO UPDATE SET user_bv_date = EXCLUDED.user_bv_date, bv_date = EXCLUDED.bv_date,
+         start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date,
+         updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      [comId, ...vals, (req.user as any).userId ?? null],
+    );
+    res.json({ success: true, message: "Record updated successfully" });
+  } catch (error) {
+    console.error("Error updating pending RC BV dates:", error);
+    res.status(500).json({ error: "Update failed" });
   }
 });
 
@@ -1954,7 +4062,7 @@ router.get("/reports/bv/export", requireReportPermission("bv_report", "export"),
     let report: ReportData;
     let statusPart = "";
     if (req.query.scope === "company") {
-      report = await getBvReportCompanyWide(filterUserIds, fromDate, toDate);
+      report = await getBvCompanyLegacyReport(filterUserIds, fromDate, toDate);
     } else {
       const filterResult = parseBvFilters(req);
       if (!filterResult.ok) {
@@ -1996,6 +4104,185 @@ router.get("/reports/bv/export", requireReportPermission("bv_report", "export"),
   } catch (error) {
     console.error("Error exporting BV report:", error);
     res.status(500).json({ error: "Failed to export report" });
+  }
+});
+
+// GM SYSTEM page filter options (old package names + branches).
+// ---- VAS report "All" users commission (old VasController) ----
+// Callers: VasReportTable (frontend/src/pages/user-reports.tsx). `legacyUserId`
+// is the OLD integer webxl_user id the All table rows carry.
+const vasLegacyUserIdSchema = z.string().trim().regex(/^\d{1,10}$/, "Invalid user");
+const vasYmdSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date");
+
+function vasActingRole(req: any): string {
+  const u = req.user as any;
+  return normalizeRole(String(u?.activeRoleId ?? u?.roleId ?? ""));
+}
+
+async function vasOwnLegacyUserId(modernUserId: string): Promise<string | null> {
+  const { rows } = await pool.query<{ legacy_id: string }>(
+    `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+      WHERE modern_table = 'users' AND legacy_table = 'webxl_user' AND modern_id = $1
+      ORDER BY legacy_id LIMIT 1`,
+    [modernUserId],
+  );
+  return rows[0]?.legacy_id ?? null;
+}
+
+// HOD / Super HOD / admin / account manager see everyone; others only themselves.
+async function vasCanSeeLegacyUser(req: any, legacyUserId: string): Promise<boolean> {
+  if (VAS_VERIFY_ROLES.includes(vasActingRole(req))) return true;
+  return (await vasOwnLegacyUserId(String(req.user.userId))) === legacyUserId;
+}
+
+// GET /api/reports/vas/commission/invoices?legacyUserId=&from=&to= — the
+// receipt button's "Invoice Details" modal (old query, archive data).
+router.get("/reports/vas/commission/invoices", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const parsed = z.object({ legacyUserId: vasLegacyUserIdSchema, from: vasYmdSchema, to: vasYmdSchema }).safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid request" });
+    const { legacyUserId, from, to } = parsed.data;
+    if (!(await vasCanSeeLegacyUser(req, legacyUserId))) return res.status(403).json({ error: "Forbidden" });
+    const { rows } = await pool.query(
+      `SELECT p.com_id AS "comId", p.amount, p.create_date AS "createDate", p.invoice_id AS "invoiceId",
+              i.domain_renewal AS "domainRenewal", i.cname, ip.item, ip.pay, ip.method
+         FROM legacy_archive.webxl_payments p
+         LEFT JOIN legacy_archive.webxl_invoice i
+           ON i._source_table = 'webxl_invoice' AND p.com_id = i.com_id AND p.invoice_id = i._legacy_pk
+         LEFT JOIN legacy_archive.webxl_invoice_item_pay ip
+           ON ip._source_table = 'webxl_invoice_item_pay' AND p.invoice_id = ip.invoice_id
+        WHERE i.user_id = $1 AND left(p.create_date, 10) >= $2 AND left(p.create_date, 10) <= $3
+          AND ($1 <> '43' OR COALESCE(trim(i.domain_renewal), '') IN ('0', ''))
+        ORDER BY p.create_date DESC, p._legacy_pk::bigint DESC, ip._legacy_pk::bigint`,
+      [legacyUserId, from, to],
+    );
+    res.json({ rows: rows.map((r: any) => ({ ...r, createDate: legacyWallClock(r.createDate) })) });
+  } catch (error) {
+    console.error("Error fetching VAS invoice details:", error);
+    res.status(500).json({ error: "Failed to fetch invoice details" });
+  }
+});
+
+// GET /api/reports/vas/commission/duplicates?legacyUserId= — the eye button:
+// the user's webxl_vas_comm_final rows whose (month, year) has more than one row.
+router.get("/reports/vas/commission/duplicates", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const parsed = z.object({ legacyUserId: vasLegacyUserIdSchema }).safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid request" });
+    const { legacyUserId } = parsed.data;
+    if (!(await vasCanSeeLegacyUser(req, legacyUserId))) return res.status(403).json({ error: "Forbidden" });
+    const { rows } = await pool.query(
+      `SELECT f.id, f.comm_month AS "commMonth", f.comm_year AS "commYear", f.per, f.reward::float8 AS reward,
+              f.comm_type AS "commType", f.comm::float8 AS comm, f.final_pay_amount::float8 AS "finalPayAmount"
+         FROM drm.webxl_vas_comm_final f
+         JOIN (SELECT user_id, comm_month, comm_year FROM drm.webxl_vas_comm_final
+                WHERE user_id = $1::int GROUP BY user_id, comm_month, comm_year HAVING COUNT(*) > 1) d
+           ON d.user_id = f.user_id AND d.comm_month IS NOT DISTINCT FROM f.comm_month
+          AND d.comm_year IS NOT DISTINCT FROM f.comm_year
+        ORDER BY f.comm_year, ${VAS_COMM_MONTH_SQL}, f.id`,
+      [legacyUserId],
+    );
+    res.json({ rows });
+  } catch (error) {
+    console.error("Error fetching VAS duplicate commissions:", error);
+    res.status(500).json({ error: "Failed to fetch duplicate records" });
+  }
+});
+
+// POST /api/reports/vas/commission/verify — old createVerifyCommissionByUser /
+// ...ByTeam. HOD / Super HOD / admin / account manager (acting role) create
+// the commission row (hod_status Approved); any other role marks its own
+// latest matching row Verified.
+const vasVerifySchema = z.object({
+  legacyUserId: vasLegacyUserIdSchema,
+  commType: z.enum(["Vas", "Team-Vas"]),
+  from: vasYmdSchema,
+  totalAmount: z.coerce.number().finite().min(0).max(1e9),
+  per: z.coerce.number().finite().min(0).max(100000),
+  comm: z.coerce.number().finite().min(0).max(1e8),
+  reward: z.coerce.number().finite().min(0).max(1e8),
+  finalPayAmount: z.coerce.number().finite().min(0).max(1e8),
+});
+
+router.post("/reports/vas/commission/verify", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const parsed = vasVerifySchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid request" });
+    const b = parsed.data;
+    const commMonth = Number(b.from.slice(5, 7));
+    const commYear = b.from.slice(0, 4);
+    if (commMonth < 1 || commMonth > 12) return res.status(400).json({ error: "Invalid date" });
+
+    if (VAS_VERIFY_ROLES.includes(vasActingRole(req))) {
+      const exists = await pool.query(
+        `SELECT 1 FROM legacy_archive.webxl_user WHERE _source_table = 'webxl_user' AND _legacy_pk = $1`,
+        [b.legacyUserId],
+      );
+      if (!exists.rowCount) return res.status(404).json({ error: "User not found" });
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        // Serialize per user so a double click can't create two rows.
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('vas_comm_final'), $1::int)", [Number(b.legacyUserId)]);
+        const dup = await client.query(
+          `SELECT f.id FROM drm.webxl_vas_comm_final f
+            WHERE f.user_id = $1::int AND f.comm_type = $2 AND f.comm_year = $3 AND ${VAS_COMM_MONTH_SQL} = $4
+              AND f.hod_status = 'Approved' LIMIT 1`,
+          [b.legacyUserId, b.commType, commYear, commMonth],
+        );
+        if (dup.rowCount) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({ error: "Already Created" });
+        }
+        const ins = await client.query(
+          `INSERT INTO drm.webxl_vas_comm_final
+             (user_id, comm_type, total_amount, per, comm, reward, final_pay_amount, user_status, manager_approve,
+              comm_month, comm_year, hod_status, hod_satatus_date, account_pay_status)
+           VALUES ($1::int, $2, $3, $4, $5, $6, $7, 'Pending', $8, $9, $10, 'Approved', now(), 'Pending')
+           RETURNING id`,
+          [
+            b.legacyUserId, b.commType, b.totalAmount, String(b.per), b.comm, b.reward, b.finalPayAmount,
+            b.commType === "Team-Vas" ? "Approved" : "Pending", String(commMonth), commYear,
+          ],
+        );
+        await client.query("COMMIT");
+        return res.json({ success: true, created: true, id: ins.rows[0].id });
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
+    }
+
+    const own = await vasOwnLegacyUserId(String(req.user.userId));
+    if (!own || own !== b.legacyUserId) return res.status(403).json({ error: "You can only verify your own commission" });
+    const upd = await pool.query(
+      `UPDATE drm.webxl_vas_comm_final SET user_status = 'Verified', user_status_date = now()
+        WHERE id = (SELECT f.id FROM drm.webxl_vas_comm_final f
+                     WHERE f.user_id = $1::int AND f.comm_type = $2 AND f.comm_year = $3 AND ${VAS_COMM_MONTH_SQL} = $4
+                     ORDER BY f.id DESC LIMIT 1)
+        RETURNING id`,
+      [b.legacyUserId, b.commType, commYear, commMonth],
+    );
+    if (!upd.rowCount) return res.status(404).json({ error: "No commission record to verify" });
+    res.json({ success: true, verified: true, id: upd.rows[0].id });
+  } catch (error) {
+    console.error("Error verifying VAS commission:", error);
+    res.status(500).json({ error: "Failed to verify commission" });
+  }
+});
+
+router.get("/reports/gm-system/options", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    res.json(await getGmSystemFilterOptions());
+  } catch (error) {
+    console.error("Error fetching GM system options:", error);
+    res.status(500).json({ error: "Failed to fetch options" });
   }
 });
 
@@ -2089,7 +4376,7 @@ router.get("/reports/:type", async (req, res, next) => {
         // vas_reports-backed report; "User Reports" group's VAS Report (plain
         // /reports/vas) stays on its original office_vas/invoices behavior.
         report = requestsCompanyWide
-          ? await getVasReport(filterUserIds, fromDate, toDate)
+          ? await getVasCompanyLegacyReport(filterUserIds, fromDate, toDate)
           : await getVasReportLegacyOfficeVas(filterUserIds, fromDate, toDate);
         break;
       case "gm":
@@ -2097,6 +4384,25 @@ router.get("/reports/:type", async (req, res, next) => {
         // via ?onlyAccountApproved=true; the other GM report
         // (GmReportTable in user-reports.tsx) doesn't send it and keeps
         // seeing every entry regardless of approval stage, unchanged.
+        // GM SYSTEM page sends gmSystem=1: old-DRM rules + filters
+        // (getGmSystemLegacyReport) on top of the modern rows.
+        if (req.query.gmSystem === "1") {
+          const q = req.query as Record<string, unknown>;
+          const str = (k: string) => (typeof q[k] === "string" && q[k] !== "" ? (q[k] as string) : null);
+          const page = Math.max(1, Number(req.query.page) || 1);
+          const pageSize = Math.min(100, Math.max(5, Number(req.query.pageSize) || Number(req.query.limit) || 25));
+          report = await getGmSystemLegacyReport(filterUserIds, fromDate, toDate, {
+            city: str("city"),
+            pkg: str("package"),
+            type: str("type"),
+            behalf: str("paymentType"),
+            qWise: q.qWise === "true",
+            abPayDate: q.abPayDate === "true",
+            page,
+            pageSize,
+          });
+          break;
+        }
         report = await getGmReport(filterUserIds, fromDate, toDate, req.query.onlyAccountApproved === "true");
         break;
       default:
@@ -2155,7 +4461,7 @@ router.get("/reports/:type/export", async (req, res, next) => {
         // Same split as the main listing route: ?scope=company => vas_reports,
         // otherwise the original office_vas/invoices-backed report.
         report = req.query.scope === "company"
-          ? await getVasReport(filterUserIds, fromDate, toDate)
+          ? await getVasCompanyLegacyReport(filterUserIds, fromDate, toDate)
           : await getVasReportLegacyOfficeVas(filterUserIds, fromDate, toDate);
         break;
       case "gm":
@@ -2663,10 +4969,20 @@ router.get("/reports/users-list", async (req, res) => {
     const allUsers = await db.select({
       id: users.id,
       name: users.name,
-      branch: users.branch
+      branch: users.branch,
+      roleId: users.roleId,
+      role: users.role,
+      roles: users.roles,
     }).from(users);
 
-    res.json(allUsers);
+    // isDeactive/roleTitles for the shared user pickers (role 54 "Deactive" hidden there).
+    const titles = await loadRoleTitles();
+    res.json(
+      allUsers.map(({ roleId, role, roles, ...u }) => ({
+        ...u,
+        ...userRoleInfo({ role_id: roleId, role, roles }, titles),
+      })),
+    );
   } catch (error: any) {
     console.error("Error fetching users list:", error);
     res.status(500).json({ error: error.message });

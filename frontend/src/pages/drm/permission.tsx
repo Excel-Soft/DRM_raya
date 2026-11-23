@@ -69,6 +69,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { canonicalRoleKey, canonicalRoleKeys } from "@/lib/legacy-role-keys";
 
 // ─── Icon Mapping ───────────────────────────────────────────────
 const iconMap: Record<string, any> = {
@@ -134,13 +135,42 @@ const ALL_DEPARTMENTS = [
 // ─── Types ───────────────────────────────────────────────────────
 interface PermissionRow {
     id: string;
-    path: string;
+    path?: string;
     name: string;
     menuIcon: string;
     permissions: { name: string; type: string }[];
     subUrls: { isRoot: boolean; items: string[] };
     allowedRoleIds: string[];
     isActive: boolean;
+    legacySourceId?: string | null;
+}
+
+interface LegacyDrmRow {
+    id: string;
+    menuTitle: string;
+    icon: string | null;
+    url: string | null;
+    urlTitle: string | null;
+    departments: string[];
+    allowedRoles: string[];
+    status: string | null;
+    isActive: boolean;
+}
+
+interface ActionRuleRow {
+    key: string;
+    module: string;
+    description: string | null;
+    roles: string[] | null;
+    adminOverride: boolean;
+    audit: boolean;
+    hasAllowRolePredicate: boolean;
+}
+
+function formatRoleSlug(slug: string): string {
+    return slug
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // ─── Main Page ───────────────────────────────────────────────────
@@ -148,8 +178,9 @@ export default function PermissionPage() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
-    // ── search
+    // ── search + view (live menu perms vs legacy archive vs API action rules)
     const [searchTerm, setSearchTerm] = useState('');
+    const [viewMode, setViewMode] = useState<'live' | 'legacy' | 'actions'>('live');
 
     // ── add-permission form
     const [isAddPermOpen, setIsAddPermOpen] = useState(false);
@@ -184,6 +215,28 @@ export default function PermissionPage() {
     // ── fetch dynamic roles list
     const { data: rolesList } = useQuery<{ id: string; name: string }[]>({
         queryKey: ['/api/settings/roles'],
+    });
+
+    const { data: legacyArchive, isLoading: legacyLoading } = useQuery<LegacyDrmRow[]>({
+        queryKey: ['/api/drm/permissions/legacy-archive'],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/drm/permissions/legacy-archive");
+            return await res.json();
+        },
+        enabled: viewMode === 'legacy',
+    });
+
+    const { data: actionRulesPayload, isLoading: actionRulesLoading } = useQuery<{
+        rules: ActionRuleRow[];
+        note: string;
+        inlinePolicies: string[];
+    }>({
+        queryKey: ['/api/drm/permissions/action-rules'],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/drm/permissions/action-rules");
+            return await res.json();
+        },
+        enabled: viewMode === 'actions',
     });
 
     // ── mutations
@@ -258,12 +311,17 @@ export default function PermissionPage() {
         setEditIcon(row.menuIcon || 'Home');
         setEditDepts((row.permissions || []).map((p: any) => p.name));
         setEditSubUrls(row.subUrls?.items || []);
-        setEditRoleIds(row.allowedRoleIds || []);
+        setEditRoleIds(canonicalRoleKeys(row.allowedRoleIds));
         setNewSubUrl('');
         setNewRoleId('');
     };
 
-    if (isLoading) {
+    const pageLoading =
+        (viewMode === 'live' && isLoading) ||
+        (viewMode === 'legacy' && legacyLoading) ||
+        (viewMode === 'actions' && actionRulesLoading);
+
+    if (pageLoading) {
         return <div className="flex justify-center items-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-[#00a65a] dark:text-zinc-400" /></div>;
     }
 
@@ -358,9 +416,10 @@ export default function PermissionPage() {
                                 roleIds.map((r, i) => (
                                     <span
                                         key={i}
-                                        className="inline-block rounded-full px-2 py-0.5 text-xs font-bold bg-blue-100 text-blue-700"
+                                        className="inline-block rounded-full px-2 py-0.5 text-xs font-bold bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-200"
+                                        title={r}
                                     >
-                                        {r}
+                                        {formatRoleSlug(r)}
                                     </span>
                                 ))
                             )}
@@ -406,7 +465,46 @@ export default function PermissionPage() {
     return (
         <div className="p-6 space-y-5 bg-gray-50 min-h-screen font-sans dark:bg-zinc-950">
 
+            {/* ── Source switcher: new (editable) vs legacy reference vs API rules ── */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap gap-2">
+                    <Button
+                        type="button"
+                        variant={viewMode === 'live' ? 'default' : 'outline'}
+                        className={viewMode === 'live' ? 'bg-[#00a65a] hover:bg-[#008d4c] text-white h-9' : 'h-9'}
+                        onClick={() => setViewMode('live')}
+                    >
+                        <Shield className="w-4 h-4 mr-1.5" />
+                        Menu permissions (current)
+                    </Button>
+                    <Button
+                        type="button"
+                        variant={viewMode === 'legacy' ? 'default' : 'outline'}
+                        className={viewMode === 'legacy' ? 'bg-slate-700 hover:bg-slate-800 text-white h-9' : 'h-9'}
+                        onClick={() => setViewMode('legacy')}
+                    >
+                        <History className="w-4 h-4 mr-1.5" />
+                        Legacy DRM setting
+                    </Button>
+                    <Button
+                        type="button"
+                        variant={viewMode === 'actions' ? 'default' : 'outline'}
+                        className={viewMode === 'actions' ? 'bg-indigo-600 hover:bg-indigo-700 text-white h-9' : 'h-9'}
+                        onClick={() => setViewMode('actions')}
+                    >
+                        <CheckCircle2 className="w-4 h-4 mr-1.5" />
+                        API action rules
+                    </Button>
+                </div>
+                {viewMode === 'live' && (
+                    <p className="text-xs text-gray-500 dark:text-zinc-400 max-w-md">
+                        Editable menu access for the sidebar. Seeded once from legacy <code className="text-[11px]">webxl_drm_setting</code> when empty.
+                    </p>
+                )}
+            </div>
+
             {/* ── Breadcrumb / Action bar ─────────────────────── */}
+            {viewMode === 'live' && (
             <div className="flex items-center gap-3 text-sm font-medium">
                 <span className="text-gray-500 uppercase tracking-wide dark:text-zinc-400">DRM Setting</span>
                 <span className="text-gray-300">/</span>
@@ -426,9 +524,10 @@ export default function PermissionPage() {
                     Add Sub URL
                 </button>
             </div>
+            )}
 
             {/* ── Add Permission Form ──────────────────────────── */}
-            {isAddPermOpen && (
+            {viewMode === 'live' && isAddPermOpen && (
                 <div className="bg-white border border-gray-200 rounded shadow-sm p-5 dark:bg-zinc-900 dark:border-zinc-800">
                     <h2 className="text-sm font-bold text-gray-700 uppercase mb-4 dark:text-zinc-400">New Permission</h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -463,7 +562,7 @@ export default function PermissionPage() {
             )}
 
             {/* ── Add Sub-URL Form ─────────────────────────────── */}
-            {isAddSubOpen && (
+            {viewMode === 'live' && isAddSubOpen && (
                 <div className="bg-white border border-gray-200 rounded shadow-sm p-5 dark:bg-zinc-900 dark:border-zinc-800">
                     <h2 className="text-sm font-bold text-gray-700 uppercase mb-4 dark:text-zinc-400">Add Sub URL</h2>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -507,7 +606,112 @@ export default function PermissionPage() {
                 </div>
             )}
 
+            {viewMode === 'legacy' && (
+                <div className="bg-white border border-gray-200 rounded shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
+                    <div className="px-5 py-3 border-b border-gray-100 bg-amber-50 text-amber-900 text-xs dark:bg-amber-950/40 dark:text-amber-200 dark:border-zinc-800">
+                        Read-only copy of archived <strong>webxl_drm_setting</strong> — use “Menu permissions (current)” to edit live rules.
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-gray-50 border-b text-xs uppercase tracking-wide dark:bg-zinc-900 dark:border-zinc-800">
+                                <tr>
+                                    <th className="px-5 py-3">Menu</th>
+                                    <th className="px-5 py-3">Departments</th>
+                                    <th className="px-5 py-3">Sub URLs</th>
+                                    <th className="px-5 py-3">Allowed roles (legacy)</th>
+                                    <th className="px-5 py-3">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 dark:divide-zinc-800">
+                                {(legacyArchive ?? []).length === 0 ? (
+                                    <tr><td colSpan={5} className="text-center py-10 text-gray-400">No legacy rows in archive.</td></tr>
+                                ) : (legacyArchive ?? []).map((row) => (
+                                    <tr key={row.id} className="align-top hover:bg-gray-50 dark:hover:bg-zinc-800">
+                                        <td className="px-5 py-4 font-medium">{row.menuTitle}</td>
+                                        <td className="px-5 py-4">
+                                            <div className="flex flex-wrap gap-1">
+                                                {row.departments.map((d, i) => (
+                                                    <span key={i} className={`text-xs px-2 py-0.5 rounded-full ${deptColor(d)}`}>{d}</span>
+                                                ))}
+                                            </div>
+                                        </td>
+                                        <td className="px-5 py-4 text-xs text-gray-600 dark:text-zinc-400">
+                                            <div>{row.urlTitle || '—'}</div>
+                                            <div className="text-gray-400 mt-0.5">{row.url || ''}</div>
+                                        </td>
+                                        <td className="px-5 py-4">
+                                            <div className="flex flex-wrap gap-1">
+                                                {row.allowedRoles.map((r, i) => (
+                                                    <Badge key={i} variant="secondary" className="text-xs">{r}</Badge>
+                                                ))}
+                                            </div>
+                                        </td>
+                                        <td className="px-5 py-4">
+                                            <span className={row.isActive ? 'text-[#00a65a]' : 'text-gray-400'}>
+                                                {row.status || (row.isActive ? 'active' : 'inactive')}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {viewMode === 'actions' && (
+                <div className="space-y-3">
+                    {actionRulesPayload?.note && (
+                        <p className="text-sm text-gray-600 dark:text-zinc-400">{actionRulesPayload.note}</p>
+                    )}
+                    {actionRulesPayload?.inlinePolicies?.length ? (
+                        <p className="text-xs text-gray-500">Also: {actionRulesPayload.inlinePolicies.join('; ')}</p>
+                    ) : null}
+                    <div className="bg-white border rounded shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
+                        <div className="overflow-x-auto max-h-[70vh]">
+                            <table className="w-full text-sm text-left">
+                                <thead className="bg-gray-50 border-b text-xs uppercase sticky top-0 dark:bg-zinc-900">
+                                    <tr>
+                                        <th className="px-4 py-3">Action key</th>
+                                        <th className="px-4 py-3">Module</th>
+                                        <th className="px-4 py-3">Allowed roles</th>
+                                        <th className="px-4 py-3">Flags</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y dark:divide-zinc-800">
+                                    {(actionRulesPayload?.rules ?? []).map((rule) => (
+                                        <tr key={rule.key} className="align-top hover:bg-gray-50 dark:hover:bg-zinc-800">
+                                            <td className="px-4 py-3 font-mono text-xs">{rule.key}</td>
+                                            <td className="px-4 py-3">{rule.module}</td>
+                                            <td className="px-4 py-3 text-xs">
+                                                {rule.hasAllowRolePredicate && (
+                                                    <span className="text-indigo-600 dark:text-indigo-300">Custom role predicate</span>
+                                                )}
+                                                {rule.roles?.length ? (
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {rule.roles.map((r) => (
+                                                            <Badge key={r} variant="outline" className="text-[10px]">{r}</Badge>
+                                                        ))}
+                                                    </div>
+                                                ) : !rule.hasAllowRolePredicate ? (
+                                                    <span className="text-gray-400">Authenticated only</span>
+                                                ) : null}
+                                            </td>
+                                            <td className="px-4 py-3 text-xs text-gray-500">
+                                                {rule.adminOverride && <span className="mr-2">admin override</span>}
+                                                {rule.audit && <span>audited deny</span>}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* ── Permissions Table ────────────────────────────── */}
+            {viewMode === 'live' && (
             <Tabs defaultValue="all" className="w-full">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                     <TabsList className="bg-white border border-gray-200 p-1 h-11 dark:bg-zinc-900 dark:border-zinc-800">
@@ -548,7 +752,7 @@ export default function PermissionPage() {
                                         <input type="checkbox" className="rounded border-gray-300 dark:border-zinc-800" />
                                     </th>
                                     <th className="px-5 py-3 min-w-[130px]">Menu</th>
-                                    <th className="px-5 py-3 min-w-[260px]">Permission</th>
+                                    <th className="px-5 py-3 min-w-[260px]">Departments</th>
                                     <th className="px-5 py-3 min-w-[280px]">Sub-Url</th>
                                     <th className="px-5 py-3 min-w-[130px]">Allowed Roles</th>
                                     <th className="px-5 py-3 min-w-[130px]">Active/Deactive</th>
@@ -577,6 +781,7 @@ export default function PermissionPage() {
                     </div>
                 </div>
             </Tabs>
+            )}
 
             {/* ══════════════════════════════════════════════════
                   Edit Dialog
@@ -706,8 +911,8 @@ export default function PermissionPage() {
                             <div className="flex flex-wrap gap-1.5 mb-2 min-h-[32px] p-2 border border-gray-200 rounded bg-gray-50 dark:bg-zinc-900 dark:border-zinc-800">
                                 {editRoleIds.length === 0 && <span className="text-gray-400 text-xs italic">No roles assigned</span>}
                                 {editRoleIds.map((r, i) => (
-                                    <span key={i} className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold bg-blue-100 text-blue-700">
-                                        {r}
+                                    <span key={i} className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold bg-blue-100 text-blue-700" title={r}>
+                                        {formatRoleSlug(r)}
                                         <button
                                             onClick={() => setEditRoleIds(editRoleIds.filter((_, idx) => idx !== i))}
                                             className="ml-0.5 hover:text-red-500"
@@ -724,14 +929,15 @@ export default function PermissionPage() {
                                     value=""
                                     onChange={(e) => {
                                         const selectedRole = e.target.value;
+                                        // Save the role KEY ("sales_executive"), not the old-DRM label "Sales Executive [L25]".
                                         if (selectedRole && !editRoleIds.includes(selectedRole)) {
                                             setEditRoleIds([...editRoleIds, selectedRole]);
                                         }
                                     }}
                                 >
                                     <option value="" disabled>— Select Role to Allow —</option>
-                                    {rolesList?.filter(role => !editRoleIds.includes(role.name)).map((role) => (
-                                        <option key={role.id} value={role.name}>{role.name}</option>
+                                    {rolesList?.filter(role => !editRoleIds.includes(canonicalRoleKey(role.name))).map((role) => (
+                                        <option key={role.id} value={canonicalRoleKey(role.name)}>{role.name.replace(/\s*\[L\d+\]\s*$/, "")}</option>
                                     ))}
                                 </select>
                             </div>

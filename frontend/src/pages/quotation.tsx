@@ -362,6 +362,38 @@ export default function QuotationPage() {
     return isPackageProductName(product.name || "");
   };
 
+  // Renewal from IT -> Domains (?renewProducts=<ids>&domainUrl=<domain>): pre-select the
+  // domain's existing services once the catalog is loaded. Eligibility (follow-up) was
+  // already checked before navigating; the normal save-time checks still apply.
+  const [renewalPrefilled, setRenewalPrefilled] = useState(false);
+  useEffect(() => {
+    if (renewalPrefilled || quotationId || viewOnly) return;
+    const ids = String(query.renewProducts || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0 || flatProducts.length === 0) return;
+    const year = new Date().getFullYear();
+    const lines: QuotationItemForm[] = [];
+    for (const id of ids) {
+      const p = getProductById(id);
+      if (!p) continue;
+      const isDom = isDomainHostingProductName(p.name || "", p.parentName || "");
+      lines.push({
+        productId: p.id,
+        detail: p.description !== null && p.description !== undefined ? p.description : "",
+        quantity: 1,
+        abDiscount: 0,
+        unitPrice: Number(p.price || 0),
+        minTime: isDom ? p.minDay ?? p.minTime : undefined,
+        maxTime: isDom ? p.maxDay ?? p.maxTime : undefined,
+        domainUrl: isDom ? String(query.domainUrl || "") : "",
+        startYear: year,
+        endYear: year,
+      } as QuotationItemForm);
+    }
+    setRenewalPrefilled(true);
+    if (lines.length === 0) return;
+    setForm((prev) => ({ ...prev, items: [...prev.items.filter((it) => it.productId), ...lines] }));
+  }, [renewalPrefilled, quotationId, viewOnly, query, flatProducts, getProductById]);
+
   const hasAnyDomainHosting = form.items.some((item) => isDomainHostingRow(item.productId));
   const hasAnyPackage = form.items.some((item) => isPackageRow(item.productId));
 

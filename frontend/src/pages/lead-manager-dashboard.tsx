@@ -27,6 +27,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 import { useToast } from "@/hooks/use-toast";
+import { RoleGroupedUserSelect } from "@/components/role-grouped-user-select";
 
 // Same company type list used by the standalone Add Customer page (client/src/pages/add-customer.tsx),
 // reused here so "Add UAE Customer" doesn't invent a parallel business rule.
@@ -1036,10 +1037,10 @@ export default function LeadManagerDashboard() {
                                 >
                                   <option value="">Select Exec</option>
                                   <optgroup label="Sales Executives">
-                                    {systemUsers.filter((u: any) => u.role === "sales_executive").map((u: any) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+                                    {systemUsers.filter((u: any) => u.role === "sales_executive" && !u.isDeactive).map((u: any) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
                                   </optgroup>
                                   <optgroup label="Service Executives">
-                                    {systemUsers.filter((u: any) => u.role === "service_executive").map((u: any) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+                                    {systemUsers.filter((u: any) => u.role === "service_executive" && !u.isDeactive).map((u: any) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
                                   </optgroup>
                                 </select>
                               <Button 
@@ -1419,17 +1420,15 @@ export default function LeadManagerDashboard() {
                 <div className="relative">
                   {transferType === "user" ? (
                     <>
-                      <select 
-                        value={transferTarget} 
-                        onChange={e => setTransferTarget(e.target.value)} 
-                        className="w-full bg-slate-50 border-slate-200 h-11 text-[13px] font-medium rounded-xl outline-none appearance-none px-4 border shadow-sm focus:border-emerald-500 focus:bg-white transition-colors dark:bg-zinc-900 dark:border-zinc-800"
-                      >
-                        <option value="">Choose a user...</option>
-                        {systemUsers.filter((u: any) => u.role === "sales_executive").map((u: any) => (
-                          <option key={u.id} value={u.id}>{u.fullName} ({u.email})</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                      <RoleGroupedUserSelect
+                        grouped={false}
+                        users={systemUsers.filter((u: any) => u.role === "sales_executive")}
+                        value={transferTarget}
+                        onChange={setTransferTarget}
+                        getLabel={(u) => `${u.fullName} (${u.email})`}
+                        placeholder="Choose a user..."
+                        className="w-full bg-slate-50 border-slate-200 h-11 text-[13px] font-medium rounded-xl px-4 shadow-sm dark:bg-zinc-900 dark:border-zinc-800"
+                      />
                     </>
                   ) : transferType === "city" ? (
                     <Input 

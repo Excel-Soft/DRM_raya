@@ -10,6 +10,7 @@ frontend-next/
 # Environment (secrets)
 .env
 .env.*
+!.env*.example
 
 # OS
 .DS_Store
@@ -34,6 +35,7 @@ __pycache__/
 # SQL dumps (large / sensitive)
 local_db_dump.sql
 supabase_drm_import.sql
+backups/
 
 # Temp/debug scripts
 temp_env.txt
@@ -53,3 +55,13 @@ markdown_files/
 
 # Runtime-uploaded user files (portfolio images, project documents, etc.)
 backend/uploads/
+
+# Old-DRM dump uploads for Admin -> Old Data Import (large, contain old data)
+backend/private/
+
+# Local copies of the old DRM (large / contain the old MySQL password) — never commit
+/assets.zip
+/old_drm_database.sql
+/uploads/
+/func.php
+/dollarsystem.php

@@ -3,10 +3,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Info, Calendar, Loader2, CheckCircle2, XCircle, Download, Clock, AlertTriangle, ShieldCheck, ChevronDown, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, apiRequestJson } from "@/lib/queryClient";
-import { useState, useRef, useEffect, type ReactNode } from "react";
+import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
@@ -95,6 +96,91 @@ function FullReportMetricRow({
       )}
     </tr>
   );
+}
+
+// ── Skeleton placeholders (shown while the report data loads) ──
+function DataBoxSkeleton({ rows = 5 }: { rows?: number }) {
+    return (
+        <div className="bg-white dark:bg-zinc-900 border border-slate-100 dark:border-zinc-800">
+            <Skeleton className="h-9 w-full rounded-none" />
+            <div className="p-3 space-y-3">
+                {Array.from({ length: rows }).map((_, i) => (
+                    <div key={i} className="flex items-center justify-between gap-3">
+                        <Skeleton className="h-3.5 w-24" />
+                        <Skeleton className="h-3.5 w-8" />
+                        <Skeleton className="h-3.5 w-16" />
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+function TopCardsSkeleton() {
+    return (
+        <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {Array.from({ length: 4 }).map((_, i) => <DataBoxSkeleton key={i} />)}
+            </div>
+            <Skeleton className="h-9 w-full rounded-none" />
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <DataBoxSkeleton rows={7} />
+                <DataBoxSkeleton rows={3} />
+                <DataBoxSkeleton rows={2} />
+                <DataBoxSkeleton rows={5} />
+            </div>
+        </div>
+    );
+}
+function SkeletonTableRows({ cols, rows = 6 }: { cols: number; rows?: number }) {
+    return (
+        <>
+            {Array.from({ length: rows }).map((_, r) => (
+                <TableRow key={`sk-${r}`} className="h-8 border-b border-slate-100 dark:border-zinc-800">
+                    {Array.from({ length: cols }).map((__, c) => (
+                        <TableCell key={c} className="px-1"><Skeleton className="h-3 w-full" /></TableCell>
+                    ))}
+                </TableRow>
+            ))}
+        </>
+    );
+}
+
+// Old AB report "Dollar System" tables: section titles, a subtotal under each section
+// and a Final row (func.php Ab_report_startData). Rows without a section are new-app rows.
+const DOLLAR_SECTION_TITLES: Record<string, string> = {
+    loan: "Loan First Payment Received",
+    partial: "Partial Payment",
+    martiniDue: "Martini Due",
+    cheque: "Cheque Payment Dollar",
+    recovery: "Recovery Dollar",
+};
+function groupDollarRows(rows: any[] | undefined): any[] {
+    const list = rows || [];
+    if (!list.some((r) => r.section)) return list;
+    const out: any[] = [];
+    let cur: string | undefined = undefined;
+    let sub = { dollar: 0, received: 0 };
+    let fin = { dollar: 0, received: 0 };
+    const flush = () => {
+        if (cur !== undefined) out.push({ __total: "Total", ...sub });
+        sub = { dollar: 0, received: 0 };
+    };
+    for (const r of list) {
+        const sec = r.section || "new";
+        if (sec !== cur) {
+            flush();
+            cur = sec;
+            if (DOLLAR_SECTION_TITLES[sec]) out.push({ __header: DOLLAR_SECTION_TITLES[sec] });
+            else if (sec === "new") out.push({ __header: "New DRM" });
+        }
+        out.push(r);
+        sub.dollar += Number(r.dollar || 0);
+        sub.received += Number(r.received || 0);
+        if (sec !== "martiniDue") { fin.dollar += Number(r.dollar || 0); fin.received += Number(r.received || 0); }
+    }
+    flush();
+    out.push({ __total: "Final", ...fin });
+    return out;
 }
 
 function FullReportSummaryBlock({ summary }: { summary: FullReportSummary | null | undefined }) {
@@ -585,9 +671,12 @@ function TimeRangeDropdown({
 
 export default function AbReport() {
     // Applied range drives API queries; draft is what the Dollar System date inputs edit until View.
-    const [appliedDateRange, setAppliedDateRange] = useState({ from: "", to: "" });
-    const [draftDateRange, setDraftDateRange] = useState({ from: "", to: "" });
-    const [rangeLabel, setRangeLabel] = useState("Current Quarter");
+    // Opens on the current quarter (the label always said so, but the range started empty,
+    // so every figure was all-time).
+    const initialRange = useMemo(() => computePresetRange("current-quarter"), []);
+    const [appliedDateRange, setAppliedDateRange] = useState({ from: initialRange.from, to: initialRange.to });
+    const [draftDateRange, setDraftDateRange] = useState({ from: initialRange.from, to: initialRange.to });
+    const [rangeLabel, setRangeLabel] = useState(initialRange.label);
 
     const applyRange = (from: string, to: string, label: string) => {
         const next = { from, to };
@@ -653,6 +742,28 @@ export default function AbReport() {
         }
     });
 
+    // Lazy loading: the bottom "Dollar System" section (the heaviest call) only loads
+    // once it scrolls near the viewport.
+    const dollarSectionRef = useRef<HTMLDivElement | null>(null);
+    const [dollarSectionVisible, setDollarSectionVisible] = useState(false);
+    useEffect(() => {
+        if (dollarSectionVisible) return;
+        const el = dollarSectionRef.current;
+        if (!el || typeof IntersectionObserver === "undefined") {
+            if (!el) return;
+            setDollarSectionVisible(true);
+            return;
+        }
+        const io = new IntersectionObserver((entries) => {
+            if (entries.some((e) => e.isIntersecting)) {
+                setDollarSectionVisible(true);
+                io.disconnect();
+            }
+        }, { rootMargin: "400px 0px" });
+        io.observe(el);
+        return () => io.disconnect();
+    });
+
     const { data: dollarList, isLoading: listLoading, isFetching: listFetching } = useQuery({
         queryKey: ["/api/account/dollar-system/list", appliedDateRange],
         queryFn: async () => {
@@ -662,7 +773,8 @@ export default function AbReport() {
             const res = await fetch(url.toString(), { credentials: "include" });
             if (!res.ok) throw new Error("Failed to fetch lists");
             return res.json();
-        }
+        },
+        enabled: dollarSectionVisible,
     });
 
     const { data: closingSummary, isLoading: closingLoading } = useQuery({
@@ -677,7 +789,7 @@ export default function AbReport() {
         }
     });
 
-    const { data: abPaymentsData } = useQuery({
+    const { data: abPaymentsData, isFetching: abPaymentsFetching } = useQuery({
         queryKey: ["/api/account/ab-payments", appliedDateRange],
         queryFn: async () => {
             const url = new URL("/api/account/ab-payments", window.location.origin);
@@ -687,7 +799,8 @@ export default function AbReport() {
             const res = await fetch(url.toString(), { credentials: "include" });
             if (!res.ok) throw new Error("Failed to fetch AB payments");
             return res.json();
-        }
+        },
+        enabled: dollarSectionVisible,
     });
 
     const { data: todayClosing } = useQuery({
@@ -756,12 +869,20 @@ export default function AbReport() {
         setRangeLabel("Custom Date Range");
     };
 
-    const isInitialLoad = (statsLoading && !stats) || (listLoading && !dollarList);
+    const isInitialLoad = statsLoading && !stats;
     if (isInitialLoad) {
         return (
-            <div className="flex h-screen items-center justify-center bg-slate-50 dark:bg-zinc-900">
-                <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
-                <span className="ml-2 text-slate-600 font-medium dark:text-zinc-300">Loading Real Data...</span>
+            <div className="flex flex-col min-h-screen bg-slate-50/50 dark:bg-zinc-950 p-6 space-y-6" aria-busy="true">
+                <Skeleton className="h-7 w-64" />
+                <Skeleton className="h-14 w-full" />
+                <Skeleton className="h-11 w-full" />
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                    <div className="lg:col-span-3"><TopCardsSkeleton /></div>
+                    <div className="lg:col-span-1 space-y-4">
+                        <Skeleton className="h-40 w-full" />
+                        <DataBoxSkeleton rows={12} />
+                    </div>
+                </div>
             </div>
         );
     }
@@ -774,12 +895,13 @@ export default function AbReport() {
     const abp = closingSummary?.abPayments || {};
     const chk = closingSummary?.checklist || {};
     const auditRows = closingSummary?.auditHistory || [];
-    const paidAbRows = abPaymentsData?.data || [];
+    // New-app AB payments + old-DRM "AliBaba Paid" rows (func.php Ab_report_startData).
+    const paidAbRows = [...(abPaymentsData?.data || []), ...(dollarList?.abPaidLegacy || [])];
 
-    const isRefreshing = statsFetching || listFetching;
+    const dollarListBusy = !dollarSectionVisible || (listFetching && !!dollarList) || (listLoading && !dollarList);
 
     return (
-        <div className={`flex flex-col min-h-screen bg-slate-50/50 dark:bg-zinc-950 p-6 space-y-6 transition-opacity ${isRefreshing ? "opacity-70 pointer-events-none" : ""}`}>
+        <div className="flex flex-col min-h-screen bg-slate-50/50 dark:bg-zinc-950 p-6 space-y-6">
             {/* Breadcrumb — "Dollar Buying / View Ab Report" in the legacy page */}
             <div className="flex items-center justify-between">
                 <h4 className="text-lg font-semibold text-slate-800 dark:text-zinc-100">
@@ -807,6 +929,7 @@ export default function AbReport() {
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 <div className="lg:col-span-3 space-y-8">
+                    {statsFetching ? <TopCardsSkeleton /> : (<>
                     {/* ACCOUNT Sections */}
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         {/* CASH Column */}
@@ -845,7 +968,7 @@ export default function AbReport() {
                         </DataBox>
 
                         {/* DOLLARS Column */}
-                        <DataBox title="dollars" totalCount={account.dollars?.buy?.count || 0} totalAmount={account.dollars?.total?.amount || 0} totalPrefix="$">
+                        <DataBox title="dollars" totalCount={account.dollars?.total?.count || 0} totalAmount={account.dollars?.total?.amount || 0} totalPrefix="$">
                             <MetricRow
                                 label="Balance"
                                 count={account.dollars?.balance?.count || 0}
@@ -853,7 +976,9 @@ export default function AbReport() {
                                 prefix="$"
                                 breakdown={[
                                     { label: "Last Quarter", count: account.dollars?.balance?.lastQuarter?.count || 0, amount: account.dollars?.balance?.lastQuarter?.amount || 0, onView: () => viewMetric("balance-last-quarter", "Balance — Last Quarter") },
-                                    { label: "Current Quarter", count: account.dollars?.balance?.currentQuarter?.count || 0, amount: account.dollars?.balance?.currentQuarter?.amount || 0, onView: () => viewMetric("balance-current-quarter", "Balance — Current Quarter") },
+                                    { label: "Selected Range", count: account.dollars?.balance?.currentQuarter?.count || 0, amount: account.dollars?.balance?.currentQuarter?.amount || 0, onView: () => viewMetric("balance-current-quarter", "Balance — Selected Range") },
+                                    // Old report counts every open slot but adds up only the two periods above.
+                                    { label: "Other Dates (count only)", count: account.dollars?.balance?.otherDates?.count || 0, amount: account.dollars?.balance?.otherDates?.amount || 0 },
                                 ]}
                             />
                             <MetricRow
@@ -1073,6 +1198,7 @@ export default function AbReport() {
                             <MetricRow label="Web Excels Closing" count="--" amount={account.webExcels?.closing?.webExcelsClosing?.amount || 0} highlight infoTooltip="Cheque Pay + Loan Payment + Loan Recovered - Extra-Discount Paid" />
                         </DataBox>
                     </div>
+                    </>)}
                 </div>
 
                 {/* Right CLOSING Summary Column */}
@@ -1263,8 +1389,8 @@ export default function AbReport() {
                 </div>
             </div>
 
-            {/* DOLLAR SYSTEM INTEGRATED AT BOTTOM */}
-            <div className="pt-10 border-t border-slate-200 mt-10 dark:border-zinc-800">
+            {/* DOLLAR SYSTEM INTEGRATED AT BOTTOM (lazy-loaded) */}
+            <div ref={dollarSectionRef} className="pt-10 border-t border-slate-200 mt-10 dark:border-zinc-800">
                 <h2 className="text-xl font-bold text-slate-800 uppercase mb-6 dark:text-zinc-100">Dollar System</h2>
                 <Card className="border-none shadow-sm overflow-hidden bg-white dark:bg-zinc-900">
                     <CardContent className="p-6">
@@ -1313,7 +1439,11 @@ export default function AbReport() {
                                             </TableRow>
                                         </TableHeader>
                                         <TableBody>
-                                            {dollarList?.clientPayments?.map((item: any, i: number) => (
+                                            {dollarListBusy ? <SkeletonTableRows cols={5} /> : groupDollarRows(dollarList?.clientPayments).map((item: any, i: number) => item.__header ? (
+                                                <TableRow key={`h${i}`} className="bg-slate-50 dark:bg-zinc-900"><TableCell colSpan={5} className="text-center font-bold text-slate-700 px-1 dark:text-zinc-300">{item.__header}</TableCell></TableRow>
+                                            ) : item.__total ? (
+                                                <TableRow key={`t${i}`} className="text-center font-bold text-slate-800 h-8 border-b border-slate-200 dark:text-zinc-100 dark:border-zinc-700"><TableCell className="px-1">{item.__total}</TableCell><TableCell /><TableCell className="px-1">{Math.round(item.dollar).toLocaleString()}</TableCell><TableCell /><TableCell className="px-1">{Math.round(item.received).toLocaleString()}</TableCell></TableRow>
+                                            ) : (
                                                 <TableRow key={i} className="hover:bg-slate-50 text-center text-slate-600 h-8 border-b border-slate-100 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
                                                     <TableCell className="px-1">{new Date(item.date).toLocaleDateString()}</TableCell>
                                                     <TableCell className="font-bold text-slate-800 px-1 truncate max-w-[80px] dark:text-zinc-100">{item.company}</TableCell>
@@ -1322,7 +1452,7 @@ export default function AbReport() {
                                                     <TableCell className="px-1">{item.received}</TableCell>
                                                 </TableRow>
                                             ))}
-                                            {(!dollarList?.clientPayments || dollarList.clientPayments.length === 0) && (
+                                            {!dollarListBusy && (!dollarList?.clientPayments || dollarList.clientPayments.length === 0) && (
                                                 <TableRow>
                                                     <TableCell colSpan={5} className="text-center py-4 text-slate-400 italic">No entries</TableCell>
                                                 </TableRow>
@@ -1347,7 +1477,11 @@ export default function AbReport() {
                                             </TableRow>
                                         </TableHeader>
                                         <TableBody>
-                                            {dollarList?.dollarBuys?.map((item: any, i: number) => (
+                                            {dollarListBusy ? <SkeletonTableRows cols={5} /> : groupDollarRows(dollarList?.dollarBuys).map((item: any, i: number) => item.__header ? (
+                                                <TableRow key={`h${i}`} className="bg-slate-50 dark:bg-zinc-900"><TableCell colSpan={5} className="text-center font-bold text-slate-700 px-1 dark:text-zinc-300">{item.__header}</TableCell></TableRow>
+                                            ) : item.__total ? (
+                                                <TableRow key={`t${i}`} className="text-center font-bold text-slate-800 h-8 border-b border-slate-200 dark:text-zinc-100 dark:border-zinc-700"><TableCell className="px-1">{item.__total}</TableCell><TableCell /><TableCell className="px-1">{Math.round(item.dollar).toLocaleString()}</TableCell><TableCell /><TableCell className="px-1">{Math.round(item.received).toLocaleString()}</TableCell></TableRow>
+                                            ) : (
                                                 <TableRow key={i} className="hover:bg-slate-50 text-center text-slate-600 h-8 border-b border-slate-100 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
                                                     <TableCell className="px-1">{new Date(item.date).toLocaleDateString()}</TableCell>
                                                     <TableCell className="font-bold text-slate-800 px-1 truncate max-w-[80px] dark:text-zinc-100">{item.paypalEmail || 'N/A'}</TableCell>
@@ -1356,7 +1490,7 @@ export default function AbReport() {
                                                     <TableCell className="px-1">{item.received}</TableCell>
                                                 </TableRow>
                                             ))}
-                                            {(!dollarList?.dollarBuys || dollarList.dollarBuys.length === 0) && (
+                                            {!dollarListBusy && (!dollarList?.dollarBuys || dollarList.dollarBuys.length === 0) && (
                                                 <TableRow>
                                                     <TableCell colSpan={5} className="text-center py-4 text-slate-400 italic">No entries</TableCell>
                                                 </TableRow>
@@ -1381,7 +1515,7 @@ export default function AbReport() {
                                             </TableRow>
                                         </TableHeader>
                                         <TableBody>
-                                            {paidAbRows.map((item: any, i: number) => (
+                                            {(dollarListBusy || abPaymentsFetching) ? <SkeletonTableRows cols={5} /> : paidAbRows.map((item: any, i: number) => (
                                                 <TableRow key={i} className="hover:bg-slate-50 text-center text-slate-600 h-8 border-b border-slate-100 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
                                                     <TableCell className="px-1">{item.paid_date ? format(new Date(item.paid_date), 'MM/dd/yy') : '-'}</TableCell>
                                                     <TableCell className="font-bold text-slate-800 px-1 truncate max-w-[80px] dark:text-zinc-100">
@@ -1395,7 +1529,7 @@ export default function AbReport() {
                                                     </TableCell>
                                                 </TableRow>
                                             ))}
-                                            {paidAbRows.length === 0 && (
+                                            {!(dollarListBusy || abPaymentsFetching) && paidAbRows.length === 0 && (
                                                 <TableRow>
                                                     <TableCell colSpan={5} className="text-center py-4 text-slate-400 italic">No paid AB records yet</TableCell>
                                                 </TableRow>
@@ -1406,7 +1540,14 @@ export default function AbReport() {
                             </div>
                         </div>
 
-                        <FullReportSummaryBlock summary={dollarList?.fullReportSummary as FullReportSummary | null | undefined} />
+                        {dollarListBusy ? (
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-6">
+                                <Skeleton className="h-64 w-full" />
+                                <Skeleton className="h-64 w-full" />
+                            </div>
+                        ) : (
+                            <FullReportSummaryBlock summary={dollarList?.fullReportSummary as FullReportSummary | null | undefined} />
+                        )}
                     </CardContent>
                 </Card>
             </div>

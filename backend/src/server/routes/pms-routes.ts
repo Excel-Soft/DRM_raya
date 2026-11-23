@@ -18,8 +18,23 @@ import { taskTemplatesRepository } from "../repositories/task-templates.reposito
 import { changeTaskStatus, changeProjectStatus } from "./services/pms-transition.service";
 import { getConfigValue, patchConfig } from "./services/gm-sales-config.service";
 import { PROJECT_GENERATION_MODE } from "../../shared/gm-sales-constants";
+import {
+  departmentCandidatesForRole,
+  departmentFamiliesForRole,
+  departmentTypeInQaPipeline,
+  departmentTypeMatchesFamily,
+  type ProjectDeptFamily,
+  ROLE_DEPARTMENT_VARIANTS,
+  sqlDepartmentFamilyIn,
+  sqlDepartmentFilterForRole,
+} from "@shared/project-department-variants";
 import { pool } from "../db";
+import {
+  listPmsDepartmentAssignments,
+  savePmsDepartmentAssignment,
+} from "../utils/pms-department-assign-legacy";
 import { NotificationService } from "./services/notification-service";
+import { notifyTaskAssignee } from "../utils/task-notifications";
 import { getOrCreateProductPostingWorkflow } from "./services/product-posting-workflow.service";
 import {
   insertProjectSchema,
@@ -52,6 +67,29 @@ function collectActorRoles(user: any): string[] {
     for (const r of user.roles) if (r) out.push(String(r));
   }
   return out;
+}
+
+/** Role used for PMS scoping — respects "Acting as" (activeRoleId) over stored roleId. */
+function resolveRequestUserRole(req: { user?: any }): string {
+  const u = req.user;
+  return String(u?.activeRoleId || u?.roleId || u?.role || "").toLowerCase();
+}
+
+function buildDepartmentTypeScopeSql(userRole: string, userDept: string): string {
+  const deptSql = sqlDepartmentFilterForRole("p.department_type", userRole);
+  if (deptSql) return deptSql;
+  const deptCandidates = departmentCandidatesForRole(userRole, userDept);
+  if (deptCandidates.length === 0) return "p.department_type IN ('')";
+  const inList = deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ");
+  return `p.department_type IN (${inList})`;
+}
+
+/** Product Posting list scope — invoice/dept only; do not use workflow rows (D&D minisites also get workflows). */
+function buildProductPostingProjectScopeSql(): string {
+  const ppDept = sqlDepartmentFamilyIn("p.department_type", "product_posting");
+  const ppInvoice = `EXISTS (SELECT 1 FROM drm.product_posting_invoices ppi WHERE ppi.id = p.invoice_id)`;
+  const notDnd = `NOT (${sqlDepartmentFamilyIn("p.department_type", "dnd")})`;
+  return `((${ppDept}) OR (${ppInvoice})) AND (${notDnd})`;
 }
 
 export function getStatsPeriodRange(period?: string) {
@@ -102,6 +140,322 @@ export function getStatsPeriodRange(period?: string) {
       break;
   }
   return { from, to };
+}
+
+const LEGACY_WS_CHANNEL_PREFIX = "legacy-ws-channel-";
+
+const LEGACY_ASSIGN_COMPLETED_SQL = `
+  coalesce(p.is_deleted, false) = false
+  AND trim(coalesce(a.fy_status, '')) <> '1'
+  AND (
+    lower(trim(coalesce(a.stauts, ''))) IN (
+      'end', 'completed', 'done', 'finish', 'finished'
+    )
+    OR (
+      trim(coalesce(a.qa_status, '')) = '1'
+      AND lower(trim(coalesce(a.stauts, ''))) IN ('stop', 'panding', 'pending')
+    )
+  )
+`;
+
+/** Legacy assign row still in flight (used for Running Projects / Current With). */
+const LEGACY_ASSIGN_OPEN_SQL = `
+  trim(coalesce(a.fy_status, '')) <> '1'
+  AND lower(trim(coalesce(a.stauts, ''))) NOT IN (
+    'end', 'completed', 'done', 'finish', 'finished'
+  )
+  AND NOT (
+    trim(coalesce(a.qa_status, '')) = '1'
+    AND lower(trim(coalesce(a.stauts, ''))) IN ('stop', 'panding', 'pending')
+  )
+`;
+
+const WORKFLOW_STAGE_RANK: Record<string, number> = {
+  Executive: 0,
+  Manager: 1,
+  QA: 2,
+  VM: 3,
+  Closed: 9,
+};
+
+/** Department PMS managers (DD / PP / IT / SEO / Software) — not executives or sales managers. */
+const LEGACY_DEP_ID_BY_FAMILY: Partial<Record<ProjectDeptFamily, string>> = {
+  product_posting: "9",
+  dnd: "10",
+  it: "13",
+  seo_smm: "8",
+  software: "27",
+  service: "5",
+};
+
+/** Old DRM webxl_quotation_services.dep_id for manager department scoping. */
+function legacyDepIdsForRole(userRole: string): string[] | null {
+  const families = departmentFamiliesForRole(userRole);
+  if (families === null) return null;
+  return families
+    .map((f) => LEGACY_DEP_ID_BY_FAMILY[f])
+    .filter((id): id is string => !!id);
+}
+
+function canViewPmsOverallProjects(userRole: string): boolean {
+  const r = String(userRole || "").toLowerCase();
+  if (r.includes("executive") && !r.includes("admin")) return false;
+  if (r.startsWith("sales_")) return false;
+  if (!isManagerialRole(r)) return false;
+  const families = departmentFamiliesForRole(r);
+  if (families === null) return true;
+  return families.length > 0;
+}
+
+function mergeProjectWorkflowStage(
+  legacyStage: string | null | undefined,
+  modernStage: string | null | undefined,
+  projectStatus: string | null | undefined,
+): string {
+  if (String(projectStatus || "") === "Completed") return "Closed";
+  const candidates = [legacyStage, modernStage].filter(
+    (s): s is string => !!s && s !== "Closed",
+  );
+  if (candidates.length === 0) return "Closed";
+  candidates.sort(
+    (a, b) => (WORKFLOW_STAGE_RANK[a] ?? 5) - (WORKFLOW_STAGE_RANK[b] ?? 5),
+  );
+  return candidates[0];
+}
+
+/** QA / VM / manager asked for rework (legacy webxl_task_assign signals). */
+const LEGACY_ASSIGN_CHANGING_SQL = `
+  (
+    trim(coalesce(a.qa_status, '')) = '1'
+    AND lower(trim(coalesce(a.stauts, ''))) IN ('stop', 'panding', 'pending')
+    AND trim(coalesce(a.fy_status, '')) <> '1'
+  )
+  OR nullif(trim(coalesce(a.qa_com, '')), '') IS NOT NULL
+  OR nullif(trim(coalesce(a.fy_com, '')), '') IS NOT NULL
+  OR nullif(trim(coalesce(a.fy_fdb, '')), '') IS NOT NULL
+  OR lower(trim(coalesce(a.mng_status, ''))) IN ('changing', 'change')
+  OR nullif(trim(coalesce(a.after_qa_changing, '')), '') IS NOT NULL
+`;
+
+function taskHistoryRowNeedsChanging(row: {
+  currentStatus?: string | null;
+  qaComment?: string | null;
+  vmComment?: string | null;
+  notes?: string | null;
+  needsChanging?: boolean;
+}): boolean {
+  if (row.needsChanging) return true;
+  if (row.currentStatus === "Blocked") return true;
+  if (String(row.qaComment || "").trim()) return true;
+  if (String(row.vmComment || "").trim()) return true;
+  if (row.notes) {
+    try {
+      const parsed = JSON.parse(row.notes);
+      if (parsed.qaReturn || parsed.verificationReturn) return true;
+    } catch {
+      // plain text notes — not a structured return
+    }
+  }
+  return false;
+}
+
+function legacyAssignDurationMinutes(
+  durText: string | null | undefined,
+  durHours: number,
+  durMin: number,
+): number {
+  const t = durText?.trim() || "";
+  if (t) {
+    const dayM = t.match(/^([0-9]+)d\s+([0-9]+):([0-9]+):([0-9]+)$/);
+    if (dayM) {
+      const sec =
+        Number(dayM[1]) * 86400
+        + Number(dayM[2]) * 3600
+        + Number(dayM[3]) * 60
+        + Number(dayM[4]);
+      return Math.round(sec / 60);
+    }
+    const hms = t.match(/^(-?[0-9]+):(-?[0-9]+):(-?[0-9]+)$/);
+    if (hms) {
+      return Number(hms[1]) * 60 + Number(hms[2]) + Math.round(Number(hms[3]) / 60);
+    }
+    const hm = t.match(/^(-?[0-9]+):(-?[0-9]+)$/);
+    if (hm) return Number(hm[1]) * 60 + Number(hm[2]);
+  }
+  return durHours * 60 + durMin;
+}
+
+function mapLegacyAssignToTaskHistoryRow(r: Record<string, unknown>) {
+  const taskId = r.legacy_id as string;
+  const currentStatus = r.current_status as string;
+  const linkTotal = Number(r.link_total) || 0;
+  const linkApproved = Number(r.link_approved) || 0;
+  const changedAt = r.changed_at;
+  return {
+    id: `legacy-history-${taskId}`,
+    taskId,
+    userId: r.assignee_id,
+    fromStatus: "InProgress",
+    toStatus: currentStatus,
+    changedAt,
+    notes: null,
+    task: {
+      id: taskId,
+      title: r.task_title,
+      ownerUserId: r.owner_user_id,
+      assignedToUserId: r.assignee_user_id,
+    },
+    user: { id: r.assignee_id, name: r.assignee_name },
+    company: r.company_name,
+    timeSpentMinutes: legacyAssignDurationMinutes(
+      r.dur_text as string | null,
+      Number(r.dur_hours) || 0,
+      Number(r.dur_min) || 0,
+    ),
+    currentStatus,
+    sentToQaAt: null,
+    qaReviewedAt: null,
+    verificationReviewedAt: null,
+    departmentType: r.department_type,
+    linkApprovedQty: linkApproved,
+    linkTotalQty: linkTotal,
+    linkPendingQty: Math.max(0, linkTotal - linkApproved),
+    qaComment: r.qa_comment,
+    vmComment: r.vm_comment,
+    legacyReadOnly: true,
+    needsChanging: Boolean(
+      currentStatus === "Blocked"
+      || String(r.qa_comment || "").trim()
+      || String(r.vm_comment || "").trim(),
+    ),
+  };
+}
+
+async function fetchAdminLegacyTaskHistoryPage(
+  page: number,
+  pageSize: number,
+  changingOnly = false,
+  /** row scope (default: every completed old task, the admin view) */
+  scopeSql: string = LEGACY_ASSIGN_COMPLETED_SQL,
+) {
+  const offset = (page - 1) * pageSize;
+  const changingClause = changingOnly ? ` AND (${LEGACY_ASSIGN_CHANGING_SQL})` : "";
+  const [countRes, dataRes] = await Promise.all([
+    pool.query(
+      `
+      SELECT count(*)::int AS total
+      FROM legacy_archive.webxl_task_assign a
+      JOIN migration_meta.migration_legacy_ids pm
+        ON pm.modern_table = 'projects' AND trim(pm.legacy_id) = trim(a.pro_id)
+      JOIN drm.projects p ON p.id = pm.modern_id::uuid
+      WHERE ${scopeSql}${changingClause}
+      `,
+    ),
+    pool.query(
+      `
+      WITH base AS (
+        SELECT
+          a._legacy_pk,
+          a.pro_id,
+          a.task_id,
+          a.user_id,
+          a.qa_com,
+          a.fy_com,
+          a.fy_fdb,
+          a.hours,
+          a.min,
+          a."totalTimespent",
+          a.timespent,
+          a.soft_task_name,
+          p.id AS project_uuid,
+          p.department_type,
+          p.owner_user_id,
+          p.name AS project_name,
+          p.customer_id,
+          p.invoice_id,
+          COALESCE(
+            NULLIF(trim(a.last_update), '')::timestamptz,
+            NULLIF(trim(a.assign_date), '')::timestamptz,
+            now()
+          ) AS changed_at,
+          CASE
+            WHEN trim(coalesce(a.qa_status, '')) = '1'
+              AND lower(trim(coalesce(a.stauts, ''))) IN ('stop', 'panding', 'pending')
+              AND trim(coalesce(a.fy_status, '')) <> '1'
+            THEN 'Blocked'
+            ELSE 'Completed'
+          END AS current_status
+        FROM legacy_archive.webxl_task_assign a
+        JOIN migration_meta.migration_legacy_ids pm
+          ON pm.modern_table = 'projects' AND trim(pm.legacy_id) = trim(a.pro_id)
+        JOIN drm.projects p ON p.id = pm.modern_id::uuid
+        WHERE ${scopeSql}${changingClause}
+      ),
+      paged AS (
+        SELECT * FROM base
+        ORDER BY changed_at DESC
+        LIMIT $1 OFFSET $2
+      ),
+      link_stats AS (
+        SELECT
+          trim(l.pro_id) AS pro_id,
+          trim(l.task_id) AS task_id,
+          count(*) FILTER (
+            WHERE coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) IS NOT NULL
+          )::int AS link_total,
+          count(*) FILTER (
+            WHERE trim(coalesce(l.verify, '')) IN ('1', 'yes', 'Yes', 'verified', 'Verified')
+          )::int AS link_approved
+        FROM legacy_archive.webxl_task_links l
+        INNER JOIN paged pg
+          ON trim(l.pro_id) = trim(pg.pro_id)
+          AND (
+            trim(l.task_id) = trim(pg.task_id)
+            OR trim(l.task_id) = trim(pg._legacy_pk)
+          )
+        GROUP BY trim(l.pro_id), trim(l.task_id)
+      )
+      SELECT
+        ('legacy-assign-' || pg._legacy_pk) AS legacy_id,
+        coalesce(nullif(trim(tl.name), ''), nullif(trim(pg.soft_task_name), ''), 'Task ' || coalesce(pg.task_id, pg._legacy_pk)) AS task_title,
+        COALESCE(c.company_name, inv.company_name, pg.project_name) AS company_name,
+        pg.department_type,
+        pg.owner_user_id,
+        um.modern_id::uuid AS assignee_user_id,
+        coalesce(u.full_name, u.name, u.username, 'Unknown') AS assignee_name,
+        coalesce(u.id, um.modern_id::uuid) AS assignee_id,
+        nullif(trim(coalesce(pg.qa_com, '')), '') AS qa_comment,
+        nullif(trim(coalesce(pg.fy_com, pg.fy_fdb, '')), '') AS vm_comment,
+        pg.changed_at,
+        pg.current_status,
+        nullif(trim(coalesce(pg."totalTimespent", pg.timespent, '')), '') AS dur_text,
+        coalesce(nullif(regexp_replace(trim(coalesce(pg.hours, '')), '[^0-9]', '', 'g'), '')::int, 0) AS dur_hours,
+        coalesce(nullif(regexp_replace(trim(coalesce(pg.min, '')), '[^0-9]', '', 'g'), '')::int, 0) AS dur_min,
+        coalesce(ls.link_total, 0) AS link_total,
+        coalesce(ls.link_approved, 0) AS link_approved
+      FROM paged pg
+      LEFT JOIN drm.customers c ON c.id = pg.customer_id
+      LEFT JOIN drm.product_posting_invoices inv ON inv.id = pg.invoice_id
+      LEFT JOIN legacy_archive.webxl_tasks_list tl
+        ON trim(tl._legacy_pk) = trim(pg.task_id) OR trim(tl.id) = trim(pg.task_id)
+      LEFT JOIN migration_meta.migration_legacy_ids um
+        ON um.legacy_table = 'webxl_user' AND um.legacy_id = trim(pg.user_id)
+      LEFT JOIN drm.users u ON u.id = um.modern_id::uuid
+      LEFT JOIN link_stats ls
+        ON trim(ls.pro_id) = trim(pg.pro_id) AND trim(ls.task_id) = trim(pg.task_id)
+      ORDER BY pg.changed_at DESC
+      `,
+      [pageSize, offset],
+    ),
+  ]);
+
+  const total = Number(countRes.rows[0]?.total) || 0;
+  const items = dataRes.rows.map((row) => mapLegacyAssignToTaskHistoryRow(row));
+  return {
+    items,
+    total,
+    hasMore: offset + items.length < total,
+  };
 }
 
 export function registerPmsRoutes(app: Express) {
@@ -282,24 +636,9 @@ function getPeriodRange(periodRaw: string) {
       const userRes = await pool.query('SELECT department FROM drm.users WHERE id = $1', [req.user.userId]);
       const userDept = userRes.rows[0]?.department || '';
 
-      const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
-          seo_smm: ["SEO_SMM", "SEO/SMM"],
-          it: ["IT"],
-          dd: ["DND", "DESIGN_DEVELOPMENT"],
-          product_posting: ["PRODUCT_POSTING"],
-          software: ["SOFTWARE"],
-          service: ["SERVICE"],
-          // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
-          // (or Software/Service) — pinned directly rather than derived from
-          // a role-name prefix, since "qa_manager" doesn't share a prefix
-          // with any of these and users.department is usually unset too.
-          qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
-      };
+      const ROLE_DEPT_VARIANTS = ROLE_DEPARTMENT_VARIANTS as Record<string, string[]>;
       const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
-      const deptCandidates = Array.from(new Set([
-          ...(userDept ? [userDept] : []),
-          ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
-      ]));
+      const deptCandidates = departmentCandidatesForRole(userRole, userDept);
       const deptInClause = deptCandidates.length > 0
           ? `(${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
           : `('')`; // no candidates -> matches nothing, same as the old empty-string behavior
@@ -319,9 +658,39 @@ function getPeriodRange(periodRaw: string) {
       }
 
       const { rows } = await pool.query(`
+        -- Old-DRM projects were all copied as status 'Active'; their real stage is the
+        -- latest webxl_project_status row. Only 'Documents Panding' / 'verify Data'
+        -- that the department has not verified (mag_verify <> 1) are still pending.
+        WITH legacy_ps AS MATERIALIZED (
+          SELECT DISTINCT ON (m.modern_id) m.modern_id::uuid AS project_id,
+                 btrim(ps.status) AS status, btrim(coalesce(ps.mag_verify, '')) AS mag_verify,
+                 btrim(ps.com_id) AS com_id
+            FROM migration_meta.migration_legacy_ids m
+            LEFT JOIN legacy_archive.webxl_project_status ps
+                   ON ps._source_table = 'webxl_project_status' AND btrim(ps.pro_id) = btrim(m.legacy_id)
+           WHERE m.modern_table = 'projects'
+           ORDER BY m.modern_id, ps._legacy_pk::int DESC NULLS LAST
+        ),
+        legacy_hod AS MATERIALIZED (
+          SELECT DISTINCT ON (btrim(h.com_id)) btrim(h.com_id) AS com_id, btrim(h.hod_status) AS hod_status,
+                 btrim(h.acc_status) AS acc_status,
+                 CASE WHEN btrim(h.update_date) ~ '^[1-9][0-9]{3}-' THEN btrim(h.update_date)::timestamp END AS update_date,
+                 CASE WHEN btrim(h.create_date) ~ '^[1-9][0-9]{3}-' THEN btrim(h.create_date)::timestamp END AS create_date
+            FROM legacy_archive.webxl_status_hod h
+           WHERE h._source_table = 'webxl_status_hod'
+           ORDER BY btrim(h.com_id), h._legacy_pk::int DESC
+        )
         SELECT
           p.id,
-          p.project_number as "projectNumber",
+          COALESCE(
+            (
+              SELECT mli.legacy_id
+              FROM migration_meta.migration_legacy_ids mli
+              WHERE mli.modern_table = 'projects' AND mli.modern_id = p.id::text
+              LIMIT 1
+            ),
+            NULLIF(p.project_number, '')
+          ) as "projectNumber",
           COALESCE(NULLIF(CASE WHEN p.name LIKE '%•%' THEN NULL ELSE p.name END, ''), i.project_name, p.name) as project,
           COALESCE(
             p.service_type,
@@ -340,13 +709,16 @@ function getPeriodRange(periodRaw: string) {
           COALESCE(
             i.hod_approved_at,
             CASE WHEN i.status IN ('PENDING_ACCOUNT', 'APPROVED', 'PAID') THEN i.updated_at END,
-            CASE WHEN gi.status IN ('Paid', 'Overdue') THEN gi.updated_at END
+            CASE WHEN gi.status IN ('Paid', 'Overdue') THEN gi.updated_at END,
+            CASE WHEN lh.hod_status = '1' THEN COALESCE(lh.update_date, lh.create_date, p.created_at) END
           ) as "hodApprovedAt",
           COALESCE(
             i.accounts_approved_at,
             CASE WHEN i.status IN ('APPROVED', 'PAID') THEN i.updated_at END,
-            CASE WHEN gi.status IN ('Paid', 'Overdue') THEN COALESCE(gi.paid_at, gi.updated_at) END
+            CASE WHEN gi.status IN ('Paid', 'Overdue') THEN COALESCE(gi.paid_at, gi.updated_at) END,
+            CASE WHEN lh.acc_status = '1' THEN COALESCE(lh.update_date, lh.create_date, p.created_at) END
           ) as "accountsApprovedAt",
+          lps.status as "legacyStatus",
           -- The department this project was routed to actually approving the
           -- uploaded document — wf.data_verified_at (below) is never written
           -- by any route, so this column was permanently stuck on "Waiting"
@@ -385,12 +757,14 @@ function getPeriodRange(periodRaw: string) {
         FROM drm.projects p
         LEFT JOIN drm.customers c ON c.id = p.customer_id
         LEFT JOIN drm.product_posting_invoices i ON i.id = p.invoice_id
-        LEFT JOIN drm.invoices gi ON gi.id = p.invoice_id
+        LEFT JOIN drm.invoices gi ON gi.id::text = p.legacy_source_id::text
         LEFT JOIN drm.users u ON u.id = p.owner_user_id
         LEFT JOIN drm.project_financials fin ON fin.project_id = p.id
         LEFT JOIN drm.project_payments pay ON pay.project_id = p.id
         LEFT JOIN drm.product_posting_workflows wf ON wf.project_id = p.id
         LEFT JOIN drm.project_details pdet ON pdet.project_id = p.id
+        LEFT JOIN legacy_ps lps ON lps.project_id = p.id
+        LEFT JOIN legacy_hod lh ON lh.com_id = lps.com_id
         -- OnHold is included: a project only lands there via the Listing-Page-QA
         -- dependency gate, which blocks TASK ASSIGNMENT (see
         -- assertProductPostingDependencySatisfied), not the initial document
@@ -400,13 +774,21 @@ function getPeriodRange(periodRaw: string) {
         AND ($1::uuid IS NULL OR p.owner_user_id = $1::uuid)
         ${roleFilter}
         AND coalesce(p.is_deleted, false) = false
-        ORDER BY p.project_number
+        -- Old-DRM project: still pending only if the old system had it pending, or
+        -- someone has uploaded a document for it in the new app since migration.
+        AND (
+          lps.project_id IS NULL
+          OR (lps.status IN ('Documents Panding', 'verify Data') AND lps.mag_verify <> '1')
+          OR EXISTS (SELECT 1 FROM drm.project_documents npd WHERE npd.project_id = p.id)
+        )
+        ORDER BY p.created_at DESC
       `, [scopeUserId]);
       
       // Add sentToManager flag for client display
       const enriched = rows.map(r => ({
         ...r,
-        sentToManager: !!r.reuploadedDocId
+        // Old 'verify Data' = documents already uploaded, waiting for the department.
+        sentToManager: !!r.reuploadedDocId || (r.legacyStatus === "verify Data" && !r.verifiedAt)
       }));
       res.json(enriched);
 
@@ -421,39 +803,15 @@ function getPeriodRange(periodRaw: string) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       
-      const userRole = req.user.roleId || (req.user as any).role || '';
+      const userRole = resolveRequestUserRole(req);
       const userRes = await pool.query('SELECT department FROM drm.users WHERE id = $1', [req.user.userId]);
       const userDept = userRes.rows[0]?.department || '';
-
-      // department_type is stored under several inconsistent spellings across
-      // the app (e.g. 'SEO_SMM' vs 'SEO/SMM', 'DND' vs 'DESIGN_DEVELOPMENT'),
-      // and users.department is frequently left unset entirely for real
-      // accounts. Rather than trust a single exact-match string, derive the
-      // full set of acceptable department_type spellings from BOTH the
-      // user's own department column (if set) and their role prefix (e.g.
-      // "seo_smm_executive" -> SEO/SMM), matching the same known-variant
-      // aliasing already used in seo-smm-projects-routes.ts.
-      const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
-          seo_smm: ["SEO_SMM", "SEO/SMM"],
-          it: ["IT"],
-          dd: ["DND", "DESIGN_DEVELOPMENT"],
-          product_posting: ["PRODUCT_POSTING"],
-          software: ["SOFTWARE"],
-          service: ["SERVICE"],
-          // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
-          // (or Software/Service) — pinned directly rather than derived from
-          // a role-name prefix, since "qa_manager" doesn't share a prefix
-          // with any of these and users.department is usually unset too.
-          qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
-      };
-      const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
-      const deptCandidates = Array.from(new Set([
-          ...(userDept ? [userDept] : []),
-          ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
-      ]));
-      const deptInClause = deptCandidates.length > 0
-          ? `(${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
-          : `('')`; // no candidates -> matches nothing, same as the old empty-string behavior
+      const deptScope = buildDepartmentTypeScopeSql(userRole, userDept);
+      const isProductPostingRole =
+        userRole.startsWith("product_posting") || userRole.startsWith("posting_");
+      const deptScopeForRole = isProductPostingRole
+        ? buildProductPostingProjectScopeSql()
+        : deptScope;
 
       let roleFilter = "";
       if (userRole === "sales_executive") {
@@ -461,12 +819,14 @@ function getPeriodRange(periodRaw: string) {
       } else if (userRole === "sales_manager") {
           // Self-only — never team/org data (explicit product decision).
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
-      } else if (userRole.includes("executive")) {
-          // Dynamic check for executive assigned tasks
-          roleFilter = `AND p.department_type IN ${deptInClause} AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.assigned_to_user_id = '${req.user.userId}')`;
-      } else if (userRole.includes("manager")) {
-          // Dynamic check for managers
-          roleFilter = `AND p.department_type IN ${deptInClause}`;
+      } else if (userRole.includes("executive") && !userRole.startsWith("sales")) {
+          roleFilter = `AND (${deptScopeForRole}) AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.assigned_to_user_id = '${req.user.userId}')`;
+      } else if (userRole.includes("manager") || userRole.includes("hod") || isManagerialRole(userRole)) {
+          if (sqlDepartmentFilterForRole("p.department_type", userRole) === null) {
+            roleFilter = "";
+          } else {
+            roleFilter = `AND (${deptScopeForRole})`;
+          }
       }
 
       // Optional query filters wired from the client (Department / City / Status / Date range).
@@ -512,28 +872,166 @@ function getPeriodRange(periodRaw: string) {
       // (needs every status incl. Completed/OnHold), pms-tasks.tsx (needs every
       // owned project to manage tasks), and pms-setting.tsx — so this can't live
       // in the general sales_executive roleFilter above without breaking those.
-      // Only pms-running-projects.tsx sends onlyActiveWork=true, specifically to
-      // narrow "Running Projects" down to projects with a task InProgress right
-      // now — status='Active' alone just means "not archived".
-      if (userRole === "sales_executive" && String(req.query.onlyActiveWork).toLowerCase() === "true") {
-        extraFilter += ` AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.status = 'InProgress')`;
-      }
+      const onlyActiveWork = String(req.query.onlyActiveWork).toLowerCase() === "true";
 
       const { rows } = await pool.query(`
+        -- Scope first (role + query filters), then aggregate old-DRM rows only for
+        -- the projects in scope: aggregating webxl_task_links (~890k rows) for all
+        -- 12k projects is what made the Running Projects page time out.
+        WITH scoped AS MATERIALIZED (
+          SELECT p.id
+          FROM drm.projects p
+          LEFT JOIN drm.customers c ON p.customer_id = c.id
+          WHERE coalesce(p.is_deleted, false) = false
+          ${roleFilter}
+          ${extraFilter}
+        ),
+        legacy_pro_map AS MATERIALIZED (
+          SELECT mli.modern_id::uuid AS project_id, trim(mli.legacy_id) AS pro_id
+          FROM migration_meta.migration_legacy_ids mli
+          JOIN scoped s ON s.id::text = mli.modern_id
+          WHERE mli.modern_table = 'projects'
+        ),
+        legacy_doc_projects AS (
+          SELECT DISTINCT m.project_id
+          FROM legacy_pro_map m
+          JOIN legacy_archive.webxl_project_img img ON trim(img.pid) = m.pro_id
+          WHERE coalesce(nullif(trim(img.images), ''), nullif(trim(img.upl_number), '')) IS NOT NULL
+          UNION
+          SELECT DISTINCT m.project_id
+          FROM legacy_pro_map m
+          JOIN legacy_archive.webxl_project_status ps ON trim(ps.pro_id) = m.pro_id
+          WHERE nullif(trim(ps.upload_doc), '') IS NOT NULL
+        ),
+        legacy_dep_projects AS (
+          SELECT DISTINCT m.project_id
+          FROM legacy_pro_map m
+          JOIN legacy_archive.webxl_project_status ps ON trim(ps.pro_id) = m.pro_id
+          WHERE trim(coalesce(ps.mag_verify, '')) IN ('1', 'yes', 'Yes', 'YES')
+        ),
+        legacy_link_agg AS (
+          SELECT m.project_id, COUNT(*)::int AS legacy_link_count
+          FROM legacy_pro_map m
+          JOIN legacy_archive.webxl_task_links l ON trim(l.pro_id) = m.pro_id
+          WHERE coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) IS NOT NULL
+          GROUP BY m.project_id
+        ),
+        legacy_time_agg AS (
+          SELECT m.project_id,
+            SUM(
+              CASE
+                WHEN dur ~ '^[0-9]+d [0-9]+:[0-9]+:[0-9]+$' THEN
+                  (COALESCE(NULLIF(substring(dur from '^([0-9]+)d'), '')::int, 0) * 86400)
+                  + (split_part(regexp_replace(dur, '^[0-9]+d ', ''), ':', 1)::int * 3600)
+                  + (split_part(regexp_replace(dur, '^[0-9]+d ', ''), ':', 2)::int * 60)
+                  + split_part(regexp_replace(dur, '^[0-9]+d ', ''), ':', 3)::int
+                WHEN dur ~ '^-?[0-9]+:-?[0-9]+:-?[0-9]+$' THEN
+                  (split_part(dur, ':', 1)::int * 3600)
+                  + (split_part(dur, ':', 2)::int * 60)
+                  + split_part(dur, ':', 3)::int
+                WHEN dur ~ '^-?[0-9]+:-?[0-9]+$' THEN
+                  (split_part(dur, ':', 1)::int * 3600)
+                  + (split_part(dur, ':', 2)::int * 60)
+                ELSE
+                  COALESCE(nullif(regexp_replace(trim(coalesce(a.hours, '')), '[^0-9]', '', 'g'), '')::int, 0) * 3600
+                  + COALESCE(nullif(regexp_replace(trim(coalesce(a.min, '')), '[^0-9]', '', 'g'), '')::int, 0) * 60
+              END
+            )::bigint AS legacy_time_seconds,
+            count(*)::int AS legacy_task_count
+          FROM legacy_pro_map m
+          JOIN legacy_archive.webxl_task_assign a ON trim(a.pro_id) = m.pro_id
+          CROSS JOIN LATERAL (
+            SELECT nullif(trim(coalesce(a."totalTimespent", a.timespent, '')), '') AS dur
+          ) d
+          GROUP BY m.project_id
+        ),
+        legacy_stage_agg AS (
+          SELECT m.project_id,
+            CASE
+              WHEN count(*) FILTER (WHERE (${LEGACY_ASSIGN_OPEN_SQL})) = 0 THEN 'Closed'
+              WHEN BOOL_OR(
+                (${LEGACY_ASSIGN_OPEN_SQL})
+                AND (
+                  lower(trim(coalesce(a.stauts, ''))) IN ('progress', 'start', 'run', 'running', 'active', 'todo')
+                  OR (
+                    trim(coalesce(a.mng_status, '')) NOT IN ('1', 'yes')
+                    AND trim(coalesce(a.qa_status, '')) NOT IN ('1', 'yes')
+                  )
+                )
+              ) THEN 'Executive'
+              WHEN BOOL_OR(
+                (${LEGACY_ASSIGN_OPEN_SQL})
+                AND trim(coalesce(a.mng_status, '')) IN ('1', 'yes')
+              ) THEN 'Manager'
+              WHEN BOOL_OR(
+                (${LEGACY_ASSIGN_OPEN_SQL}) AND trim(coalesce(a.qa_status, '')) IN ('1', 'yes')
+              ) THEN 'QA'
+              WHEN BOOL_OR(
+                (${LEGACY_ASSIGN_OPEN_SQL}) AND trim(coalesce(a.fy_status, '')) = '1'
+              ) THEN 'VM'
+              ELSE 'Executive'
+            END AS workflow_stage
+          FROM legacy_pro_map m
+          JOIN legacy_archive.webxl_task_assign a ON trim(a.pro_id) = m.pro_id
+          GROUP BY m.project_id
+        ),
+        modern_stage_agg AS (
+          SELECT
+            t.project_id,
+            CASE
+              WHEN count(*) = 0 THEN NULL
+              WHEN count(*) FILTER (
+                WHERE t.status IN ('ToDo', 'InProgress', 'Blocked', 'IN_EXECUTION')
+              ) > 0 THEN 'Executive'
+              WHEN count(*) FILTER (WHERE t.status = 'READY_FOR_QA') > 0 THEN 'Manager'
+              WHEN count(*) FILTER (
+                WHERE t.status = 'Completed'
+                  AND t.qa_reviewed_at IS NULL
+              ) > 0
+                AND count(*) FILTER (WHERE t.status <> 'Completed') = 0
+              THEN 'QA'
+              WHEN count(*) FILTER (
+                WHERE t.status = 'Completed'
+                  AND t.qa_reviewed_at IS NOT NULL
+                  AND t.verification_reviewed_at IS NULL
+              ) > 0
+                AND count(*) FILTER (WHERE t.status <> 'Completed') = 0
+              THEN 'VM'
+              WHEN count(*) FILTER (WHERE t.status <> 'Completed') = 0 THEN 'Closed'
+              ELSE 'Executive'
+            END AS workflow_stage
+          FROM drm.tasks t
+          WHERE coalesce(t.is_deleted, false) = false
+          GROUP BY t.project_id
+        )
         SELECT
           p.id,
           COALESCE(i.company_name, c.company_name, 'Unknown') as "company",
           COALESCE(NULLIF(CASE WHEN p.name LIKE '%•%' THEN NULL ELSE p.name END, ''), i.project_name, p.name) as "project",
           p.status,
+          p.department_type as "departmentType",
+          (i.id IS NOT NULL) as "hasProductPostingInvoice",
           u.name as "assign",
           u.department as "department",
           c.city as "city",
           p.created_at as "date",
           COALESCE(fin.total_amount, 0) as "amount",
           i.status as "invoiceStatus",
-          (SELECT COUNT(*) FROM drm.tasks t WHERE t.project_id = p.id) as "totalTasks",
-          EXISTS (SELECT 1 FROM drm.project_documents pd WHERE pd.project_id = p.id) as "docUploaded",
-          EXISTS (SELECT 1 FROM drm.project_documents pd WHERE pd.project_id = p.id AND pd.status = 'APPROVED') as "depApproved",
+          (
+            (SELECT COUNT(*) FROM drm.tasks t WHERE t.project_id = p.id) +
+            -- Pre-aggregated once in legacy_time_agg: the old per-row subquery
+            -- seq-scanned webxl_task_assign (no index on trim(pro_id)) for every
+            -- project and made this endpoint take ~97 s.
+            COALESCE(lta.legacy_task_count, 0)
+          ) as "totalTasks",
+          (
+            EXISTS (SELECT 1 FROM drm.project_documents pd WHERE pd.project_id = p.id)
+            OR ldoc.project_id IS NOT NULL
+          ) as "docUploaded",
+          (
+            EXISTS (SELECT 1 FROM drm.project_documents pd WHERE pd.project_id = p.id AND pd.status = 'APPROVED')
+            OR ldep.project_id IS NOT NULL
+          ) as "depApproved",
           (SELECT SUM(duration_minutes) FROM drm.task_time_logs tl JOIN drm.tasks t ON tl.task_id = t.id WHERE t.project_id = p.id) as "totalTime",
           (SELECT COALESCE(json_agg(DISTINCT link), '[]'::json)
            FROM (
@@ -547,26 +1045,295 @@ function getPeriodRange(periodRaw: string) {
                CASE WHEN tsh.notes LIKE '{%' THEN COALESCE((tsh.notes::jsonb)->'links', '[]'::jsonb) ELSE '[]'::jsonb END
              ) as link_elem
              WHERE t2.project_id = p.id
-           ) all_links) as "links"
+           ) all_links) as "links",
+          COALESCE(lla.legacy_link_count, 0) as "legacyLinkCount",
+          COALESCE(lta.legacy_time_seconds, 0) as "legacyTimeSeconds",
+          lsa.workflow_stage as "legacyWorkflowStage",
+          msa.workflow_stage as "modernWorkflowStage"
         FROM drm.projects p
         LEFT JOIN drm.product_posting_invoices i ON p.invoice_id = i.id
         LEFT JOIN drm.customers c ON p.customer_id = c.id
         LEFT JOIN drm.users u ON p.owner_user_id = u.id
         LEFT JOIN drm.project_financials fin ON fin.project_id = p.id
-        WHERE coalesce(p.is_deleted, false) = false
-        ${roleFilter}
-        ${extraFilter}
+        LEFT JOIN legacy_doc_projects ldoc ON ldoc.project_id = p.id
+        LEFT JOIN legacy_dep_projects ldep ON ldep.project_id = p.id
+        LEFT JOIN legacy_link_agg lla ON lla.project_id = p.id
+        LEFT JOIN legacy_time_agg lta ON lta.project_id = p.id
+        LEFT JOIN legacy_stage_agg lsa ON lsa.project_id = p.id
+        LEFT JOIN modern_stage_agg msa ON msa.project_id = p.id
+        WHERE p.id IN (SELECT id FROM scoped)
         ORDER BY p.updated_at DESC
       `, params);
 
-      res.json(rows.map(row => ({
-        ...row,
-        time: row.totalTime ? `${Math.floor(row.totalTime / 60)}:${row.totalTime % 60}` : "0:0",
-        date: row.date ? new Date(row.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : "-"
-      })));
+      let mapped = rows.map((row) => {
+        const modernMinutes = Number(row.totalTime) || 0;
+        const legacySeconds = Number(row.legacyTimeSeconds) || 0;
+        const totalSeconds = legacySeconds + modernMinutes * 60;
+        const timeHours = Math.floor(totalSeconds / 3600);
+        const timeMinutes = Math.floor((totalSeconds % 3600) / 60);
+        const modernLinkCount = Array.isArray(row.links) ? row.links.length : 0;
+        const workflowStage = mergeProjectWorkflowStage(
+          row.legacyWorkflowStage as string | null | undefined,
+          row.modernWorkflowStage as string | null | undefined,
+          row.status as string | null | undefined,
+        );
+        const isProductPosting =
+          departmentTypeMatchesFamily(row.departmentType as string, "product_posting")
+          || Boolean(row.hasProductPostingInvoice);
+        const linkCount = isProductPosting
+          ? (Number(row.legacyLinkCount) || 0) + modernLinkCount
+          : null;
+        return {
+          ...row,
+          time: totalSeconds > 0 ? `${timeHours}:${timeMinutes}` : "0:0",
+          linkCount,
+          isProductPosting,
+          workflowStage,
+          date: row.date
+            ? new Date(row.date).toLocaleDateString("en-GB", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              })
+            : "-",
+        };
+      });
+
+      if (onlyActiveWork) {
+        mapped = mapped.filter(
+          (row) =>
+            row.workflowStage !== "Closed"
+            && String(row.status || "") !== "Completed",
+        );
+      }
+
+      res.json(mapped);
     } catch (error) {
       console.error("Error fetching department status:", error);
       res.status(500).json({ error: "Failed to fetch department status" });
+    }
+  });
+
+  // GET /api/pms/overall-projects — manager read-only activity list (legacy-style).
+  app.get("/api/pms/overall-projects", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+
+      const userRole = resolveRequestUserRole(req);
+      if (!canViewPmsOverallProjects(userRole)) {
+        return res.status(403).json({ error: "Only department managers can view overall projects" });
+      }
+
+      const userRes = await pool.query("SELECT department FROM drm.users WHERE id = $1", [req.user.userId]);
+      const userDept = userRes.rows[0]?.department || "";
+      const deptScope = buildDepartmentTypeScopeSql(userRole, userDept);
+      const isProductPostingRole =
+        userRole.startsWith("product_posting") || userRole.startsWith("posting_");
+      const deptScopeForRole = isProductPostingRole
+        ? buildProductPostingProjectScopeSql()
+        : deptScope;
+
+      const legacyDepIds = legacyDepIdsForRole(userRole);
+      let roleFilter = "";
+      if (sqlDepartmentFilterForRole("p.department_type", userRole) === null) {
+        roleFilter = "";
+      } else if (legacyDepIds && legacyDepIds.length > 0) {
+        const depIn = legacyDepIds.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ");
+        roleFilter = `AND (
+          (${deptScopeForRole})
+          OR EXISTS (
+            SELECT 1
+              FROM migration_meta.migration_legacy_ids mli
+              JOIN legacy_archive.webxl_create_project cp
+                ON trim(cp.pro_id) = trim(mli.legacy_id)
+              JOIN legacy_archive.webxl_quotation_services qs
+                ON qs.dep_id IN (${depIn})
+               AND lower(regexp_replace(trim(qs.name), '\\s+', ' ', 'g'))
+                 = lower(regexp_replace(trim(cp.project), '\\s+', ' ', 'g'))
+             WHERE mli.modern_table = 'projects' AND mli.modern_id = p.id::text
+          )
+        )`;
+      } else {
+        roleFilter = `AND (${deptScopeForRole})`;
+      }
+
+      const { rows } = await pool.query(`
+        WITH legacy_pro_map AS (
+          SELECT mli.modern_id::uuid AS project_id, trim(mli.legacy_id) AS pro_id
+          FROM migration_meta.migration_legacy_ids mli
+          WHERE mli.modern_table = 'projects'
+        ),
+        legacy_status_agg AS (
+          SELECT m.project_id,
+            max(nullif(trim(ps.upload_doc), '')) AS legacy_upload_doc,
+            max(nullif(trim(ps.vfy_date), '')) AS legacy_dep_approved
+          FROM legacy_pro_map m
+          JOIN legacy_archive.webxl_project_status ps ON trim(ps.pro_id) = m.pro_id
+          GROUP BY m.project_id
+        ),
+        legacy_stage_agg AS (
+          SELECT m.project_id,
+            CASE
+              WHEN count(*) FILTER (WHERE (${LEGACY_ASSIGN_OPEN_SQL})) = 0 THEN 'Closed'
+              WHEN BOOL_OR(
+                (${LEGACY_ASSIGN_OPEN_SQL})
+                AND (
+                  lower(trim(coalesce(a.stauts, ''))) IN ('progress', 'start', 'run', 'running', 'active', 'todo')
+                  OR (
+                    trim(coalesce(a.mng_status, '')) NOT IN ('1', 'yes')
+                    AND trim(coalesce(a.qa_status, '')) NOT IN ('1', 'yes')
+                  )
+                )
+              ) THEN 'Executive'
+              WHEN BOOL_OR(
+                (${LEGACY_ASSIGN_OPEN_SQL})
+                AND trim(coalesce(a.mng_status, '')) IN ('1', 'yes')
+              ) THEN 'Manager'
+              WHEN BOOL_OR(
+                (${LEGACY_ASSIGN_OPEN_SQL}) AND trim(coalesce(a.qa_status, '')) IN ('1', 'yes')
+              ) THEN 'QA'
+              WHEN BOOL_OR(
+                (${LEGACY_ASSIGN_OPEN_SQL}) AND trim(coalesce(a.fy_status, '')) = '1'
+              ) THEN 'VM'
+              ELSE 'Executive'
+            END AS workflow_stage
+          FROM legacy_pro_map m
+          JOIN legacy_archive.webxl_task_assign a ON trim(a.pro_id) = m.pro_id
+          GROUP BY m.project_id
+        ),
+        modern_stage_agg AS (
+          SELECT
+            t.project_id,
+            CASE
+              WHEN count(*) = 0 THEN NULL
+              WHEN count(*) FILTER (
+                WHERE t.status IN ('ToDo', 'InProgress', 'Blocked', 'IN_EXECUTION')
+              ) > 0 THEN 'Executive'
+              WHEN count(*) FILTER (WHERE t.status = 'READY_FOR_QA') > 0 THEN 'Manager'
+              WHEN count(*) FILTER (
+                WHERE t.status = 'Completed' AND t.qa_reviewed_at IS NULL
+              ) > 0
+                AND count(*) FILTER (WHERE t.status <> 'Completed') = 0
+              THEN 'QA'
+              WHEN count(*) FILTER (
+                WHERE t.status = 'Completed'
+                  AND t.qa_reviewed_at IS NOT NULL
+                  AND t.verification_reviewed_at IS NULL
+              ) > 0
+                AND count(*) FILTER (WHERE t.status <> 'Completed') = 0
+              THEN 'VM'
+              WHEN count(*) FILTER (WHERE t.status <> 'Completed') = 0 THEN 'Closed'
+              ELSE 'Executive'
+            END AS workflow_stage
+          FROM drm.tasks t
+          WHERE coalesce(t.is_deleted, false) = false
+          GROUP BY t.project_id
+        )
+        SELECT
+          p.id,
+          coalesce(lp.pro_id, substr(p.id::text, 1, 8)) as "projectNo",
+          COALESCE(i.company_name, c.company_name, 'Unknown') as "company",
+          coalesce(
+            u.name,
+            (
+              SELECT wu.name
+                FROM migration_meta.migration_legacy_ids mli
+                JOIN legacy_archive.webxl_create_project cp ON trim(cp.pro_id) = trim(mli.legacy_id)
+                JOIN legacy_archive.webxl_user wu ON trim(wu.user_id) = trim(cp.user_id)
+               WHERE mli.modern_table = 'projects' AND mli.modern_id = p.id::text
+               LIMIT 1
+            )
+          ) as "person",
+          COALESCE(
+            NULLIF(CASE WHEN p.name LIKE '%•%' THEN NULL ELSE p.name END, ''),
+            i.project_name,
+            p.name
+          ) as "project",
+          p.status,
+          p.department_type as "departmentType",
+          p.updated_at as "sortDate",
+          (SELECT max(pd.created_at) FROM drm.project_documents pd WHERE pd.project_id = p.id) as "modernDocUploadAt",
+          (SELECT max(pd.updated_at) FROM drm.project_documents pd
+            WHERE pd.project_id = p.id AND pd.status = 'APPROVED') as "modernDepApprovedAt",
+          lsa.legacy_upload_doc,
+          lsa.legacy_dep_approved,
+          lsa2.workflow_stage as "legacyWorkflowStage",
+          msa.workflow_stage as "modernWorkflowStage",
+          EXISTS (SELECT 1 FROM drm.project_documents pd WHERE pd.project_id = p.id) as "docUploaded",
+          EXISTS (SELECT 1 FROM drm.project_documents pd
+            WHERE pd.project_id = p.id AND pd.status = 'APPROVED') as "depApproved"
+        FROM drm.projects p
+        LEFT JOIN drm.product_posting_invoices i ON p.invoice_id = i.id
+        LEFT JOIN drm.customers c ON p.customer_id = c.id
+        LEFT JOIN drm.users u ON p.owner_user_id = u.id
+        LEFT JOIN legacy_pro_map lp ON lp.project_id = p.id
+        LEFT JOIN legacy_status_agg lsa ON lsa.project_id = p.id
+        LEFT JOIN legacy_stage_agg lsa2 ON lsa2.project_id = p.id
+        LEFT JOIN modern_stage_agg msa ON msa.project_id = p.id
+        WHERE coalesce(p.is_deleted, false) = false
+        ${roleFilter}
+        ORDER BY p.updated_at DESC
+      `);
+
+      const formatTs = (v: unknown): string => {
+        if (!v) return "—";
+        const s = String(v).trim();
+        if (!s) return "—";
+        const d = new Date(s);
+        if (!Number.isNaN(d.getTime())) {
+          return d.toLocaleString("en-GB", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: true,
+          });
+        }
+        return s;
+      };
+
+      const mapped = rows.map((row) => {
+        const workflowStage = mergeProjectWorkflowStage(
+          row.legacyWorkflowStage as string | null,
+          row.modernWorkflowStage as string | null,
+          row.status as string | null,
+        );
+        const workOpen =
+          workflowStage !== "Closed" && String(row.status || "") !== "Completed";
+        const activityStatus = workOpen ? "Start Work" : "Closed";
+        const docUploadAt =
+          row.modernDocUploadAt || row.legacy_upload_doc || null;
+        const depApprovedAt =
+          row.modernDepApprovedAt || row.legacy_dep_approved || null;
+        return {
+          id: row.id,
+          projectNo: row.projectNo,
+          company: row.company,
+          person: row.person || "—",
+          project: row.project,
+          activityStatus,
+          workflowStage,
+          docUpload: formatTs(docUploadAt),
+          depApproved: formatTs(depApprovedAt),
+          docUploaded: Boolean(row.docUploaded) || Boolean(row.legacy_upload_doc),
+          depApprovedFlag:
+            Boolean(row.depApproved) || Boolean(row.legacy_dep_approved),
+          sortDate: row.sortDate,
+          isActive: workOpen,
+        };
+      });
+
+      mapped.sort((a, b) => {
+        if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+        return new Date(String(b.sortDate)).getTime() - new Date(String(a.sortDate)).getTime();
+      });
+
+      res.json(mapped);
+    } catch (error) {
+      console.error("Error fetching overall projects:", error);
+      res.status(500).json({ error: "Failed to fetch overall projects" });
     }
   });
 
@@ -593,19 +1360,7 @@ function getPeriodRange(periodRaw: string) {
       const userRes = await pool.query("SELECT department FROM drm.users WHERE id = $1", [req.user.userId]);
       const userDept = userRes.rows[0]?.department || "";
 
-      const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
-        seo_smm: ["SEO_SMM", "SEO/SMM"],
-        it: ["IT"],
-        dd: ["DND", "DESIGN_DEVELOPMENT"],
-        product_posting: ["PRODUCT_POSTING"],
-        software: ["SOFTWARE"],
-        service: ["SERVICE"],
-      };
-      const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
-      const deptCandidates = Array.from(new Set([
-        ...(userDept ? [userDept] : []),
-        ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
-      ]));
+      const deptCandidates = departmentCandidatesForRole(userRole, userDept);
 
       // admin/super_hod aren't tied to any one department — they see every
       // department's queue, matching /api/pms/department-status's own
@@ -640,10 +1395,210 @@ function getPeriodRange(periodRaw: string) {
         ORDER BY t.updated_at DESC
       `);
 
-      res.json(rows);
+      // Old DRM: tasks the executive ended / submitted to the manager (stauts 'End') that the manager
+      // has not reviewed or sent to QA (mng_status '', '0', '1') and that QA / VM have not closed
+      // (qa_status, fy_status <> '1'). No date window (decision 2026-11-23). Read-only here: they are
+      // approved in the old DRM and come over with the next Old Data Import.
+      const { rows: legacyRows } = await pool.query(`
+        SELECT
+          'legacy-assign-' || a._legacy_pk AS id,
+          coalesce(nullif(trim(tl.name), ''), nullif(trim(a.soft_task_name), ''), 'Task ' || coalesce(a.task_id, a._legacy_pk)) AS title,
+          NULL::text AS description,
+          p.id AS "projectId",
+          um.modern_id AS "assigneeId",
+          coalesce(u.full_name, u.name, 'Unknown') AS "assigneeName",
+          COALESCE(NULLIF(p.name, ''), 'Unknown') AS project,
+          COALESCE(c.company_name, i.company_name, 'Unknown') AS company,
+          p.department_type AS "departmentType",
+          coalesce(migration_meta.mig_ts(a.last_update), migration_meta.mig_ts(a.assign_date)) AS "submittedAt",
+          NULL::text AS "submissionNotes",
+          true AS "legacyReadOnly"
+        FROM (
+          SELECT * FROM legacy_archive.webxl_task_assign
+           WHERE _source_table = 'webxl_task_assign'
+             AND lower(trim(coalesce(stauts, ''))) = 'end'
+             AND coalesce(trim(mng_status), '') IN ('', '0', '1')
+        ) a
+        JOIN migration_meta.migration_legacy_ids pm
+          ON pm.entity_type = 'create_project_row' AND pm.legacy_table = 'webxl_create_project'
+         AND pm.legacy_id = a.pro_id AND pm.modern_table = 'projects'
+        JOIN drm.projects p ON p.id = pm.modern_id::uuid
+        LEFT JOIN drm.customers c ON c.id = p.customer_id
+        LEFT JOIN drm.product_posting_invoices i ON i.id = p.invoice_id
+        LEFT JOIN legacy_archive.webxl_tasks_list tl
+          ON tl._source_table = 'webxl_tasks_list' AND tl._legacy_pk = trim(a.task_id)
+        LEFT JOIN migration_meta.migration_legacy_ids um
+          ON um.entity_type = 'user' AND um.legacy_table = 'webxl_user' AND um.legacy_id = trim(a.user_id)
+        LEFT JOIN drm.users u ON u.id = um.modern_id::uuid
+        WHERE trim(coalesce(a.qa_status, '')) <> '1'
+          AND trim(coalesce(a.fy_status, '')) <> '1'
+          AND coalesce(p.is_deleted, false) = false
+          AND NOT EXISTS (SELECT 1 FROM drm.legacy_task_reviews rv WHERE rv.legacy_assign_id = a._legacy_pk)
+          ${deptFilter}
+        ORDER BY "submittedAt" DESC NULLS LAST
+      `);
+
+      res.json([...rows, ...legacyRows]);
     } catch (error) {
       console.error("Error fetching pending review tasks:", error);
       res.status(500).json({ error: "Failed to fetch pending review tasks" });
+    }
+  });
+
+  // Old-DRM tasks in Pending My Review ("legacy-assign-<webxl_task_assign id>"): the links the
+  // executive submitted, and the manager's approval. The archive stays read-only — the approval is
+  // stored in drm.legacy_task_reviews (scripts/migration/create-legacy-task-reviews.sql).
+  const legacyAssignPk = (raw: string) => {
+    const m = /^legacy-assign-(\d+)$/.exec(String(raw || ""));
+    return m ? m[1] : null;
+  };
+
+  app.get("/api/pms/legacy-tasks/:id/files", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const pk = legacyAssignPk(req.params.id);
+      if (!pk) return res.status(400).json({ error: "Invalid old task id" });
+      const { rows } = await pool.query(
+        `SELECT 'legacy-link-' || l._legacy_pk AS id, NULL::text AS "fileUrl", NULL::text AS "fileName",
+                coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) AS description,
+                migration_meta.mig_ts(l.create_at) AS "createdAt",
+                coalesce(u.full_name, u.name) AS "uploadedByName"
+           FROM legacy_archive.webxl_task_assign a
+           JOIN legacy_archive.webxl_task_links l
+             ON l._source_table = 'webxl_task_links' AND trim(l.pro_id) = trim(a.pro_id)
+            AND (trim(l.task_id) = trim(a.task_id) OR trim(l.task_id) = a._legacy_pk)
+           LEFT JOIN migration_meta.migration_legacy_ids um
+             ON um.entity_type = 'user' AND um.legacy_table = 'webxl_user' AND um.legacy_id = trim(l.user_id)
+           LEFT JOIN drm.users u ON u.id = um.modern_id::uuid
+          WHERE a._source_table = 'webxl_task_assign' AND a._legacy_pk = $1
+            AND coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) IS NOT NULL
+          ORDER BY l._legacy_pk::bigint`,
+        [pk],
+      );
+      res.json({ success: true, data: rows });
+    } catch (error) {
+      console.error("Error fetching old task links:", error);
+      res.status(500).json({ error: "Failed to fetch old task links" });
+    }
+  });
+
+  // POST /api/pms/legacy-tasks/:id/open — move an old task the manager is about to approve /
+  // reject into the new flow: a drm.tasks row in READY_FOR_QA (assignee = old executive, owner =
+  // this manager, old links in task_files, old time in task_time_logs). The client then runs the
+  // normal approve / reject (PATCH /api/pms/task/:id/status) on the returned taskId, so Send to QA,
+  // QA, VM and close work exactly as for a new task. Idempotent: an old task is moved only once.
+  app.post("/api/pms/legacy-tasks/:id/open", async (req, res) => {
+    const client = await pool.connect();
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userRole = String(req.user.roleId || (req.user as any).role || "").toLowerCase();
+      // Same audience as Pending My Review: department managers, not QA / Verification.
+      if (!isManagerialRole(userRole) || userRole === "qa_manager" || userRole.startsWith("qa_") || userRole.includes("verification")) {
+        return res.status(403).json({ error: "Only the department manager can review this task." });
+      }
+      const pk = legacyAssignPk(req.params.id);
+      if (!pk) return res.status(400).json({ error: "Invalid old task id" });
+      const managerId = req.user.userId;
+
+      await client.query("BEGIN");
+      const existing = await client.query(
+        `SELECT task_id FROM drm.legacy_task_reviews WHERE legacy_assign_id = $1 FOR UPDATE`, [pk]);
+      if (existing.rows[0]?.task_id) {
+        await client.query("COMMIT");
+        return res.json({ taskId: existing.rows[0].task_id, alreadyMoved: true });
+      }
+      const { rows } = await client.query(
+        `SELECT p.id AS project_id, p.department_type, a.pro_id, a.task_id, a._legacy_pk,
+                coalesce(nullif(trim(tl.name), ''), nullif(trim(a.soft_task_name), ''), 'Task ' || coalesce(a.task_id, a._legacy_pk)) AS title,
+                nullif(trim(tl.detail), '') AS detail,
+                um.modern_id::uuid AS exec_id,
+                migration_meta.mig_ts(a.assign_date) AS assigned_at,
+                coalesce(migration_meta.mig_ts(a.last_update), migration_meta.mig_ts(a.assign_date)) AS ended_at,
+                nullif(trim(coalesce(a."totalTimespent", a.timespent, '')), '') AS dur_text,
+                coalesce(nullif(regexp_replace(trim(coalesce(a.hours, '')), '[^0-9]', '', 'g'), '')::int, 0) AS dur_hours,
+                coalesce(nullif(regexp_replace(trim(coalesce(a.min, '')), '[^0-9]', '', 'g'), '')::int, 0) AS dur_min
+           FROM legacy_archive.webxl_task_assign a
+           JOIN migration_meta.migration_legacy_ids pm
+             ON pm.entity_type = 'create_project_row' AND pm.legacy_table = 'webxl_create_project'
+            AND pm.legacy_id = a.pro_id AND pm.modern_table = 'projects'
+           JOIN drm.projects p ON p.id = pm.modern_id::uuid
+           LEFT JOIN legacy_archive.webxl_tasks_list tl
+             ON tl._source_table = 'webxl_tasks_list' AND tl._legacy_pk = trim(a.task_id)
+           LEFT JOIN migration_meta.migration_legacy_ids um
+             ON um.entity_type = 'user' AND um.legacy_table = 'webxl_user' AND um.legacy_id = trim(a.user_id)
+          WHERE a._source_table = 'webxl_task_assign' AND a._legacy_pk = $1
+            AND lower(trim(coalesce(a.stauts, ''))) = 'end'
+            AND coalesce(trim(a.mng_status), '') IN ('', '0', '1')
+            AND trim(coalesce(a.qa_status, '')) <> '1' AND trim(coalesce(a.fy_status, '')) <> '1'`,
+        [pk],
+      );
+      const t = rows[0];
+      if (!t) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "This old task is not waiting for manager review." });
+      }
+      const userRes = await client.query("SELECT department FROM drm.users WHERE id = $1", [managerId]);
+      const deptCandidates = departmentCandidatesForRole(userRole, userRes.rows[0]?.department || "");
+      const isDeptBound = deptCandidates.length > 0 && !["admin", "super_admin", "super_hod"].includes(userRole);
+      if (isDeptBound && !deptCandidates.includes(t.department_type)) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({ error: "This task belongs to another department." });
+      }
+      const execId: string | null = t.exec_id
+        ? ((await client.query("SELECT id FROM drm.users WHERE id = $1", [t.exec_id])).rows[0]?.id ?? null)
+        : null;
+      const actorId = execId ?? managerId;
+      const links = (await client.query(
+        `SELECT coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) AS link,
+                coalesce(migration_meta.mig_ts(l.create_at), now()::timestamp) AS created_at
+           FROM legacy_archive.webxl_task_links l
+          WHERE l._source_table = 'webxl_task_links' AND trim(l.pro_id) = trim($1)
+            AND (trim(l.task_id) = trim($2) OR trim(l.task_id) = $3)
+            AND coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) IS NOT NULL
+          ORDER BY l._legacy_pk::bigint`,
+        [t.pro_id, t.task_id ?? "", pk],
+      )).rows;
+
+      const task = (await client.query(
+        `INSERT INTO drm.tasks (project_id, title, description, owner_user_id, assigned_to_user_id, status,
+                               start_date, notes, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 'READY_FOR_QA', $6, $7, coalesce($6, now()), now())
+         RETURNING id`,
+        [t.project_id, t.title, t.detail, managerId, execId, t.assigned_at, `Old DRM task #${pk}`],
+      )).rows[0];
+      await client.query(
+        `INSERT INTO drm.task_status_history (task_id, user_id, from_status, to_status, changed_at, notes)
+         VALUES ($1, $2, 'InProgress', 'READY_FOR_QA', coalesce($3, now()), $4)`,
+        [task.id, actorId, t.ended_at, JSON.stringify({ links: links.map((l: any) => l.link), legacyAssignId: pk })],
+      );
+      for (const l of links) {
+        await client.query(
+          `INSERT INTO drm.task_files (task_id, uploaded_by_user_id, description, created_at) VALUES ($1, $2, $3, $4)`,
+          [task.id, actorId, l.link, l.created_at],
+        );
+      }
+      const minutes = legacyAssignDurationMinutes(t.dur_text, Number(t.dur_hours) || 0, Number(t.dur_min) || 0);
+      if (minutes > 0) {
+        await client.query(
+          `INSERT INTO drm.task_time_logs (task_id, user_id, duration_minutes, notes, start_at)
+           VALUES ($1, $2, $3, 'Old DRM time', coalesce($4, now()))`,
+          [task.id, actorId, minutes, t.assigned_at],
+        );
+      }
+      await client.query(
+        `INSERT INTO drm.legacy_task_reviews (legacy_assign_id, project_id, status, reviewed_by, task_id)
+         VALUES ($1, $2, 'moved', $3, $4)
+         ON CONFLICT (legacy_assign_id) DO UPDATE SET task_id = EXCLUDED.task_id, status = 'moved'`,
+        [pk, t.project_id, managerId, task.id],
+      );
+      await client.query("COMMIT");
+      res.json({ taskId: task.id });
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      console.error("Error moving old task into the new flow:", error);
+      res.status(500).json({ error: "Failed to open old task" });
+    } finally {
+      client.release();
     }
   });
 
@@ -685,7 +1640,7 @@ function getPeriodRange(periodRaw: string) {
       // Product Posting tasks carry per-link QA on drm.task_files — the
       // whole-task "Send to QA" hand-off is only legal once every submitted
       // link has qa_status = 'approved' (no pending / unsent / rejected left).
-      if (task.department_type === "PRODUCT_POSTING") {
+      if (departmentTypeMatchesFamily(task.department_type, "product_posting")) {
         const linkRes = await pool.query(
           `SELECT count(*)::int AS total,
                   count(*) FILTER (WHERE qa_status = 'approved')::int AS approved
@@ -731,7 +1686,7 @@ function getPeriodRange(periodRaw: string) {
   // Departments that actually run through the QA -> Verification pipeline.
   // Everything else (IT, Software, Service) has no QA step at all — its
   // manager's own approval is the final word, via /close below.
-  const QA_PIPELINE_DEPARTMENTS = ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"];
+  // Includes LEGACY-8/9/10 and modern codes — see project-department-variants.ts.
 
   // POST /api/pms/tasks/:id/close — a non-QA-pipeline manager's "Closed
   // Task" hand-off from "Completed Projects", the equivalent of /send-to-qa
@@ -758,7 +1713,7 @@ function getPeriodRange(periodRaw: string) {
       );
       if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
       const task = taskRes.rows[0];
-      if (QA_PIPELINE_DEPARTMENTS.includes(task.department_type)) {
+      if (departmentTypeInQaPipeline(task.department_type)) {
         return res.status(400).json({ error: "This department closes tasks through QA + Verification, not this button." });
       }
       if (task.status !== "Completed") {
@@ -812,7 +1767,7 @@ function getPeriodRange(periodRaw: string) {
       );
       if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
       const task = taskRes.rows[0];
-      if (!QA_PIPELINE_DEPARTMENTS.includes(task.department_type)) {
+      if (!departmentTypeInQaPipeline(task.department_type)) {
         return res.status(400).json({ error: "This department doesn't go through Verification." });
       }
       if (task.status !== "Completed") {
@@ -839,14 +1794,108 @@ function getPeriodRange(periodRaw: string) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { projectId } = req.params;
-      // Executives (and any other non-managerial role) only see their own
-      // rows in this project — a task a D&D manager assigned to one
-      // executive must never show up for a teammate on the same project.
-      // Managerial roles (and admin) keep seeing every task in the project,
-      // same as before. This mirrors the self-scope the Sales Manager case
-      // already had, just generalized to every executive instead of being
-      // sales_manager-only.
-      const isElevatedRole = isManagerialRole(req.user.roleId);
+      const activeRole = resolveRequestUserRole(req);
+      const isElevatedRole = isManagerialRole(activeRole);
+
+      if (projectId.startsWith(LEGACY_WS_CHANNEL_PREFIX)) {
+        const channelLegacyPk = projectId.slice(LEGACY_WS_CHANNEL_PREFIX.length);
+        const channelRow = await pool.query<{ name: string }>(
+          `SELECT trim(name) as name
+             FROM legacy_archive.webxl_work_space
+            WHERE _legacy_pk = $1 AND type = 'channel'
+            LIMIT 1`,
+          [channelLegacyPk],
+        );
+        const channelName = channelRow.rows[0]?.name;
+        if (!channelName) {
+          return res.json([]);
+        }
+
+        let legacyUserId: string | null = null;
+        if (!isElevatedRole) {
+          const u = await pool.query(
+            `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+              WHERE legacy_table = 'webxl_user' AND modern_id = $1::text LIMIT 1`,
+            [req.user.userId],
+          );
+          legacyUserId = u.rows[0]?.legacy_id ?? null;
+          if (!legacyUserId) {
+            return res.json([]);
+          }
+        }
+
+        const legacyParams: unknown[] = [channelName];
+        let legacyUserFilter = "";
+        if (legacyUserId) {
+          legacyParams.push(legacyUserId);
+          legacyUserFilter = `AND trim(a.user_id) = $${legacyParams.length}`;
+        }
+
+        const legacy = await pool.query(
+          `
+          SELECT
+            ('legacy-assign-' || a._legacy_pk) as id,
+            coalesce(nullif(trim(tl.name), ''), nullif(trim(td.detail), ''), 'Task ' || coalesce(a.task_id, a._legacy_pk)) as title,
+            coalesce(nullif(trim(tl.detail), ''), nullif(trim(td.detail), ''), nullif(trim(a.soft_task_detail), ''), '') as description,
+            CASE
+              WHEN lower(coalesce(a.stauts, '')) IN ('end', 'completed', 'done', 'finish', 'finished') THEN 'Completed'
+              WHEN trim(coalesce(a.qa_status, '')) IN ('1', 'yes') THEN 'READY_FOR_QA'
+              WHEN lower(coalesce(a.stauts, '')) IN ('progress', 'start', 'run', 'running', 'active') THEN 'InProgress'
+              WHEN trim(coalesce(a.mng_status, '')) IN ('1', 'yes') THEN 'READY_FOR_QA'
+              ELSE 'ToDo'
+            END as status,
+            coalesce(nullif(trim(a.soft_task_piority), ''), 'Medium') as priority,
+            json_build_object(
+              'duration',
+              greatest(
+                0,
+                coalesce(nullif(regexp_replace(coalesce(a.hours, ''), '[^0-9]', '', 'g'), '')::int, 0) * 60
+                  + coalesce(nullif(regexp_replace(coalesce(a.min, ''), '[^0-9]', '', 'g'), '')::int, 0)
+              )
+            )::text as notes,
+            NULL::timestamptz as "timerStartedAt",
+            $1::text as "projectId",
+            um.modern_id::uuid as "assignedToUserId",
+            coalesce(
+              NULLIF(trim(a.assign_date), '')::timestamp,
+              NULLIF(trim(a.last_update), '')::timestamp,
+              now()
+            ) as "createdAt",
+            coalesce(
+              NULLIF(trim(a.last_update), '')::timestamp,
+              NULLIF(trim(a.assign_date), '')::timestamp,
+              now()
+            ) as "updatedAt",
+            NULL::timestamptz as "dueDate",
+            NULL::int as "remainingSecondsStored",
+            0 as "currentSessionElapsedSeconds",
+            coalesce(u.full_name, u.name, nullif(trim(a.soft_task_name), '')) as "assigneeName",
+            $1::text as "projectName",
+            coalesce(nullif(trim(a.qa_com), ''), nullif(trim(a.fy_com), '')) as "rejectionNotes",
+            (
+              SELECT count(*)::int
+                FROM legacy_archive.webxl_task_links l
+               WHERE trim(l.task_id) = trim(a._legacy_pk)
+                 AND coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) IS NOT NULL
+            ) as "submittedLinksCount",
+            true as "legacyReadOnly"
+          FROM legacy_archive.webxl_task_assign a
+          LEFT JOIN legacy_archive.webxl_tasks_list tl
+            ON trim(tl._legacy_pk) = trim(a.task_id) OR trim(tl.id) = trim(a.task_id)
+          LEFT JOIN legacy_archive.webxl_task_detail td
+            ON trim(td._legacy_pk) = trim(a.task_id)
+          LEFT JOIN migration_meta.migration_legacy_ids um
+            ON um.legacy_table = 'webxl_user' AND um.legacy_id = trim(a.user_id)
+          LEFT JOIN drm.users u ON u.id = um.modern_id::uuid
+          WHERE trim(a.soft_task_cname) = $1
+          ${legacyUserFilter}
+          ORDER BY coalesce(NULLIF(trim(a.assign_date), '')::timestamp, now()) DESC
+          `,
+          legacyParams,
+        );
+        return res.json(legacy.rows);
+      }
+
       const selfScopeClause = isElevatedRole
         ? ""
         : "AND (t.owner_user_id = $2 OR t.assigned_to_user_id = $2)";
@@ -866,44 +1915,138 @@ function getPeriodRange(periodRaw: string) {
           t.updated_at as "updatedAt",
           t.due_date as "dueDate",
           t.remaining_seconds as "remainingSecondsStored",
-          -- Elapsed time for the CURRENTLY running session, computed in
-          -- Postgres (now() - timer_started_at) rather than left for the
-          -- frontend to derive from Date.now() vs this row's timerStartedAt
-          -- — the backend server and DB were found to run on clocks ~110s
-          -- apart, so any client-side "Date.now() minus a DB timestamp"
-          -- comparison (browser included, since it's the same drift-prone
-          -- local machine in dev) silently corrupts the live countdown.
-          -- The frontend uses this one accurate value as a baseline and
-          -- ticks it forward using only its own local clock deltas.
           CASE WHEN t.timer_started_at IS NOT NULL
             THEN GREATEST(0, EXTRACT(EPOCH FROM (now() - t.timer_started_at))::int)
             ELSE 0
           END as "currentSessionElapsedSeconds",
           u.full_name as "assigneeName",
           p.name as "projectName",
-          -- Why the manager sent this back, when it's currently Blocked —
-          -- the executive needs to know what to fix before resubmitting.
           CASE WHEN t.status = 'Blocked' THEN (
             SELECT notes FROM drm.task_status_history
              WHERE task_id = t.id AND to_status = 'Blocked'
              ORDER BY changed_at DESC LIMIT 1
           ) END as "rejectionNotes",
-          -- Product Posting's "N/required" links progress badge — same
-          -- link-row shape task-execution-routes.ts's /:id/complete gate and
-          -- AddLinksModal's "Submitted Links" counter both use (task_files
-          -- rows with no file, just a description).
-          (SELECT count(*)::int FROM drm.task_files tf
-             WHERE tf.task_id = t.id AND tf.file_url IS NULL
-               AND tf.description IS NOT NULL AND tf.description <> ''
-          ) as "submittedLinksCount"
+          (
+            SELECT count(*)::int
+              FROM drm.task_files f
+             WHERE f.task_id = t.id
+               AND f.file_url IS NULL
+               AND f.description IS NOT NULL
+               AND trim(f.description) <> ''
+          ) as "submittedLinksCount",
+          false as "legacyReadOnly"
         FROM drm.tasks t
         LEFT JOIN drm.users u ON u.id = t.assigned_to_user_id
         LEFT JOIN drm.projects p ON p.id = t.project_id
-        WHERE t.project_id = $1
+        WHERE t.project_id = $1::uuid
         ${selfScopeClause}
         ORDER BY t.created_at DESC
       `, queryParams);
-      res.json(rows);
+
+      const map = await pool.query(
+        `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+          WHERE modern_table = 'projects' AND modern_id = $1 LIMIT 1`,
+        [projectId],
+      );
+      const legacyProId = map.rows[0]?.legacy_id;
+      if (!legacyProId) {
+        return res.json(rows);
+      }
+
+      let legacyUserId: string | null = null;
+      if (!isElevatedRole) {
+        const u = await pool.query(
+          `SELECT legacy_id FROM migration_meta.migration_legacy_ids
+            WHERE legacy_table = 'webxl_user' AND modern_id = $1::text LIMIT 1`,
+          [req.user.userId],
+        );
+        legacyUserId = u.rows[0]?.legacy_id ?? null;
+        if (!legacyUserId) {
+          return res.json(rows);
+        }
+      }
+
+      const legacyParams: unknown[] = [projectId, legacyProId];
+      let legacyUserFilter = "";
+      if (legacyUserId) {
+        legacyParams.push(legacyUserId);
+        legacyUserFilter = `AND trim(a.user_id) = $${legacyParams.length}`;
+      }
+
+      const legacy = await pool.query(
+        `
+        SELECT
+          ('legacy-assign-' || a._legacy_pk) as id,
+          coalesce(nullif(trim(tl.name), ''), nullif(trim(td.detail), ''), 'Task ' || coalesce(a.task_id, a._legacy_pk)) as title,
+          coalesce(nullif(trim(tl.detail), ''), nullif(trim(td.detail), ''), nullif(trim(a.soft_task_detail), ''), '') as description,
+          CASE
+            WHEN lower(coalesce(a.stauts, '')) IN ('end', 'completed', 'done', 'finish', 'finished') THEN 'Completed'
+            WHEN trim(coalesce(a.qa_status, '')) IN ('1', 'yes') THEN 'READY_FOR_QA'
+            WHEN lower(coalesce(a.stauts, '')) IN ('progress', 'start', 'run', 'running', 'active') THEN 'InProgress'
+            WHEN trim(coalesce(a.mng_status, '')) IN ('1', 'yes') THEN 'READY_FOR_QA'
+            ELSE 'ToDo'
+          END as status,
+          'Medium' as priority,
+          json_build_object(
+            'duration',
+            greatest(
+              0,
+              coalesce(nullif(regexp_replace(coalesce(a.hours, ''), '[^0-9]', '', 'g'), '')::int, 0) * 60
+                + coalesce(nullif(regexp_replace(coalesce(a.min, ''), '[^0-9]', '', 'g'), '')::int, 0)
+            )
+          )::text as notes,
+          NULL::timestamptz as "timerStartedAt",
+          $1::uuid as "projectId",
+          um.modern_id::uuid as "assignedToUserId",
+          coalesce(
+            NULLIF(trim(a.assign_date), '')::timestamp,
+            NULLIF(trim(a.last_update), '')::timestamp,
+            now()
+          ) as "createdAt",
+          coalesce(
+            NULLIF(trim(a.last_update), '')::timestamp,
+            NULLIF(trim(a.assign_date), '')::timestamp,
+            now()
+          ) as "updatedAt",
+          NULL::timestamptz as "dueDate",
+          NULL::int as "remainingSecondsStored",
+          0 as "currentSessionElapsedSeconds",
+          coalesce(u.full_name, u.name) as "assigneeName",
+          p.name as "projectName",
+          coalesce(nullif(trim(a.qa_com), ''), nullif(trim(a.fy_com), '')) as "rejectionNotes",
+          (
+            SELECT count(*)::int
+              FROM legacy_archive.webxl_task_links l
+             WHERE trim(l.pro_id) = trim(a.pro_id)
+               AND (
+                 trim(l.task_id) = trim(a.task_id)
+                 OR trim(l.task_id) = trim(a._legacy_pk)
+               )
+               AND coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) IS NOT NULL
+          ) as "submittedLinksCount",
+          true as "legacyReadOnly"
+        FROM legacy_archive.webxl_task_assign a
+        LEFT JOIN legacy_archive.webxl_tasks_list tl
+          ON trim(tl._legacy_pk) = trim(a.task_id) OR trim(tl.id) = trim(a.task_id)
+        LEFT JOIN legacy_archive.webxl_task_detail td
+          ON trim(td._legacy_pk) = trim(a.task_id)
+        LEFT JOIN migration_meta.migration_legacy_ids um
+          ON um.legacy_table = 'webxl_user' AND um.legacy_id = trim(a.user_id)
+        LEFT JOIN drm.users u ON u.id = um.modern_id::uuid
+        JOIN drm.projects p ON p.id = $1::uuid
+        WHERE trim(a.pro_id) = trim($2::text)
+        ${legacyUserFilter}
+        ORDER BY coalesce(NULLIF(trim(a.assign_date), '')::timestamp, now()) DESC
+        `,
+        legacyParams,
+      );
+
+      const merged = [...rows, ...legacy.rows];
+      merged.sort(
+        (a, b) =>
+          new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime(),
+      );
+      res.json(merged);
     } catch (error) {
       console.error("Error fetching project tasks:", error);
       res.status(500).json({ error: "Failed to fetch project tasks" });
@@ -1147,14 +2290,29 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      const [projectsList, usersList] = await Promise.all([
-        projectsRepository.findAll("Active"),
-        usersRepository.findAll(),
+      const [projectsRes, usersRes] = await Promise.all([
+        pool.query(`
+          SELECT id, name
+            FROM drm.projects
+           WHERE status = 'Active'
+             AND coalesce(is_deleted, false) = false
+           ORDER BY updated_at DESC
+           LIMIT 5000
+        `),
+        pool.query(`
+          SELECT id,
+                 coalesce(full_name, name) as name,
+                 role_id as "roleId",
+                 branch
+            FROM drm.users
+           WHERE is_active = true OR is_active IS NULL
+           ORDER BY coalesce(full_name, name)
+        `),
       ]);
 
       res.json({
-        projects: projectsList.map((p) => ({ id: p.id, name: p.name })),
-        users: usersList.map((u) => ({ id: u.id, name: u.name, roleId: u.roleId, branch: (u as any).branch })),
+        projects: projectsRes.rows,
+        users: usersRes.rows,
         priorities: ["Low", "Medium", "High"],
       });
     } catch (error) {
@@ -1330,15 +2488,6 @@ function getPeriodRange(periodRaw: string) {
         }
       }
 
-      if (task.assignedToUserId) {
-        await NotificationService.notify({
-          userId: task.assignedToUserId,
-          message: `You have been assigned a new task: '${task.title}'`,
-          type: "INFO",
-          targetUrl: `/pms/tasks/${task.id}`,
-        });
-      }
-
       res.status(201).json(task);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1404,12 +2553,16 @@ function getPeriodRange(periodRaw: string) {
 
       const createdTask = insertResult.rows[0];
       if (assignedToUserId && createdTask) {
-        await NotificationService.notify({
-          userId: assignedToUserId,
-          message: `You have been assigned a new task: '${createdTask.title}'`,
-          type: "INFO",
-          targetUrl: `/pms/tasks/${createdTask.id}`,
-        });
+        try {
+          await notifyTaskAssignee({
+            assigneeUserId: assignedToUserId,
+            taskId: createdTask.id,
+            taskTitle: createdTask.title,
+            projectId,
+          });
+        } catch (notifyErr) {
+          console.error("[workspace-tasks] assignee notification failed:", notifyErr);
+        }
       }
 
       res.status(201).json({ success: true, task: createdTask });
@@ -1473,16 +2626,6 @@ function getPeriodRange(periodRaw: string) {
       // Don't allow changing the owner
       const { ownerUserId, ...updateData } = req.body;
 
-      const newAssignee = req.body.assignedToUserId;
-      if (newAssignee && newAssignee !== existing.assignedToUserId) {
-        await NotificationService.notify({
-          userId: newAssignee,
-          message: `You have been assigned the task: '${existing.title}'`,
-          type: "INFO",
-          targetUrl: `/pms/tasks/${existing.id}`,
-        });
-      }
-
       const updated = await tasksRepository.update(req.params.id, updateData);
 
       res.json(updated);
@@ -1542,16 +2685,6 @@ function getPeriodRange(periodRaw: string) {
 
       // Don't allow changing the owner
       const { ownerUserId, ...updateData } = req.body;
-
-      const newAssignee = req.body.assignedToUserId;
-      if (newAssignee && newAssignee !== existing.assignedToUserId) {
-        await NotificationService.notify({
-          userId: newAssignee,
-          message: `You have been assigned the task: '${existing.title}'`,
-          type: "INFO",
-          targetUrl: `/pms/tasks/${existing.id}`,
-        });
-      }
 
       const updated = await tasksRepository.update(req.params.id, updateData);
 
@@ -2342,11 +3475,11 @@ function getPeriodRange(periodRaw: string) {
           select
             t.project_id,
             count(*)::int as total,
-            count(*) filter (where lower(status) = 'todo')::int as todo,
-            count(*) filter (where lower(status) = 'inprogress' or lower(status) = 'in_progress')::int as in_progress,
-            count(*) filter (where lower(status) = 'blocked')::int as blocked,
-            count(*) filter (where lower(status) = 'completed')::int as completed,
-            count(*) filter (where due_date < now() and lower(status) <> 'completed')::int as overdue
+            count(*) filter (where lower(t.status::text) = 'todo')::int as todo,
+            count(*) filter (where lower(t.status::text) in ('inprogress', 'in_progress'))::int as in_progress,
+            count(*) filter (where lower(t.status::text) = 'blocked')::int as blocked,
+            count(*) filter (where lower(t.status::text) = 'completed')::int as completed,
+            count(*) filter (where t.due_date < now() and lower(t.status::text) <> 'completed')::int as overdue
           from tasks t
           where t.project_id in (select id from filtered_projects)
           group by t.project_id
@@ -2427,13 +3560,114 @@ function getPeriodRange(periodRaw: string) {
         },
       }));
 
+      if (total > 0) {
+        return res.json({
+          success: true,
+          data: { items, total, page, pageSize },
+        });
+      }
+
+      // Legacy work-spaces (webxl_work_space) until project_assignments is populated in modern DRM.
+      const elevated = isManagerialRole(req.user.roleId);
+      const userNameRow = await pool.query<{ display_name: string | null }>(
+        `SELECT coalesce(nullif(trim(full_name), ''), nullif(trim(name), ''), nullif(trim(email), '')) as display_name
+           FROM drm.users WHERE id = $1 LIMIT 1`,
+        [userId],
+      );
+      const userDisplayName = userNameRow.rows[0]?.display_name ?? "";
+
+      const legacyAssignmentsSql = `
+        WITH workspaces AS (
+          SELECT ws._legacy_pk, trim(ws.name) AS name, ws.create_at
+            FROM legacy_archive.webxl_work_space ws
+           WHERE ws.type = 'work_space'
+             AND (
+               $2::boolean = true
+               OR (
+                 $3 <> ''
+                 AND ws.name ILIKE ('%' || $3 || '%')
+               )
+             )
+             AND ($1 = '' OR ws.name ILIKE ('%' || $1 || '%'))
+        ),
+        channels AS (
+          SELECT
+            c._legacy_pk AS channel_pk,
+            trim(c.name) AS channel_name,
+            w._legacy_pk AS workspace_pk,
+            w.name AS workspace_name,
+            w.create_at AS workspace_created_at,
+            c.create_at AS channel_created_at
+            FROM legacy_archive.webxl_work_space c
+            JOIN workspaces w ON trim(w._legacy_pk) = trim(c.ref_id::text)
+           WHERE c.type = 'channel'
+             AND ($1 = '' OR c.name ILIKE ('%' || $1 || '%') OR w.name ILIKE ('%' || $1 || '%'))
+        ),
+        task_counts AS (
+          SELECT trim(soft_task_cname) AS channel_name, count(*)::int AS total
+            FROM legacy_archive.webxl_task_assign
+           WHERE nullif(trim(soft_task_cname), '') IS NOT NULL
+           GROUP BY 1
+        ),
+        ranked AS (
+          SELECT
+            ch.*,
+            coalesce(tc.total, 0) AS tasks_total,
+            count(*) OVER() AS total_rows
+            FROM channels ch
+            LEFT JOIN task_counts tc ON tc.channel_name = ch.channel_name
+           ORDER BY ch.workspace_created_at DESC NULLS LAST, ch.channel_created_at ASC NULLS LAST
+        )
+        SELECT channel_pk, channel_name, workspace_pk, workspace_name, tasks_total, total_rows
+          FROM ranked
+         LIMIT $4::int OFFSET $5::int
+      `;
+
+      const legacyRows = await pool.query<{
+        channel_pk: string;
+        channel_name: string;
+        workspace_pk: string;
+        workspace_name: string;
+        tasks_total: number;
+        total_rows: string;
+      }>(legacyAssignmentsSql, [search, elevated, userDisplayName, pageSize, offset]);
+
+      const legacyTotal = legacyRows.rows[0]?.total_rows
+        ? Number(legacyRows.rows[0].total_rows)
+        : 0;
+      const legacyItems = legacyRows.rows.map((r) => ({
+        projectId: `${LEGACY_WS_CHANNEL_PREFIX}${r.channel_pk}`,
+        projectName: r.channel_name,
+        status: "Active",
+        startDate: null,
+        dueDate: null,
+        owner: {
+          id: `legacy-ws-${r.workspace_pk}`,
+          name: r.workspace_name,
+          email: null,
+        },
+        workspaceTitle: r.workspace_name,
+        legacyWorkspace: true,
+        members: [] as { id: string; name: string | null; email: string | null; role: string | null }[],
+        myRole: null,
+        taskCounts: {
+          total: Number(r.tasks_total || 0),
+          todo: Number(r.tasks_total || 0),
+          inProgress: 0,
+          blocked: 0,
+          completed: 0,
+          overdue: 0,
+        },
+      }));
+
       return res.json({
         success: true,
         data: {
-          items,
-          total,
+          items: legacyItems,
+          total: legacyTotal,
           page,
           pageSize,
+          source: "legacy_work_space",
         },
       });
     } catch (error) {
@@ -2557,7 +3791,62 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      const logs = await taskTimeLogsRepository.findByTaskId(req.params.id);
+      const taskId = req.params.id;
+      const legacyAssignMatch = /^legacy-assign-(.+)$/.exec(taskId);
+      if (legacyAssignMatch) {
+        const assignLegacyId = legacyAssignMatch[1];
+        const { rows } = await pool.query(
+          `
+          SELECT h._legacy_pk as id,
+                 lower(coalesce(h.status, '')) as status,
+                 h.create_at as "logDate",
+                 coalesce(u.full_name, u.name, 'Employee') as "userName"
+            FROM legacy_archive.webxl_task_log_history h
+            LEFT JOIN migration_meta.migration_legacy_ids um
+              ON um.legacy_table = 'webxl_user' AND um.legacy_id = trim(h.user_id)
+            LEFT JOIN drm.users u ON u.id = um.modern_id::uuid
+           WHERE trim(h.task_id) = trim($1)
+           ORDER BY h.create_at ASC
+          `,
+          [assignLegacyId],
+        );
+
+        const sessions: Array<{
+          id: string;
+          logDate: Date;
+          timeSpentSeconds: number;
+          timeSpentMinutes: number;
+          description: string;
+          user: { name: string };
+        }> = [];
+        let pendingStart: Date | null = null;
+        let pendingUser = "Employee";
+
+        for (const row of rows) {
+          const at = row.logDate ? new Date(row.logDate) : null;
+          if (!at || Number.isNaN(at.getTime())) continue;
+          if (row.status === "start") {
+            pendingStart = at;
+            pendingUser = row.userName || "Employee";
+          } else if (row.status === "stop" && pendingStart) {
+            const secs = Math.max(0, Math.floor((at.getTime() - pendingStart.getTime()) / 1000));
+            sessions.push({
+              id: `legacy-session-${row.id}`,
+              logDate: at,
+              timeSpentSeconds: secs,
+              timeSpentMinutes: Math.floor(secs / 60),
+              description: "Legacy timer session",
+              user: { name: pendingUser },
+            });
+            pendingStart = null;
+          }
+        }
+
+        sessions.reverse();
+        return res.json(sessions);
+      }
+
+      const logs = await taskTimeLogsRepository.findByTaskId(taskId);
       res.json(logs);
     } catch (error) {
       console.error("Error fetching time logs:", error);
@@ -2644,9 +3933,29 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      const { userId, dateFrom, dateTo, limit } = req.query;
-      const limitNum = limit ? parseInt(limit as string) : 50;
+      const { userId, dateFrom, dateTo, limit, page: pageRaw, pageSize: pageSizeRaw, filter } = req.query;
+      const changingOnly = String(filter || "").toLowerCase() === "changing";
       const userRole = req.user.roleId || (req.user as any).role || "";
+      const roleLower = String(userRole).toLowerCase();
+      const isOrgAdmin = ["admin", "super_admin", "super_hod"].includes(roleLower);
+      const page = Math.max(1, parseInt(pageRaw as string, 10) || 1);
+      const pageSize = Math.min(
+        100,
+        Math.max(10, parseInt(pageSizeRaw as string, 10) || parseInt(limit as string, 10) || 50),
+      );
+      const usePagination = Boolean(pageRaw) || Boolean(pageSizeRaw) || isOrgAdmin;
+      const limitNum = Math.min(1000, Math.max(1, parseInt(limit as string, 10) || pageSize));
+
+      if (isOrgAdmin) {
+        const legacyPage = await fetchAdminLegacyTaskHistoryPage(page, pageSize, changingOnly);
+        return res.json({
+          items: legacyPage.items,
+          total: legacyPage.total,
+          page,
+          pageSize,
+          hasMore: legacyPage.hasMore,
+        });
+      }
 
       let history: any[];
       if (isManagerialRole(userRole) && !userId) {
@@ -2662,29 +3971,7 @@ function getPeriodRange(periodRaw: string) {
         const roleLower = String(userRole).toLowerCase();
         const isQaRole = roleLower === "qa_manager" || roleLower.startsWith("qa_");
         const isVerificationRole = roleLower.includes("verification");
-        const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
-          seo_smm: ["SEO_SMM", "SEO/SMM"],
-          it: ["IT"],
-          dd: ["DND", "DESIGN_DEVELOPMENT"],
-          product_posting: ["PRODUCT_POSTING"],
-          software: ["SOFTWARE"],
-          service: ["SERVICE"],
-          // QA / Verification cover Product Posting, SEO/SMM, and D&D — but
-          // their Completed Projects rows are further gated below by
-          // sent_to_qa_at / qa_reviewed_at so pre-handoff work stays hidden.
-          qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
-          verification_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
-        };
-        const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => roleLower.startsWith(p));
-        const deptCandidates = Array.from(new Set([
-          ...(userDept ? [userDept] : []),
-          ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
-          // Verification role name doesn't share a dept prefix — still scope
-          // them to the QA-pipeline departments rather than the whole org.
-          ...(isVerificationRole && !rolePrefix
-            ? ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"]
-            : []),
-        ]));
+        const deptCandidates = departmentCandidatesForRole(roleLower, userDept);
         const isDeptBoundManager = deptCandidates.length > 0 && !["admin", "super_admin", "super_hod"].includes(roleLower);
         const deptFilter = isDeptBoundManager
           ? `AND p.department_type IN (${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
@@ -2944,9 +4231,26 @@ function getPeriodRange(periodRaw: string) {
           });
         }
       }
-      const deduped = Array.from(latestByTaskId.values()).sort(
+      let deduped = Array.from(latestByTaskId.values()).sort(
         (a, b) => new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime(),
       );
+
+      if (changingOnly) {
+        deduped = deduped.filter((row) => taskHistoryRowNeedsChanging(row));
+      }
+
+
+      if (usePagination) {
+        const start = (page - 1) * pageSize;
+        const slice = deduped.slice(start, start + pageSize);
+        return res.json({
+          items: slice,
+          total: deduped.length,
+          page,
+          pageSize,
+          hasMore: start + slice.length < deduped.length,
+        });
+      }
 
       res.json(deduped);
     } catch (error) {
@@ -2971,28 +4275,11 @@ function getPeriodRange(periodRaw: string) {
 
       const userRes = await pool.query("SELECT department FROM drm.users WHERE id = $1", [req.user.userId]);
       const userDept = userRes.rows[0]?.department || "";
-      const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
-        seo_smm: ["SEO_SMM", "SEO/SMM"],
-        it: ["IT"],
-        dd: ["DND", "DESIGN_DEVELOPMENT"],
-        product_posting: ["PRODUCT_POSTING"],
-        software: ["SOFTWARE"],
-        service: ["SERVICE"],
-        // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
-        // (or Software/Service) — pinned directly rather than derived from a
-        // role-name prefix, since "qa_manager" doesn't share a prefix with
-        // any of these and users.department is usually unset too.
-        qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
-      };
-      const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
-      const deptCandidates = Array.from(new Set([
-        ...(userDept ? [userDept] : []),
-        ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
-      ]));
+      const deptCandidates = departmentCandidatesForRole(userRole, userDept);
       // Verification manager (and admin/super_admin/super_hod) see every
       // department's closed projects — that's the whole point of the role.
       const isDeptBoundManager = deptCandidates.length > 0
-        && !["admin", "super_admin", "super_hod", "verification_manager"].includes(userRole);
+        && !["admin", "super_admin", "super_hod", "hod", "verification_manager"].includes(userRole);
       const deptFilter = isDeptBoundManager
         ? `AND p.department_type IN (${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
         : "";
@@ -3001,32 +4288,101 @@ function getPeriodRange(periodRaw: string) {
       const { rows } = await pool.query(`
         SELECT
           t.id as "taskId",
-          t.title,
-          t.status,
-          t.qa_reviewed_at as "qaReviewedAt",
+          COALESCE(t.title, p.name) as title,
+          COALESCE(t.status::text, p.status::text) as status,
+          COALESCE(t.qa_reviewed_at, wf.qa_reviewed_at) as "qaReviewedAt",
           t.qa_level as "qaLevel",
           t.qa_remarks as "qaRemarks",
-          t.verification_reviewed_at as "verificationReviewedAt",
+          COALESCE(t.verification_reviewed_at, wf.verification_reviewed_at, wf.updated_at) as "verificationReviewedAt",
           t.verification_level as "verificationLevel",
-          t.verification_remarks as "verificationRemarks",
+          COALESCE(t.verification_remarks, wf.verification_remarks) as "verificationRemarks",
           COALESCE(c.company_name, inv.company_name, rinv.customer_name, p.name) as "companyName",
           p.name as "projectName",
+          COALESCE(
+            (
+              SELECT mli.legacy_id
+              FROM migration_meta.migration_legacy_ids mli
+              WHERE mli.modern_table = 'projects' AND mli.modern_id = p.id::text
+              LIMIT 1
+            ),
+            NULLIF(p.project_number, '')
+          ) as "projectNumber",
           jsonb_build_object('id', au.id, 'name', COALESCE(au.full_name, au.name, au.username)) as "executive",
           (SELECT COALESCE(SUM(duration_minutes), 0) FROM drm.task_time_logs WHERE task_id = t.id) as "timeSpentMinutes"
-        FROM drm.tasks t
-        JOIN drm.projects p ON p.id = t.project_id
+        FROM drm.projects p
+        LEFT JOIN drm.product_posting_workflows wf ON wf.project_id = p.id
+        LEFT JOIN LATERAL (
+          SELECT t2.*
+            FROM drm.tasks t2
+           WHERE t2.project_id = p.id
+             AND COALESCE(t2.is_deleted, false) = false
+           ORDER BY t2.verification_reviewed_at DESC NULLS LAST, t2.updated_at DESC NULLS LAST
+           LIMIT 1
+        ) t ON true
         LEFT JOIN drm.customers c ON c.id = p.customer_id
-        LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
-        LEFT JOIN drm.invoices rinv ON rinv.id = p.invoice_id
+        LEFT JOIN drm.product_posting_invoices inv
+          ON inv.id::text = COALESCE(p.invoice_id::text, p.legacy_source_id)
+        LEFT JOIN drm.invoices rinv ON rinv.id::text = p.legacy_source_id
         LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
-        WHERE t.verification_reviewed_at IS NOT NULL
-          AND COALESCE(t.is_deleted, false) = false
+        WHERE COALESCE(p.is_deleted, false) = false
+          AND (
+            (t.id IS NOT NULL AND t.verification_reviewed_at IS NOT NULL)
+            OR wf.verification_reviewed_at IS NOT NULL
+            OR wf.current_phase IN ('VERIFICATION_COMPLETE', 'COMPLETED', 'DELIVERED', 'CLOSED')
+          )
           ${deptFilter}
-        ORDER BY t.verification_reviewed_at DESC
+        ORDER BY COALESCE(t.verification_reviewed_at, wf.verification_reviewed_at, wf.updated_at) DESC NULLS LAST
         LIMIT $1
       `, [limitNum]);
 
-      res.json(rows);
+      // Old DRM: tasks that finished the whole pipeline there — executive ended it, manager sent it
+      // on, QA reviewed (qa_status 1) and VM closed it with the client (fy_status 1). Read-only.
+      const { rows: legacyRows } = await pool.query(`
+        SELECT
+          'legacy-assign-' || a._legacy_pk AS "taskId",
+          coalesce(nullif(trim(tl.name), ''), nullif(trim(a.soft_task_name), ''), 'Task ' || coalesce(a.task_id, a._legacy_pk)) AS title,
+          'Completed' AS status,
+          migration_meta.mig_ts(a.qa_date) AS "qaReviewedAt",
+          NULL::text AS "qaLevel",
+          nullif(trim(coalesce(a.qa_com, '')), '') AS "qaRemarks",
+          migration_meta.mig_ts(a.fy_date) AS "verificationReviewedAt",
+          NULL::text AS "verificationLevel",
+          nullif(trim(coalesce(a.fy_com, a.fy_fdb, '')), '') AS "verificationRemarks",
+          COALESCE(c.company_name, inv.company_name, p.name) AS "companyName",
+          p.name AS "projectName",
+          a.pro_id AS "projectNumber",
+          jsonb_build_object('id', u.id, 'name', COALESCE(u.full_name, u.name, u.username)) AS executive,
+          nullif(trim(coalesce(a."totalTimespent", a.timespent, '')), '') AS dur_text,
+          coalesce(nullif(regexp_replace(trim(coalesce(a.hours, '')), '[^0-9]', '', 'g'), '')::int, 0) AS dur_hours,
+          coalesce(nullif(regexp_replace(trim(coalesce(a.min, '')), '[^0-9]', '', 'g'), '')::int, 0) AS dur_min
+        FROM (
+          SELECT * FROM legacy_archive.webxl_task_assign
+           WHERE _source_table = 'webxl_task_assign'
+             AND lower(trim(coalesce(stauts, ''))) = 'end'
+             AND trim(coalesce(qa_status, '')) = '1'
+             AND trim(coalesce(fy_status, '')) = '1'
+        ) a
+        JOIN migration_meta.migration_legacy_ids pm
+          ON pm.entity_type = 'create_project_row' AND pm.legacy_table = 'webxl_create_project'
+         AND pm.legacy_id = a.pro_id AND pm.modern_table = 'projects'
+        JOIN drm.projects p ON p.id = pm.modern_id::uuid
+        LEFT JOIN drm.customers c ON c.id = p.customer_id
+        LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+        LEFT JOIN legacy_archive.webxl_tasks_list tl
+          ON tl._source_table = 'webxl_tasks_list' AND tl._legacy_pk = trim(a.task_id)
+        LEFT JOIN migration_meta.migration_legacy_ids um
+          ON um.entity_type = 'user' AND um.legacy_table = 'webxl_user' AND um.legacy_id = trim(a.user_id)
+        LEFT JOIN drm.users u ON u.id = um.modern_id::uuid
+        WHERE COALESCE(p.is_deleted, false) = false
+          ${deptFilter}
+      `);
+      const legacy = legacyRows.map(({ dur_text, dur_hours, dur_min, ...r }: any) => ({
+        ...r,
+        timeSpentMinutes: legacyAssignDurationMinutes(dur_text, Number(dur_hours) || 0, Number(dur_min) || 0),
+        legacyReadOnly: true,
+      }));
+      const time = (v: any) => (v ? new Date(v).getTime() : 0);
+      res.json([...rows, ...legacy].sort((a, b) => time(b.verificationReviewedAt) - time(a.verificationReviewedAt)));
     } catch (error) {
       console.error("Error fetching complete-closed projects:", error);
       res.status(500).json({ error: "Failed to fetch complete-closed projects" });
@@ -3342,41 +4698,72 @@ function getPeriodRange(periodRaw: string) {
     }
   });
 
-  // POST /api/pms/department-assignment - Save department assignment
+  // GET /api/pms/department-assignments — legacy webxl_department PMS distribute grid
+  app.get("/api/pms/department-assignments", async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const data = await listPmsDepartmentAssignments(pool);
+      res.json(data);
+    } catch (error) {
+      console.error("Error fetching PMS department assignments:", error);
+      res.status(500).json({ error: "Failed to fetch department assignments" });
+    }
+  });
+
+  // POST /api/pms/department-assignment - Save department assignment (legacy ms_depart_id)
   app.post("/api/pms/department-assignment", async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
+      if (!isManagerialRole((req.user as any).activeRoleId || (req.user as any).roleId)) {
+        return res.status(403).json({ error: "Only managerial roles may update PMS department assignment" });
+      }
 
-      const { department, assign, ratio } = req.body;
+      const departmentId =
+        req.body?.departmentId != null
+          ? String(req.body.departmentId)
+          : req.body?.ms_depart_id != null
+            ? String(req.body.ms_depart_id)
+            : "";
+      const ratio = req.body?.ratio != null ? String(req.body.ratio) : "0:0";
+      let userIds: string[] = [];
+      if (Array.isArray(req.body?.userIds)) {
+        userIds = req.body.userIds.map((x: unknown) => String(x).trim()).filter(Boolean);
+      } else if (Array.isArray(req.body?.user_list)) {
+        userIds = req.body.user_list.map((x: unknown) => String(x).trim()).filter(Boolean);
+      } else if (typeof req.body?.assign === "string" && req.body.assign.trim()) {
+        userIds = req.body.assign.split(",").map((x: string) => x.trim()).filter(Boolean);
+      }
 
-      // For now, just log and return success
-      // In production, you'd save this to a database table
-      console.log("[Department Assignment]", {
-        department,
-        assign,
-        ratio,
-        userId: req.user.userId,
-      });
+      if (!departmentId) {
+        return res.status(400).json({ error: "departmentId is required" });
+      }
 
-      res.json({ success: true, data: req.body });
+      const saved = await savePmsDepartmentAssignment(pool, { departmentId, userIds, ratio });
+      if (!saved.ok) {
+        const status = saved.error === "Department not found" ? 404 : 400;
+        return res.status(status).json({ error: saved.error ?? "Failed to save" });
+      }
+
+      const data = await listPmsDepartmentAssignments(pool);
+      res.json({ success: true, departmentId, ratio, userIds, ...data });
     } catch (error) {
       console.error("Error saving department assignment:", error);
       res.status(500).json({ error: "Failed to save assignment" });
     }
   });
 
-  // GET /api/pms/department-stats - Get department statistics
+  // GET /api/pms/department-stats - backward-compatible alias for assignment grid
   app.get("/api/pms/department-stats", async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-
-      // For now, return empty stats
-      // In production, you'd query the database for actual stats
-      res.json({});
+      const data = await listPmsDepartmentAssignments(pool);
+      res.json(data);
     } catch (error) {
       console.error("Error fetching department stats:", error);
       res.status(500).json({ error: "Failed to fetch stats" });

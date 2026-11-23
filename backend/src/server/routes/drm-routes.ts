@@ -1,10 +1,20 @@
 import { Router } from "express";
+import { canonicalRoleKeys } from "@shared/legacy-role-keys";
 import { z } from "zod";
 import { pool } from "../db";
 import { projectsRepository } from "../repositories/projects.repository";
 import { authMiddleware } from "../middleware/auth.middleware";
 import { normalizeRole } from "../utils/role-utils";
 import { requireActionPermission } from "./middleware/action-permission";
+import { shouldSoftFailDashboard } from "../utils/safe-dashboard-fallback";
+import {
+    ensureMenuPermissionsTable,
+    ensureDrmSettingBotPermission,
+    ensurePmsMenuSubUrls,
+    fetchLegacyDrmSettingArchive,
+    seedMenuPermissionsFromLegacyIfEmpty,
+} from "../utils/menu-permissions-bootstrap";
+import { ACTION_PERMISSIONS } from "../config/action-permissions";
 
 const router = Router();
 const TABLE = "drm.menu_permissions";
@@ -43,11 +53,103 @@ const requirePermsAdmin = [
     }),
 ];
 
+// GET /api/drm/delay-projects/departments — legacy department list for filters
+router.get("/delay-projects/departments", authMiddleware, async (req, res) => {
+    try {
+        const client = await pool.connect();
+        try {
+            const { rows } = await client.query(
+                `SELECT id, name FROM legacy_archive.webxl_department ORDER BY name ASC`,
+            );
+            res.json(rows);
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error("Error fetching delay departments:", error);
+        res.status(500).json({ message: "Failed to fetch departments" });
+    }
+});
+
+// GET /api/drm/delay-projects/persons — sales / project creators for filter dropdown
+router.get("/delay-projects/persons", authMiddleware, async (req, res) => {
+    try {
+        const client = await pool.connect();
+        try {
+            const departmentId =
+                typeof req.query.departmentId === "string" && req.query.departmentId !== "all"
+                    ? req.query.departmentId
+                    : null;
+
+            let sql = `
+                SELECT DISTINCT u.user_id AS id, u.name AS name
+                FROM legacy_archive.webxl_user u
+                WHERE u.user_id IS NOT NULL AND trim(u.user_id) <> ''
+                  AND u.name IS NOT NULL AND trim(u.name) <> ''
+            `;
+            const params: string[] = [];
+
+            if (departmentId) {
+                params.push(departmentId);
+                sql = `
+                    SELECT DISTINCT u.user_id AS id, u.name AS name
+                    FROM legacy_archive.webxl_user u
+                    INNER JOIN legacy_archive.webxl_create_project cp ON cp.user_id = u.user_id
+                    LEFT JOIN legacy_archive.webxl_quotation_services qs ON qs.name = cp.project
+                    WHERE u.user_id IS NOT NULL AND trim(u.user_id) <> ''
+                      AND u.name IS NOT NULL AND trim(u.name) <> ''
+                      AND qs.dep_id = $1
+                `;
+            }
+
+            sql += ` ORDER BY name ASC`;
+
+            const { rows } = await client.query(sql, params);
+            if (rows.length > 0) {
+                return res.json(rows);
+            }
+
+            const modern = await client.query(
+                `SELECT id::text AS id, name FROM drm.users
+                 WHERE deleted_at IS NULL AND name IS NOT NULL
+                 ORDER BY name ASC`,
+            );
+            res.json(modern.rows);
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error("Error fetching delay persons:", error);
+        res.status(500).json({ message: "Failed to fetch persons" });
+    }
+});
+
 // GET /api/drm/delay-projects
 router.get("/delay-projects", authMiddleware, async (req, res) => {
     try {
+        const { fetchLegacyDelayProjectsDetailed, fetchLegacyDelaySectionCounts } = await import(
+            "../utils/delay-project-legacy"
+        );
+        if (req.query.counts === "1" || req.query.counts === "true") {
+            const counts = await fetchLegacyDelaySectionCounts();
+            return res.json({ success: true, counts });
+        }
+        const section = typeof req.query.section === "string" ? req.query.section : "all";
+        const legacy = await fetchLegacyDelayProjectsDetailed({
+            section: section as any,
+            departmentId: typeof req.query.departmentId === "string" ? req.query.departmentId : undefined,
+            userId: typeof req.query.userId === "string" ? req.query.userId : undefined,
+            startDate: typeof req.query.startDate === "string" ? req.query.startDate : undefined,
+            endDate: typeof req.query.endDate === "string" ? req.query.endDate : undefined,
+            search: typeof req.query.search === "string" ? req.query.search : undefined,
+            page: req.query.page ? Number(req.query.page) : 1,
+            pageSize: req.query.pageSize ? Number(req.query.pageSize) : 50,
+        });
+        if (legacy.total > 0) {
+            return res.json({ success: true, ...legacy, source: "legacy" });
+        }
         const projects = await projectsRepository.findDelayed();
-        res.json({ success: true, data: projects });
+        res.json({ success: true, data: projects, total: projects.length, source: "modern" });
     } catch (error) {
         console.error("Error fetching delayed projects:", error);
         res.status(500).json({ message: "Failed to fetch delayed projects" });
@@ -58,18 +160,67 @@ router.get("/delay-projects", authMiddleware, async (req, res) => {
 router.get("/permissions", authMiddleware, async (req, res) => {
     try {
         const client = await pool.connect();
-        const result = await client.query(
-            `SELECT id, name, menu_icon AS "menuIcon", permissions, sub_urls AS "subUrls",
-                    allowed_role_ids AS "allowedRoleIds", is_active AS "isActive", created_at AS "createdAt", updated_at AS "updatedAt"
-             FROM ${TABLE}
-             ORDER BY created_at ASC`
-        );
-        client.release();
-        res.json(result.rows);
+        try {
+            await ensureMenuPermissionsTable(client);
+            await seedMenuPermissionsFromLegacyIfEmpty(client);
+            await ensureDrmSettingBotPermission(client);
+            await ensurePmsMenuSubUrls(client);
+            const result = await client.query(
+                `SELECT id, name, menu_icon AS "menuIcon", permissions, sub_urls AS "subUrls",
+                        allowed_role_ids AS "allowedRoleIds", is_active AS "isActive",
+                        legacy_source_id AS "legacySourceId", created_at AS "createdAt", updated_at AS "updatedAt"
+                 FROM ${TABLE}
+                 ORDER BY name ASC`
+            );
+            // Old-DRM role labels ("Sales Executive [L25]") -> role keys the sidebar matches on.
+            res.json(result.rows.map((r: any) => ({ ...r, allowedRoleIds: canonicalRoleKeys(r.allowedRoleIds) })));
+        } finally {
+            client.release();
+        }
     } catch (error) {
+        if (shouldSoftFailDashboard(error, "GET /api/drm/permissions")) {
+            return res.json([]);
+        }
         console.error("Error fetching permissions:", error);
         res.status(500).json({ message: "Failed to fetch permissions" });
     }
+});
+
+// GET /api/drm/permissions/legacy-archive — read-only MySQL-era DRM Setting rows
+router.get("/permissions/legacy-archive", authMiddleware, async (req, res) => {
+    try {
+        const client = await pool.connect();
+        try {
+            const rows = await fetchLegacyDrmSettingArchive(client);
+            res.json(rows);
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error("Error fetching legacy DRM permissions:", error);
+        res.status(500).json({ message: "Failed to fetch legacy permissions" });
+    }
+});
+
+// GET /api/drm/permissions/action-rules — PATCH-6 backend action permission registry
+router.get("/permissions/action-rules", authMiddleware, async (req, res) => {
+    const rules = Object.entries(ACTION_PERMISSIONS).map(([key, policy]) => ({
+        key,
+        module: policy.module,
+        description: policy.description ?? null,
+        roles: policy.roles ?? null,
+        adminOverride: policy.adminOverride ?? false,
+        audit: policy.audit ?? false,
+        entityType: policy.entityType ?? null,
+        message: policy.message ?? null,
+        hasAllowRolePredicate: typeof policy.allowRole === "function",
+    }));
+    rules.sort((a, b) => a.key.localeCompare(b.key));
+    res.json({
+        note: "Menu visibility still uses drm.menu_permissions; these keys guard sensitive API writes via requireActionPermission.",
+        inlinePolicies: ["drm.permissions.manage (admin only, defined on DRM routes)"],
+        rules,
+    });
 });
 
 // GET /api/drm/permissions/debug
@@ -109,7 +260,9 @@ router.post("/permissions", ...requirePermsAdmin, async (req, res) => {
         if (!parsed.success) {
             return res.status(400).json({ message: "Invalid request payload", details: parsed.error.errors });
         }
-        const { name, menuIcon, permissions: perms, subUrls, allowedRoleIds } = parsed.data;
+        const { name, menuIcon, permissions: perms, subUrls } = parsed.data;
+        // Store role KEYS, never old-DRM labels like "Sales Executive [L25]".
+        const allowedRoleIds = parsed.data.allowedRoleIds === undefined ? undefined : canonicalRoleKeys(parsed.data.allowedRoleIds);
 
         const client = await pool.connect();
         try {
@@ -219,7 +372,9 @@ router.put("/permissions/:id", ...requirePermsAdmin, async (req, res) => {
         if (!parsed.success) {
             return res.status(400).json({ message: "Invalid request payload", details: parsed.error.errors });
         }
-        const { name, menuIcon, permissions: perms, subUrls, allowedRoleIds } = parsed.data;
+        const { name, menuIcon, permissions: perms, subUrls } = parsed.data;
+        // Store role KEYS, never old-DRM labels like "Sales Executive [L25]".
+        const allowedRoleIds = parsed.data.allowedRoleIds === undefined ? undefined : canonicalRoleKeys(parsed.data.allowedRoleIds);
 
         const client = await pool.connect();
         try {

@@ -1,4 +1,5 @@
 import { pool } from "../db";
+import { fetchHodLegacyProjectDeadlines } from "../services/hod-dashboard-legacy.service";
 import { NotificationService } from "../services/notification-service";
 import { WORKFLOW_ENTITY_TYPES } from "../../shared/gm-sales-constants";
 import { generateInvoicesAfterFinalGmApproval } from "../services/gm-invoice-generation.service";
@@ -236,7 +237,7 @@ const pendingApprovalsUnion = `
 // Matches the TD/WC/MC/QC/YC (Today/Week/Month/Quarter/Year Cumulative) convention
 // used elsewhere in the app (see sales-routes.ts getDateRangeForPeriod). The HOD
 // dashboard's "Top Selling" dropdown labels its today option "LD" instead of "TD".
-const getDateFromForPeriod = (period?: string): Date | null => {
+export function getDateFromForPeriod(period?: string): Date | null {
   const now = new Date();
   switch ((period ?? "").toUpperCase()) {
     case "LD":
@@ -245,9 +246,12 @@ const getDateFromForPeriod = (period?: string): Date | null => {
       d.setHours(0, 0, 0, 0);
       return d;
     }
+    case "WK":
     case "WC":
       return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    case "MH":
     case "MC":
+    case "MONTH":
       return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     case "QC":
       return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
@@ -579,28 +583,63 @@ export class HodRepository {
     return res.rows[0] ?? null;
   }
 
-  async getProjectDeadlines(filter: string = 'WK', userId?: string) {
+  async getProjectDeadlines(filter: string = "WK", userId?: string) {
     try {
-      // WK = next 7 days, MN/MO/LD = next 30 days, All = no upper bound.
-      // ("LD" kept as a legacy alias for 30 days for existing callers.)
-      const isMonth = filter === 'MN' || filter === 'MO' || filter === 'LD';
-      const isAll = filter === 'All' || filter === 'ALL';
-      const upperBoundSql = isAll ? "" : `AND end_date <= NOW() + INTERVAL '${isMonth ? "30 days" : "7 days"}'`;
+      const f = (filter || "WK").toUpperCase();
+      const isAll = f === "ALL";
+      const isMonth = f === "MN" || f === "MO" || f === "LD";
+      const isToday = f === "TD";
+      let windowSql = "";
+      if (!isAll) {
+        if (isToday) {
+          windowSql = `AND p.end_date >= NOW() - INTERVAL '7 days' AND p.end_date <= NOW() + INTERVAL '3 days'`;
+        } else if (isMonth) {
+          windowSql = `AND p.end_date >= NOW() - INTERVAL '30 days' AND p.end_date <= NOW() + INTERVAL '30 days'`;
+        } else {
+          windowSql = `AND p.end_date >= NOW() - INTERVAL '14 days' AND p.end_date <= NOW() + INTERVAL '7 days'`;
+        }
+      }
+      const params: string[] = [];
+      const ownerSql = userId
+        ? (params.push(userId), `AND p.owner_user_id = $${params.length}::uuid`)
+        : "";
       const query = `
         SELECT
-          id,
-          name as "companyName",
-          description as project,
-          workspace as dep,
-          end_date as deadlines
-        FROM drm.projects
-        WHERE end_date >= NOW() ${upperBoundSql}
-        ${userId ? `AND owner_user_id = $1` : ""}
-        ORDER BY end_date ASC
-        LIMIT 20
+          p.id::text,
+          COALESCE(
+            NULLIF(trim(u.full_name), ''),
+            NULLIF(trim(u.name), ''),
+            u.username,
+            'Unknown'
+          ) AS "userName",
+          COALESCE(c.company_name, i.company_name, 'Unknown') AS "companyName",
+          COALESCE(NULLIF(trim(p.name), ''), i.project_name, '-') AS project,
+          COALESCE(
+            NULLIF(trim(p.department_type), ''),
+            NULLIF(trim(p.workspace), ''),
+            '—'
+          ) AS dep,
+          p.end_date AS deadlines
+        FROM drm.projects p
+        LEFT JOIN drm.users u ON u.id = p.owner_user_id
+        LEFT JOIN drm.customers c ON c.id = p.customer_id
+        LEFT JOIN drm.product_posting_invoices i ON i.id = p.invoice_id
+        WHERE coalesce(p.is_deleted, false) = false
+          AND p.end_date IS NOT NULL
+          ${windowSql}
+          ${ownerSql}
+        ORDER BY p.end_date ASC
+        LIMIT 30
       `;
-      const result = await pool.query(query, userId ? [userId] : []);
-      return result.rows;
+      const result = await pool.query(query, params);
+      const legacy = userId ? [] : await fetchHodLegacyProjectDeadlines(filter);
+      const merged = [...result.rows, ...legacy]
+        .sort(
+          (a, b) =>
+            new Date(a.deadlines || 0).getTime() - new Date(b.deadlines || 0).getTime(),
+        )
+        .slice(0, 40);
+      return merged;
     } catch (error) {
       console.error("[HOD] getProjectDeadlines failed", { error });
       return [];

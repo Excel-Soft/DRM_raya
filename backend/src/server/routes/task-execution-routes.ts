@@ -6,6 +6,20 @@ import { pool } from "../db";
 import { taskTimeLogsRepository } from "../repositories/task-time-logs.repository";
 import { changeTaskStatus } from "./services/pms-transition.service";
 import { isManagerialRole } from "../utils/role-utils";
+import { taskLinkDuplicateMessage } from "../utils/task-link-utils";
+import { notifyTaskSubmittedForReview } from "../utils/task-notifications";
+import { anyRoleCanExecutePmsTasks } from "@shared/pms-task-permissions";
+
+async function existingTaskLinkDescriptions(taskId: string, excludeFileId?: string): Promise<string[]> {
+  const { rows } = await pool.query(
+    `select id, description from drm.task_files
+     where task_id = $1 and file_url is null and description is not null and trim(description) <> ''`,
+    [taskId],
+  );
+  return rows
+    .filter((r) => !excludeFileId || String(r.id) !== String(excludeFileId))
+    .map((r) => String(r.description || ""));
+}
 
 // Mirrors the frontend's assigned-time derivation (pms-tasks.tsx /
 // pms-status.tsx): task.notes.duration (minutes) when set at assign-task
@@ -32,6 +46,16 @@ function actorRoles(req: Request): string[] {
   for (const v of [u.activeRoleId, u.roleId, u.role]) if (v) out.push(String(v));
   if (Array.isArray(u.roles)) for (const r of u.roles) if (r) out.push(String(r));
   return out;
+}
+
+function assertTaskExecutionRole(req: Request, res: Response): boolean {
+  if (!anyRoleCanExecutePmsTasks(actorRoles(req))) {
+    res.status(403).json({
+      error: "Your role cannot run tasks on Task System. Only department executives (Posting, D&D, IT, SEO/SMM, etc.) may start timers.",
+    });
+    return false;
+  }
+  return true;
 }
 
 // Backs the "Assigned Project" (Today/Waiting) widget and the per-task
@@ -116,6 +140,7 @@ router.post("/:id/timers/start", async (req: Request, res: Response) => {
   try {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
+    if (!assertTaskExecutionRole(req, res)) return;
 
     const taskRes = await pool.query(`select id, assigned_to_user_id, status, timer_started_at from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
@@ -153,6 +178,9 @@ router.post("/:id/timers/stop", async (req: Request, res: Response) => {
   try {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
+    if (!assertTaskExecutionRole(req, res)) return;
+
+    await pool.query(`alter table drm.tasks add column if not exists remaining_seconds integer`);
 
     // Elapsed time is computed entirely in Postgres (now() - timer_started_at,
     // both DB-side) rather than Date.now() [[Node]] - timer_started_at
@@ -213,6 +241,64 @@ router.get("/:id/files", async (req: Request, res: Response) => {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
+    const legacyAssignMatch = /^legacy-assign-(.+)$/.exec(req.params.id);
+    if (legacyAssignMatch) {
+      const assignLegacyPk = legacyAssignMatch[1];
+      const role = (req as any).user?.activeRoleId || (req as any).user?.roleId || (req as any).user?.role;
+      const isManager =
+        isManagerialRole(role) || ((req as any).user?.roles || []).some((r: string) => isManagerialRole(r));
+
+      const assignRes = await pool.query(
+        `
+        SELECT trim(a.pro_id) AS pro_id, trim(a.task_id) AS task_id, um.modern_id::text AS assignee_modern_id
+          FROM legacy_archive.webxl_task_assign a
+          LEFT JOIN migration_meta.migration_legacy_ids um
+            ON um.legacy_table = 'webxl_user' AND um.legacy_id = trim(a.user_id)
+         WHERE trim(a._legacy_pk) = trim($1::text)
+         LIMIT 1
+        `,
+        [assignLegacyPk],
+      );
+      if (assignRes.rowCount === 0) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      const { pro_id: proId, task_id: legacyTaskId, assignee_modern_id: assigneeModernId } = assignRes.rows[0];
+      if (!isManager && assigneeModernId !== uid) {
+        return res.status(403).json({ error: "You don't have access to this task's files." });
+      }
+
+      const { rows } = await pool.query(
+        `
+        SELECT
+          ('legacy-link-' || l._legacy_pk) AS id,
+          null::text AS "fileUrl",
+          null::text AS "fileName",
+          coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) AS description,
+          coalesce(NULLIF(trim(l.create_at), '')::timestamptz, now()) AS "createdAt",
+          coalesce(u.full_name, u.name, u.username) AS "uploadedByName",
+          CASE
+            WHEN trim(coalesce(l.verify, '')) IN ('1', 'yes', 'Yes', 'verified', 'Verified') THEN 'approved'
+            WHEN trim(coalesce(l.verify, '')) IN ('0', 'reject', 'Rejected', 'no', 'No') THEN 'rejected'
+            ELSE null
+          END AS "qaStatus",
+          nullif(trim(l.qa_com), '') AS "qaComment"
+        FROM legacy_archive.webxl_task_links l
+        LEFT JOIN migration_meta.migration_legacy_ids um
+          ON um.legacy_table = 'webxl_user' AND um.legacy_id = trim(l.user_id)
+        LEFT JOIN drm.users u ON u.id = um.modern_id::uuid
+        WHERE trim(l.pro_id) = trim($1::text)
+          AND (
+            trim(l.task_id) = trim($2::text)
+            OR trim(l.task_id) = trim($3::text)
+          )
+          AND coalesce(nullif(trim(l.link), ''), nullif(trim(l.detail), '')) IS NOT NULL
+        ORDER BY coalesce(NULLIF(trim(l.create_at), '')::timestamptz, now()) DESC
+        `,
+        [proId, legacyTaskId, assignLegacyPk],
+      );
+      return res.json({ success: true, data: rows });
+    }
+
     const taskRes = await pool.query(`select id, owner_user_id, assigned_to_user_id from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
     const task = taskRes.rows[0];
@@ -268,6 +354,11 @@ router.patch("/:id/files/:fileId", async (req: Request, res: Response) => {
       return res.status(409).json({ error: "This task is under review — links cannot be edited.", code: "TASK_LOCKED" });
     }
 
+    const dupMsg = taskLinkDuplicateMessage(description, await existingTaskLinkDescriptions(req.params.id, req.params.fileId));
+    if (dupMsg) {
+      return res.status(409).json({ error: dupMsg, code: "DUPLICATE_LINK" });
+    }
+
     const fileRes = await pool.query(
       `select id, file_url from drm.task_files where id = $1 and task_id = $2`,
       [req.params.fileId, req.params.id],
@@ -320,6 +411,7 @@ router.post("/:id/files", (req, res, next) => {
   try {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
+    if (!assertTaskExecutionRole(req, res)) return;
 
     const taskRes = await pool.query(`select id, assigned_to_user_id, status, notes from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
@@ -354,6 +446,10 @@ router.post("/:id/files", (req, res, next) => {
             code: "LINKS_LIMIT_REACHED",
           });
         }
+      }
+      const dupMsg = taskLinkDuplicateMessage(description, await existingTaskLinkDescriptions(req.params.id));
+      if (dupMsg) {
+        return res.status(409).json({ error: dupMsg, code: "DUPLICATE_LINK" });
       }
     }
 
@@ -395,10 +491,19 @@ router.post("/:id/complete", async (req: Request, res: Response) => {
   try {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
+    if (!assertTaskExecutionRole(req, res)) return;
 
-    const taskRes = await pool.query(`select id, assigned_to_user_id, notes from drm.tasks where id = $1`, [req.params.id]);
+    const taskRes = await pool.query(
+      `select t.id, t.title, t.assigned_to_user_id, t.owner_user_id, t.project_id, t.notes,
+              coalesce(u.full_name, u.name, u.username) as executive_name
+         from drm.tasks t
+         left join drm.users u on u.id = t.assigned_to_user_id
+        where t.id = $1`,
+      [req.params.id],
+    );
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
-    if (taskRes.rows[0].assigned_to_user_id !== uid) {
+    const taskRow = taskRes.rows[0];
+    if (taskRow.assigned_to_user_id !== uid) {
       return res.status(403).json({ error: "Only the assigned executive can complete this task.", code: "WORKFLOW_OWNERSHIP_FORBIDDEN" });
     }
 
@@ -407,7 +512,7 @@ router.post("/:id/complete", async (req: Request, res: Response) => {
     // Mirrors the client-side guard in pms-tasks.tsx, but authoritative here
     // since that one is UI-only and can't stop a direct API call.
     let requiredLinks = 0;
-    try { requiredLinks = Number(JSON.parse(taskRes.rows[0].notes || "{}")?.links) || 0; } catch { /* not JSON / no links field — no requirement */ }
+    try { requiredLinks = Number(JSON.parse(taskRow.notes || "{}")?.links) || 0; } catch { /* not JSON / no links field — no requirement */ }
     if (requiredLinks > 0) {
       const linkCountRes = await pool.query(
         `select count(*)::int as count from drm.task_files where task_id = $1 and file_url is null and description is not null and description <> ''`,
@@ -444,6 +549,27 @@ router.post("/:id/complete", async (req: Request, res: Response) => {
       return res.status(transition.status || 400).json({ error: transition.error, code: (transition as any).code });
     }
 
+    try {
+      let managerId: string | null = taskRow.owner_user_id ?? null;
+      if (!managerId && taskRow.project_id) {
+        const proj = await pool.query(
+          `select owner_user_id, created_by from drm.projects where id = $1 limit 1`,
+          [taskRow.project_id],
+        );
+        managerId = proj.rows[0]?.owner_user_id ?? proj.rows[0]?.created_by ?? null;
+      }
+      await notifyTaskSubmittedForReview({
+        taskId: req.params.id,
+        taskTitle: taskRow.title,
+        projectId: taskRow.project_id,
+        executiveUserId: uid,
+        managerUserId: managerId,
+        executiveName: taskRow.executive_name,
+      });
+    } catch (notifyErr) {
+      console.error("[tasks/complete] manager notification failed:", notifyErr);
+    }
+
     res.json({ success: true, status: transition.task.status });
   } catch (error) {
     console.error("Error completing task:", error);
@@ -459,6 +585,7 @@ router.post("/:id/extensions", async (req: Request, res: Response) => {
   try {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
+    if (!assertTaskExecutionRole(req, res)) return;
 
     const taskRes = await pool.query(`select id, assigned_to_user_id from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });

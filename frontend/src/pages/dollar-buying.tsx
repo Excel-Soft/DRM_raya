@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeftRight, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -48,7 +48,19 @@ type DollarBuyingRecord = {
   martini: string | null;
 };
 
-const PAYMENT_METHOD_OPTIONS = ["Bank Transfer", "Cheque", "Cash", "Online"];
+// Old DRM Add Buyer options.
+const PAYMENT_METHOD_OPTIONS = ["Credit Card", "Debit Card", "Paypal", "Direct Purchase"];
+const NO_CHEQUE = "__none__";
+
+type UnusedCheque = {
+  value: string;
+  cheque_number: string;
+  bank_name: string | null;
+  amount: number;
+  pay_to: string | null;
+  cheque_date: string | null;
+  type: string | null;
+};
 const TYPE_OPTIONS = ["New", "Renewal"];
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -85,6 +97,13 @@ export default function DollarBuying() {
   const [date, setDate] = useState("");
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
   const [detail, setDetail] = useState("");
+
+  // Cheque List: only un-used cheques; picking one is optional.
+  const unusedChequesQuery = useQuery<UnusedCheque[]>({
+    queryKey: ["/api/account/buying/unused-cheques"],
+    queryFn: () => apiRequestJson<UnusedCheque[]>("GET", "/api/account/buying/unused-cheques"),
+  });
+  const unusedCheques = unusedChequesQuery.data ?? [];
 
   const buyerTreeQuery = useQuery<BuyerAttributeRow[]>({
     queryKey: ["/api/attributes", "Buyer Detail"],
@@ -126,6 +145,7 @@ export default function DollarBuying() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/account/buying"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account/buying/unused-cheques"] });
       queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/list"] });
       toast({ title: "Buying record added" });
       setBuyerId("");
@@ -168,17 +188,43 @@ export default function DollarBuying() {
   // the server already returned.
   const filteredHistoryRows = useMemo(() => {
     return historyRows.filter((r) => {
-      if (historyBuyerName && r.buyer_name !== historyBuyerName) return false;
+      if (historyBuyerName && (r.buyer_name_full || r.buyer_name) !== historyBuyerName) return false;
       if (historyReference && r.buyer_reference !== historyReference) return false;
       return true;
     });
   }, [historyRows, historyBuyerName, historyReference]);
 
+  // Buyer / reference options: new-app Buyer Detail tree plus the buyers and
+  // references that appear in the history itself (old DRM buys have no tree node).
+  const historyBuyerOptions = useMemo(() => {
+    const names = new Set<string>(topBuyers.map((b) => b.name));
+    for (const r of historyRows) { const n = r.buyer_name_full || r.buyer_name; if (n) names.add(n); }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [topBuyers, historyRows]);
+
   const historyReferenceOptions = useMemo(() => {
     const parent = historyBuyerName ? topBuyers.find((b) => b.name === historyBuyerName) : null;
-    const pool = parent ? buyerTree.filter((r) => r.parentId === parent.id) : buyerTree.filter((r) => r.parentId);
-    return Array.from(new Set(pool.map((r) => r.name)));
-  }, [buyerTree, topBuyers, historyBuyerName]);
+    const pool = parent ? buyerTree.filter((r) => r.parentId === parent.id) : historyBuyerName ? [] : buyerTree.filter((r) => r.parentId);
+    const refs = new Set<string>(pool.map((r) => r.name));
+    for (const r of historyRows) {
+      if (historyBuyerName && (r.buyer_name_full || r.buyer_name) !== historyBuyerName) continue;
+      if (r.buyer_reference) refs.add(r.buyer_reference);
+    }
+    return Array.from(refs).sort((a, b) => a.localeCompare(b));
+  }, [buyerTree, topBuyers, historyBuyerName, historyRows]);
+
+  // Client-side paging (filters above are client-side too); totals use all filtered rows.
+  const HISTORY_PAGE_SIZE = 20;
+  const [historyPage, setHistoryPage] = useState(1);
+  const historyPageCount = Math.max(1, Math.ceil(filteredHistoryRows.length / HISTORY_PAGE_SIZE));
+  useEffect(() => { setHistoryPage(1); }, [historyRows, historyBuyerName, historyReference]);
+  const historyOffset = (Math.min(historyPage, historyPageCount) - 1) * HISTORY_PAGE_SIZE;
+  const pagedHistoryRows = filteredHistoryRows.slice(historyOffset, historyOffset + HISTORY_PAGE_SIZE);
+
+  const historyTotals = useMemo(() => filteredHistoryRows.reduce(
+    (t, r) => ({ dollars: t.dollars + Number(r.dollar_amount || 0), pkr: t.pkr + Number(r.pkr_amount || 0) }),
+    { dollars: 0, pkr: 0 },
+  ), [filteredHistoryRows]);
 
   const handleView = () => {
     setCommittedFilters({ startDate: historyStartDate, endDate: historyEndDate });
@@ -246,7 +292,21 @@ export default function DollarBuying() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1.5">
               <label className="text-[12px] font-bold text-muted-foreground">Cheque List</label>
-              <Input value={chequeId} onChange={(e) => setChequeId(e.target.value)} placeholder="Cheque no (if any)" className="h-10 text-[13px]" />
+              <Select value={chequeId || NO_CHEQUE} onValueChange={(v) => setChequeId(v === NO_CHEQUE ? "" : v)}>
+                <SelectTrigger className="h-10 text-[13px]"><SelectValue placeholder="Cheque no (if any)" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_CHEQUE}>No cheque</SelectItem>
+                  {unusedCheques.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.cheque_number} — Rs {Number(c.amount || 0).toLocaleString()}
+                      {c.pay_to ? ` — ${c.pay_to}` : ""}{c.bank_name ? ` (${c.bank_name})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                {unusedChequesQuery.isLoading ? "Loading cheques…" : `${unusedCheques.length} un-used cheque${unusedCheques.length === 1 ? "" : "s"} · optional`}
+              </p>
             </div>
             <div className="space-y-1.5">
               <label className="text-[12px] font-bold text-muted-foreground">Payment method</label>
@@ -358,7 +418,7 @@ export default function DollarBuying() {
                 <SelectTrigger className="h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
-                  {topBuyers.map((b) => <SelectItem key={b.id} value={b.name}>{b.name}</SelectItem>)}
+                  {historyBuyerOptions.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -418,9 +478,9 @@ export default function DollarBuying() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredHistoryRows.map((r, i) => (
+                    pagedHistoryRows.map((r, i) => (
                       <TableRow key={r.id}>
-                        <TableCell className="pl-6">{i + 1}</TableCell>
+                        <TableCell className="pl-6">{historyOffset + i + 1}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs">{formatDate(r.date)}</TableCell>
                         <TableCell className="font-bold">{r.buyer_name_full || r.buyer_name || "-"}</TableCell>
                         <TableCell className="text-emerald-600">{r.buyer_reference || "-"}</TableCell>
@@ -430,13 +490,40 @@ export default function DollarBuying() {
                         <TableCell>{r.paypal_email || "-"}</TableCell>
                         <TableCell>{r.type || "-"}</TableCell>
                         <TableCell>{r.martini || "-"}</TableCell>
-                        <TableCell className="pr-6 max-w-[200px] truncate">{r.detail || "-"}</TableCell>
+                        <TableCell className="pr-6 max-w-[200px] truncate" title={r.detail || ""}>{r.detail || "-"}</TableCell>
                       </TableRow>
                     ))
+                  )}
+                  {filteredHistoryRows.length > 0 && (
+                    <TableRow className="font-bold bg-muted/40">
+                      <TableCell className="pl-6" colSpan={4}>Total ({filteredHistoryRows.length})</TableCell>
+                      <TableCell>$ {historyTotals.dollars.toLocaleString(undefined, { maximumFractionDigits: 2 })}</TableCell>
+                      <TableCell />
+                      <TableCell>{historyTotals.pkr.toLocaleString(undefined, { maximumFractionDigits: 0 })}</TableCell>
+                      <TableCell colSpan={4} />
+                    </TableRow>
                   )}
                 </TableBody>
               </Table>
             </div>
+            {filteredHistoryRows.length > HISTORY_PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-3 px-6 py-3 border-t text-xs text-muted-foreground">
+                <span>
+                  Showing {historyOffset + 1}–{Math.min(historyOffset + HISTORY_PAGE_SIZE, filteredHistoryRows.length)} of {filteredHistoryRows.length}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" className="h-7 px-3 text-xs"
+                    disabled={historyPage <= 1} onClick={() => setHistoryPage(1)}>First</Button>
+                  <Button type="button" variant="outline" size="sm" className="h-7 px-3 text-xs"
+                    disabled={historyPage <= 1} onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}>Previous</Button>
+                  <span className="font-medium text-foreground">Page {Math.min(historyPage, historyPageCount)} of {historyPageCount}</span>
+                  <Button type="button" variant="outline" size="sm" className="h-7 px-3 text-xs"
+                    disabled={historyPage >= historyPageCount} onClick={() => setHistoryPage((p) => Math.min(historyPageCount, p + 1))}>Next</Button>
+                  <Button type="button" variant="outline" size="sm" className="h-7 px-3 text-xs"
+                    disabled={historyPage >= historyPageCount} onClick={() => setHistoryPage(historyPageCount)}>Last</Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         )}

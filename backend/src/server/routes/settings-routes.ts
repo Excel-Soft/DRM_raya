@@ -4,15 +4,14 @@ import { rolesRepository } from "../repositories/roles.repository";
 import { urlPermissionsRepository } from "../repositories/url-permissions.repository";
 import { policiesRepository } from "../repositories/policies.repository";
 import { allowedIpsRepository } from "../repositories/allowed-ips.repository";
+import { ensureAllowedIpUserColumns } from "../utils/allowed-ips-user-columns";
+import { pool } from "../db";
 import {
   insertRoleSchema,
   insertUrlPermissionSchema,
   insertPolicySchema,
   insertAllowedIpSchema,
-  attributes
 } from "@shared/schema";
-import { db } from "../db";
-import { eq } from "drizzle-orm";
 import { ActivityLogService } from "./services/activity-service";
 import { getConfig, patchConfig } from "./services/gm-sales-config.service";
 import { AuditLogService } from "./services/audit-log.service";
@@ -59,32 +58,10 @@ export function registerSettingsRoutes(app: Express) {
 
   settingsRouter.get("/roles", async (req: Request, res: Response) => {
     try {
+      // Assignable DRM roles only — Job Designation attributes (CEO, Manager, …)
+      // live under /api/attributes and must not appear in the role picker.
       const roles = await rolesRepository.findAll();
-
-      // Also fetch Job Designation attributes to merge
-      const jobDesignations = await db.select().from(attributes).where(eq(attributes.category, "Job Designation"));
-
-      const allRolesMap = new Map();
-      // Prioritize existing roles table roles
-      for (const r of roles) {
-        allRolesMap.set(r.name.toLowerCase(), r);
-      }
-
-      // Add missing job designations
-      for (const attr of jobDesignations) {
-        const normalizedName = attr.name.toLowerCase().trim().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-        if (!allRolesMap.has(normalizedName)) {
-          allRolesMap.set(normalizedName, {
-            id: attr.id,
-            name: normalizedName,
-            description: attr.name,
-            createdAt: attr.createdAt,
-            updatedAt: attr.updatedAt
-          });
-        }
-      }
-
-      res.json(Array.from(allRolesMap.values()));
+      res.json(roles);
     } catch (error: any) {
       console.error("Error fetching roles:", error);
       res.status(500).json({ error: "Failed to fetch roles" });
@@ -283,8 +260,33 @@ export function registerSettingsRoutes(app: Express) {
   // Allowed IPs Routes
   // ========================================
 
+  async function resolveAllowedIpUserFields(body: {
+    user_id?: string | null;
+    userId?: string | null;
+    user_name?: string | null;
+    userName?: string | null;
+  }): Promise<{ userId: string | null; userName: string | null }> {
+    const rawId = body.user_id ?? body.userId ?? null;
+    const userId = rawId && String(rawId).trim() ? String(rawId).trim() : null;
+    let userName =
+      body.user_name != null
+        ? String(body.user_name).trim()
+        : body.userName != null
+          ? String(body.userName).trim()
+          : "";
+    if (userId) {
+      const u = await pool.query(
+        `SELECT coalesce(full_name, name, username) AS n FROM drm.users WHERE id = $1 LIMIT 1`,
+        [userId],
+      );
+      if (u.rows[0]?.n) userName = String(u.rows[0].n).trim();
+    }
+    return { userId, userName: userName || null };
+  }
+
   settingsRouter.get("/allowed-ips", async (req: Request, res: Response) => {
     try {
+      await ensureAllowedIpUserColumns(pool);
       const allowedIps = await allowedIpsRepository.findAll();
       res.json(allowedIps);
     } catch (error: any) {
@@ -308,7 +310,9 @@ export function registerSettingsRoutes(app: Express) {
 
   settingsRouter.post("/allowed-ips", async (req: Request, res: Response) => {
     try {
+      await ensureAllowedIpUserColumns(pool);
       const data = insertAllowedIpSchema.parse(req.body);
+      const { userId, userName } = await resolveAllowedIpUserFields(req.body);
       const ipCidr = data.ip_cidr?.trim();
       if (!ipCidr || !isValidIpOrCidr(ipCidr)) {
         return res.status(400).json({ error: "Enter a valid IP address or CIDR block (e.g. 203.0.113.5 or 192.168.1.0/24)." });
@@ -317,7 +321,12 @@ export function registerSettingsRoutes(app: Express) {
       if (existing) {
         return res.status(409).json({ error: "This IP/CIDR is already in the allowed list." });
       }
-      const allowedIp = await allowedIpsRepository.create({ ...data, ip_cidr: ipCidr });
+      const allowedIp = await allowedIpsRepository.create({
+        ...data,
+        ip_cidr: ipCidr,
+        userId,
+        userName,
+      });
       await ActivityLogService.log({
         userId: req.user?.userId,
         action: "allowed_ip.create",
@@ -334,7 +343,12 @@ export function registerSettingsRoutes(app: Express) {
 
   settingsRouter.patch("/allowed-ips/:id", async (req: Request, res: Response) => {
     try {
+      await ensureAllowedIpUserColumns(pool);
       const data = insertAllowedIpSchema.partial().parse(req.body);
+      const userFields =
+        "user_id" in req.body || "userId" in req.body || "user_name" in req.body || "userName" in req.body
+          ? await resolveAllowedIpUserFields(req.body)
+          : null;
       if (data.ip_cidr !== undefined) {
         const ipCidr = data.ip_cidr?.trim();
         if (!ipCidr || !isValidIpOrCidr(ipCidr)) {
@@ -348,6 +362,7 @@ export function registerSettingsRoutes(app: Express) {
       }
       const allowedIp = await allowedIpsRepository.update(req.params.id, {
         ...data,
+        ...(userFields ? { userId: userFields.userId, userName: userFields.userName } : {}),
         updatedAt: new Date(),
       } as any);
       if (!allowedIp) {

@@ -1,5 +1,7 @@
 import type { Express } from "express";
 import { authMiddleware } from "../middleware/auth.middleware";
+import { pool } from "../db";
+import { handleDrmSystemBotMessage } from "../services/drm-system-bot.service";
 
 export function registerBotRoutes(app: Express) {
     // Auth is enforced globally
@@ -46,25 +48,24 @@ export function registerBotRoutes(app: Express) {
         }
     });
 
-    // POST /api/bot/send-message - Send message to bot
+    // POST /api/bot/send-message - DRM system bot (legacy command parser)
     app.post("/api/bot/send-message", async (req, res) => {
         try {
             if (!req.user) {
                 return res.status(401).json({ error: "Not authenticated" });
             }
 
-            const { message } = req.body;
-
-            // For now, just log and return success
-            // In production, you'd process the message and return a bot response
-            console.log("[Bot Message]", {
+            const message = typeof req.body?.message === "string" ? req.body.message : "";
+            const { response, format } = await handleDrmSystemBotMessage(
+                pool,
                 message,
-                userId: req.user.userId,
-            });
+                (req.user as { userId?: string }).userId,
+            );
 
             res.json({
                 success: true,
-                response: "Message received. How can I help you?"
+                response,
+                format: format || "text",
             });
         } catch (error) {
             console.error("Error sending bot message:", error);

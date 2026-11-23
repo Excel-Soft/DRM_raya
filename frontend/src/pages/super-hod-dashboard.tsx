@@ -497,6 +497,59 @@ interface ImportantStats {
         delay: number;
         free: number;
     };
+    topSelling?: {
+        totalProjects: number;
+        free: number;
+        verification: number;
+        dataPending: number;
+    };
+}
+
+function QuickApprovalsPagination({
+    page,
+    setPage,
+    total,
+    pageSize,
+}: {
+    page: number;
+    setPage: (value: number | ((prev: number) => number)) => void;
+    total: number;
+    pageSize: number;
+}) {
+    if (total === 0) return null;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const currentPage = Math.min(page, totalPages);
+    const from = (currentPage - 1) * pageSize + 1;
+    const to = Math.min(currentPage * pageSize, total);
+
+    return (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 px-2 text-sm text-slate-500">
+            <div>
+                Showing {from} to {to} of {total} entries
+            </div>
+            <div className="flex gap-2">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage <= 1}
+                >
+                    Previous
+                </Button>
+                <span className="flex items-center px-2 font-medium text-slate-600 dark:text-zinc-400">
+                    Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages}
+                >
+                    Next
+                </Button>
+            </div>
+        </div>
+    );
 }
 
 export default function SuperHODDashboard() {
@@ -585,6 +638,11 @@ export default function SuperHODDashboard() {
 
     const [waitingPage, setWaitingPage] = useState(1);
     const [gmPage, setGmPage] = useState(1);
+    const [quotationPage, setQuotationPage] = useState(1);
+    const [leavePage, setLeavePage] = useState(1);
+    const [updatePage, setUpdatePage] = useState(1);
+    const [withdrawPage, setWithdrawPage] = useState(1);
+    const [quickApprovalsTab, setQuickApprovalsTab] = useState("gm-approval");
     const ITEMS_PER_PAGE = 10;
 
     const [topSellingFilter, setTopSellingFilter] = useState("LD");
@@ -622,14 +680,10 @@ export default function SuperHODDashboard() {
         }
     });
 
-    // The server's date-range logic only distinguishes "LD" (30 days) from
-    // everything else (7 days) — there's no separate TD/MO behavior, so both
-    // map onto the 7-day bucket and only "MO" reaches the 30-day one.
-    const projectDeadlineServerFilter = projectDeadlineFilter === "MO" ? "LD" : "WK";
     const { data: projectDeadlines, isLoading: deadlinesLoading, isError: deadlinesError, error: e4 } = useQuery<ProjectDeadline[]>({
-        queryKey: ["/api/hod/dashboard/project-deadlines", projectDeadlineServerFilter],
+        queryKey: ["/api/hod/dashboard/project-deadlines", projectDeadlineFilter],
         queryFn: async () => {
-            const res = await apiRequest("GET", `/api/hod/dashboard/project-deadlines?filter=${projectDeadlineServerFilter}`);
+            const res = await apiRequest("GET", `/api/hod/dashboard/project-deadlines?filter=${projectDeadlineFilter}`);
             const json = await res.json();
             if (!res.ok) throw new Error(json.message || "Failed to load project deadlines");
             return json.data || [];
@@ -868,10 +922,10 @@ export default function SuperHODDashboard() {
                             </div>
                             <div className="grid grid-cols-4 gap-4">
                                 {[
-                                    { title: "Total Project", value: importantStats?.activities?.totalProjects || 0, icon: Users, color: "emerald" },
-                                    { title: "Verification", value: importantStats?.qaVerification || 0, icon: TrendingUp, color: "emerald" },
-                                    { title: "Data Pending", value: importantStats?.pending || 0, icon: Filter, color: "emerald" },
-                                    { title: "Free", value: importantStats?.activities?.free || 0, icon: Target, color: "emerald" },
+                                    { title: "Total Project", value: importantStats?.topSelling?.totalProjects ?? importantStats?.activities?.totalProjects ?? 0, icon: Users, color: "emerald" },
+                                    { title: "Verification", value: importantStats?.topSelling?.verification ?? 0, icon: TrendingUp, color: "emerald" },
+                                    { title: "Data Pending", value: importantStats?.topSelling?.dataPending ?? 0, icon: Filter, color: "emerald" },
+                                    { title: "Free", value: importantStats?.topSelling?.free ?? 0, icon: Target, color: "emerald" },
                                 ].map((stat, idx) => (
                                     <Card key={idx} className="border-none shadow-sm overflow-hidden hover:shadow-md transition-shadow cursor-pointer group">
                                         <CardContent className="p-0">
@@ -899,7 +953,19 @@ export default function SuperHODDashboard() {
                         <motion.div variants={itemVariants} id="verification-of-project">
                             <Card className="border-none shadow-sm overflow-hidden">
                                 <CardHeader className="pb-0 pt-4 px-6 bg-white dark:bg-zinc-900">
-                                    <Tabs defaultValue="gm-approval" className="w-full">
+                                    <Tabs
+                                        value={quickApprovalsTab}
+                                        onValueChange={(tab) => {
+                                            setQuickApprovalsTab(tab);
+                                            setQuotationPage(1);
+                                            setLeavePage(1);
+                                            setGmPage(1);
+                                            setUpdatePage(1);
+                                            setWithdrawPage(1);
+                                            setWaitingPage(1);
+                                        }}
+                                        className="w-full"
+                                    >
                                         <div className="flex items-center justify-between mb-4">
                                             <CardTitle className="text-base font-bold text-slate-800 dark:text-zinc-100">Hod Quick Approvals</CardTitle>
                                             <TabsList className="bg-transparent h-auto p-0 gap-4">
@@ -931,9 +997,17 @@ export default function SuperHODDashboard() {
                                                     <TableBody>
                                                         {pendingQuotations?.length === 0 ? (
                                                             <TableRow><TableCell colSpan={6} className="text-center py-12 text-slate-400 font-medium">No pending quotations</TableCell></TableRow>
-                                                        ) : (pendingQuotations || []).map((row, i) => (
+                                                        ) : (() => {
+                                                            const data = pendingQuotations || [];
+                                                            const totalPages = Math.max(1, Math.ceil(data.length / ITEMS_PER_PAGE));
+                                                            const currentPage = Math.min(quotationPage, totalPages);
+                                                            const paginated = data.slice(
+                                                                (currentPage - 1) * ITEMS_PER_PAGE,
+                                                                currentPage * ITEMS_PER_PAGE,
+                                                            );
+                                                            return paginated.map((row, i) => (
                                                             <TableRow key={row.id} className="bg-white border-b border-slate-100 hover:bg-slate-50 transition-colors dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                                                <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{i + 1}</TableCell>
+                                                                <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{(currentPage - 1) * ITEMS_PER_PAGE + i + 1}</TableCell>
                                                                 <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.company}</TableCell>
                                                                 <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.createdBy}</TableCell>
                                                                 <TableCell><Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-600 border-amber-100 uppercase">Pending</Badge></TableCell>
@@ -960,9 +1034,16 @@ export default function SuperHODDashboard() {
                                                                     </div>
                                                                 </TableCell>
                                                             </TableRow>
-                                                        ))}
+                                                            ));
+                                                        })()}
                                                     </TableBody>
                                                 </Table>
+                                                <QuickApprovalsPagination
+                                                    page={quotationPage}
+                                                    setPage={setQuotationPage}
+                                                    total={pendingQuotations?.length || 0}
+                                                    pageSize={ITEMS_PER_PAGE}
+                                                />
                                             </TabsContent>
 
                                             <TabsContent value="waiting" className="m-0">
@@ -988,19 +1069,12 @@ export default function SuperHODDashboard() {
                                                     </TableBody>
                                                 </Table>
                                                 
-                                                {/* Pagination for Waiting */}
-                                                {waitingProjects && waitingProjects.length > ITEMS_PER_PAGE && (
-                                                    <div className="flex items-center justify-between pt-4 px-2 text-sm text-slate-500">
-                                                        <div>
-                                                            Showing {(waitingPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(waitingPage * ITEMS_PER_PAGE, waitingProjects.length)} of {waitingProjects.length} entries
-                                                        </div>
-                                                        <div className="flex gap-2">
-                                                            <Button variant="outline" size="sm" onClick={() => setWaitingPage(p => Math.max(1, p - 1))} disabled={waitingPage === 1}>Prev</Button>
-                                                            <div className="flex items-center px-2 font-medium">Page {waitingPage} of {Math.ceil(waitingProjects.length / ITEMS_PER_PAGE)}</div>
-                                                            <Button variant="outline" size="sm" onClick={() => setWaitingPage(p => Math.min(Math.ceil(waitingProjects.length / ITEMS_PER_PAGE), p + 1))} disabled={waitingPage === Math.ceil(waitingProjects.length / ITEMS_PER_PAGE)}>Next</Button>
-                                                        </div>
-                                                    </div>
-                                                )}
+                                                <QuickApprovalsPagination
+                                                    page={waitingPage}
+                                                    setPage={setWaitingPage}
+                                                    total={waitingProjects?.length || 0}
+                                                    pageSize={ITEMS_PER_PAGE}
+                                                />
                                             </TabsContent>
 
                                             <TabsContent value="leave-form" className="m-0">
@@ -1009,11 +1083,21 @@ export default function SuperHODDashboard() {
                                                     <TableBody>
                                                         {leaveRequests?.length === 0 ? (
                                                             <TableRow><TableCell colSpan={5} className="text-center py-12 text-slate-400 font-medium">No leave requests</TableCell></TableRow>
-                                                        ) : leaveRequests?.map((row, i) => (
+                                                        ) : (() => {
+                                                            const data = leaveRequests || [];
+                                                            const totalPages = Math.max(1, Math.ceil(data.length / ITEMS_PER_PAGE));
+                                                            const currentPage = Math.min(leavePage, totalPages);
+                                                            const paginated = data.slice(
+                                                                (currentPage - 1) * ITEMS_PER_PAGE,
+                                                                currentPage * ITEMS_PER_PAGE,
+                                                            );
+                                                            return paginated.map((row, i) => (
                                                             <TableRow key={row.id} className="bg-white border-b border-slate-100 hover:bg-slate-50 transition-colors dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                                                <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{i + 1}</TableCell>
-                                                                <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.userName}</TableCell>
-                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.type}</TableCell>
+                                                                <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{(currentPage - 1) * ITEMS_PER_PAGE + i + 1}</TableCell>
+                                                                <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">
+                                                                    {row.userName || row.userEmail || "—"}
+                                                                </TableCell>
+                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.leaveType || row.type || "—"}</TableCell>
                                                                 <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{new Date(row.fromDate).toLocaleDateString()} - {new Date(row.toDate).toLocaleDateString()}</TableCell>
                                                                 <TableCell className="text-right">
                                                                     <Badge className={cn(
@@ -1024,9 +1108,16 @@ export default function SuperHODDashboard() {
                                                                     )}>{(row.status || "Pending").toUpperCase()}</Badge>
                                                                 </TableCell>
                                                             </TableRow>
-                                                        ))}
+                                                            ));
+                                                        })()}
                                                     </TableBody>
                                                 </Table>
+                                                <QuickApprovalsPagination
+                                                    page={leavePage}
+                                                    setPage={setLeavePage}
+                                                    total={leaveRequests?.length || 0}
+                                                    pageSize={ITEMS_PER_PAGE}
+                                                />
                                             </TabsContent>
 
                                             <TabsContent value="gm-approval" className="m-0">
@@ -1094,19 +1185,12 @@ export default function SuperHODDashboard() {
                                                     </Table>
                                                 </div>
 
-                                                {/* Pagination for GM Approval */}
-                                                {gmApprovals && gmApprovals.length > ITEMS_PER_PAGE && (
-                                                    <div className="flex items-center justify-between pt-4 px-2 text-sm text-slate-500">
-                                                        <div>
-                                                            Showing {(gmPage - 1) * ITEMS_PER_PAGE + 1} to {Math.min(gmPage * ITEMS_PER_PAGE, gmApprovals.length)} of {gmApprovals.length} entries
-                                                        </div>
-                                                        <div className="flex gap-2">
-                                                            <Button variant="outline" size="sm" onClick={() => setGmPage(p => Math.max(1, p - 1))} disabled={gmPage === 1}>Prev</Button>
-                                                            <div className="flex items-center px-2 font-medium">Page {gmPage} of {Math.ceil(gmApprovals.length / ITEMS_PER_PAGE)}</div>
-                                                            <Button variant="outline" size="sm" onClick={() => setGmPage(p => Math.min(Math.ceil(gmApprovals.length / ITEMS_PER_PAGE), p + 1))} disabled={gmPage === Math.ceil(gmApprovals.length / ITEMS_PER_PAGE)}>Next</Button>
-                                                        </div>
-                                                    </div>
-                                                )}
+                                                <QuickApprovalsPagination
+                                                    page={gmPage}
+                                                    setPage={setGmPage}
+                                                    total={gmApprovals?.length || 0}
+                                                    pageSize={ITEMS_PER_PAGE}
+                                                />
                                             </TabsContent>
 
                                             <TabsContent value="update-request" className="m-0">
@@ -1122,9 +1206,17 @@ export default function SuperHODDashboard() {
                                                         <TableBody>
                                                             {updateRequests?.length === 0 ? (
                                                                 <TableRow><TableCell colSpan={16} className="text-center py-12 text-slate-400 font-medium">No update requests</TableCell></TableRow>
-                                                            ) : updateRequests?.map((row, idx) => (
+                                                            ) : (() => {
+                                                                const data = updateRequests || [];
+                                                                const totalPages = Math.max(1, Math.ceil(data.length / ITEMS_PER_PAGE));
+                                                                const currentPage = Math.min(updatePage, totalPages);
+                                                                const paginated = data.slice(
+                                                                    (currentPage - 1) * ITEMS_PER_PAGE,
+                                                                    currentPage * ITEMS_PER_PAGE,
+                                                                );
+                                                                return paginated.map((row, idx) => (
                                                                 <TableRow key={row.id} className="bg-white border-b border-slate-100 hover:bg-slate-50 transition-colors dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                                                    <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{idx + 1}</TableCell>
+                                                                    <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{(currentPage - 1) * ITEMS_PER_PAGE + idx + 1}</TableCell>
                                                                     <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.drmId}</TableCell>
                                                                     <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.companyName}</TableCell>
                                                                     <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.salePerson}</TableCell>
@@ -1160,10 +1252,17 @@ export default function SuperHODDashboard() {
                                                                         </Button>
                                                                     </TableCell>
                                                                 </TableRow>
-                                                            ))}
+                                                                ));
+                                                            })()}
                                                         </TableBody>
                                                     </Table>
                                                 </div>
+                                                <QuickApprovalsPagination
+                                                    page={updatePage}
+                                                    setPage={setUpdatePage}
+                                                    total={updateRequests?.length || 0}
+                                                    pageSize={ITEMS_PER_PAGE}
+                                                />
                                             </TabsContent>
 
                                             <TabsContent value="withdraw-request" className="m-0">
@@ -1179,9 +1278,17 @@ export default function SuperHODDashboard() {
                                                         <TableBody>
                                                             {withdrawalRequests.length === 0 ? (
                                                                 <TableRow><TableCell colSpan={8} className="text-center py-12 text-slate-400 font-medium">No withdrawal requests</TableCell></TableRow>
-                                                            ) : withdrawalRequests.map((row, idx) => (
+                                                            ) : (() => {
+                                                                const data = withdrawalRequests || [];
+                                                                const totalPages = Math.max(1, Math.ceil(data.length / ITEMS_PER_PAGE));
+                                                                const currentPage = Math.min(withdrawPage, totalPages);
+                                                                const paginated = data.slice(
+                                                                    (currentPage - 1) * ITEMS_PER_PAGE,
+                                                                    currentPage * ITEMS_PER_PAGE,
+                                                                );
+                                                                return paginated.map((row, idx) => (
                                                                 <TableRow key={row.id} className="bg-white border-b border-slate-100 hover:bg-slate-50 transition-colors dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                                                    <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{idx + 1}</TableCell>
+                                                                    <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{(currentPage - 1) * ITEMS_PER_PAGE + idx + 1}</TableCell>
                                                                     <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.drm_id}</TableCell>
                                                                     <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.company_name}</TableCell>
                                                                     <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.member_id}</TableCell>
@@ -1212,10 +1319,17 @@ export default function SuperHODDashboard() {
                                                                         </div>
                                                                     </TableCell>
                                                                 </TableRow>
-                                                            ))}
+                                                                ));
+                                                            })()}
                                                         </TableBody>
                                                     </Table>
                                                 </div>
+                                                <QuickApprovalsPagination
+                                                    page={withdrawPage}
+                                                    setPage={setWithdrawPage}
+                                                    total={withdrawalRequests.length}
+                                                    pageSize={ITEMS_PER_PAGE}
+                                                />
                                             </TabsContent>
                                         </div>
                                     </Tabs>
@@ -1247,7 +1361,9 @@ export default function SuperHODDashboard() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {dailyReport?.length === 0 ? (
+                                        {dailyLoading ? (
+                                            <TableRow><TableCell colSpan={7} className="text-center py-12 text-slate-400 font-medium">Loading…</TableCell></TableRow>
+                                        ) : !dailyReport?.length ? (
                                             <TableRow><TableCell colSpan={7} className="text-center py-12 text-slate-400 font-medium">No reports today</TableCell></TableRow>
                                         ) : dailyReport?.map((row) => (
                                             <TableRow key={row.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
@@ -1302,7 +1418,9 @@ export default function SuperHODDashboard() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {projectDeadlines?.length === 0 ? (
+                                        {deadlinesLoading ? (
+                                            <TableRow><TableCell colSpan={5} className="text-center py-12 text-slate-400 font-medium">Loading…</TableCell></TableRow>
+                                        ) : !projectDeadlines?.length ? (
                                             <TableRow><TableCell colSpan={5} className="text-center py-12 text-slate-400 font-medium">No deadlines found</TableCell></TableRow>
                                         ) : projectDeadlines?.map((row) => (
                                             <TableRow key={row.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
@@ -1380,19 +1498,19 @@ export default function SuperHODDashboard() {
                                     { label: "Leave Application", value: importantStats?.leaveApplication || 0, nav: "/leave-management", hasArrow: true },
                                     { label: "Loan Application", value: 0, nav: "/hr/loan", hasArrow: true },
                                     { label: "Add Penalty", value: 0, nav: "/drm/add-penalty", hasArrow: true },
-                                    { label: "Sale & Service Report", value: 0, nav: "/reports", hasArrow: true },
-                                    { label: "Update Sale And Service", value: 0, nav: "/reports", hasArrow: true },
-                                    { label: "Annual Leaves Reports", value: 0, nav: "/reports", hasArrow: true },
+                                    { label: "Sale & Service Report", value: 0, nav: "/reports/sale-service", hasArrow: true },
+                                    { label: "Update Sale And Service", value: 0, nav: "/reports/sale-service/update", hasArrow: true },
+                                    { label: "Annual Leaves Reports", value: 0, nav: "/hr/leave-request", hasArrow: true },
                                     { label: "Ab Closing Report", value: 0, nav: "/account/ab-report", hasArrow: true },
                                     { label: "In Progress", value: importantStats?.inProgress || 0, nav: "/projects?status=in-progress" },
                                     { label: "Pending", value: importantStats?.pending || 0, nav: "/projects?status=pending" },
                                     { label: "Dep Verification", value: importantStats?.depVerification || 0, nav: "scroll:verification-of-project", hasArrow: true },
-                                    { label: "Activet Team", value: importantStats?.activeTeam || 0, nav: "/users" },
+                                    { label: "Activet Team", value: importantStats?.activeTeam || 0, nav: "/drm/users/list" },
                                     { label: "Late Coming", value: 0, nav: "/drm/late-coming", hasArrow: true },
                                     { label: "Commission Verification", value: 0, nav: "/drm/commission-verification", hasArrow: true },
                                     { label: "Increment", value: 0, nav: "/drm/increment", hasArrow: true },
-                                    { label: "Roles Details", value: 0, nav: "/users", hasArrow: true },
-                                    { label: "Daily Added GM Report", value: 0, nav: "/reports", hasArrow: true },
+                                    { label: "Roles Details", value: 0, nav: "/drm/users/list", hasArrow: true },
+                                    { label: "Daily Added GM Report", value: 0, nav: "/daily-reports/added-gm", hasArrow: true },
                                 ].map((stat, rowIndex) => (
                                     <div
                                       key={rowIndex}
@@ -1423,7 +1541,9 @@ export default function SuperHODDashboard() {
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="TD">TD</SelectItem>
+                                        <SelectItem value="LD">LD</SelectItem>
                                         <SelectItem value="WK">WK</SelectItem>
+                                        <SelectItem value="MH">MH</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -1443,7 +1563,12 @@ export default function SuperHODDashboard() {
                                         <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden dark:bg-zinc-900">
                                             <div
                                                 className={cn("h-full rounded-full transition-all duration-1000", activity.color)}
-                                                style={{ width: `${(activity.value / (activitiesStats?.activities?.totalProjects || 1)) * 100}%` }}
+                                                style={{
+                                                    width: `${Math.min(
+                                                        100,
+                                                        (activity.value / Math.max(activitiesStats?.activities?.totalProjects || 1, 1)) * 100,
+                                                    )}%`,
+                                                }}
                                             />
                                         </div>
                                     </div>

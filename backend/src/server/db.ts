@@ -179,7 +179,7 @@ export const pool = new Pool({
   // held against Supabase's session-mode limit, only how long an already-
   // acquired connection is kept warm before being released.
   idleTimeoutMillis: 60000,
-  max: 4,                    // Supabase session mode limit is 15; keep low to allow multiple processes
+  max: Number(process.env.PG_POOL_MAX || 12),
   allowExitOnIdle: true,
   keepAlive: true,
   ssl: (() => {

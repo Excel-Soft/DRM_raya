@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { isManagerialRole, normalizeRole } from "../utils/role-utils";
+import { shouldSoftFailDashboard } from "../utils/safe-dashboard-fallback";
 import { ROLES } from "../../shared/roles";
 import { pool, isDbAvailable, isNetworkOrDnsError, markDbUnavailable } from "../db";
 import { authMiddleware } from "../middleware/auth.middleware";
@@ -336,11 +337,11 @@ export class DashboardController {
           from drm.gm_entries
           where coalesce(is_deleted,false)=false
             and (
-              lower(status) = 'approved'
-              or lower(final_status) = 'approved'
-              or lower(payment_status) = 'approved'
-              or lower(coalesce(approval_status,'')) in ('approved', 'approved_by_account')
-              or lower(coalesce(hod_status,'')) = 'approved'
+              lower(status::text) = 'approved'
+              or lower(final_status::text) = 'approved'
+              or lower(coalesce(payment_status::text, '')) = 'approved'
+              or lower(coalesce(approval_status::text, '')) in ('approved', 'approved_by_account')
+              or lower(coalesce(hod_status::text, '')) = 'approved'
             )
             and created_at between $1 and $2
             ${gmFilter}
@@ -578,10 +579,22 @@ export class DashboardController {
   static async getActivities(req: Request, res: Response) {
     try {
       if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });
-      const data = await computeActivityRows(req, SALES_SERVICE_ROLES);
+      const activeRole = String(
+        (req.user as any).activeRoleId || req.user.roleId || "",
+      ).toLowerCase();
+      let roleList = [...SALES_SERVICE_ROLES];
+      if (activeRole.includes("product_posting") || activeRole.includes("posting_executive")) {
+        roleList = [ROLES.PRODUCT_POSTING_EXECUTIVE, ROLES.PRODUCT_POSTING_MANAGER];
+      } else if (activeRole.includes("seo_smm")) {
+        roleList = [ROLES.SEO_SMM_EXECUTIVE, ROLES.SEO_SMM_MANAGER];
+      }
+      const data = await computeActivityRows(req, roleList);
       res.json({ success: true, data });
     } catch (err) {
       console.error("Error fetching dashboard activities", err);
+      if (shouldSoftFailDashboard(err, "getActivities")) {
+        return res.json({ success: true, data: [] });
+      }
       if (isDbUnavailableError(err)) return respondDbUnavailable(res, []);
       res.status(500).json({ success: false, message: "Failed to fetch activities" });
     }
@@ -658,7 +671,7 @@ export class DashboardController {
                  m.start_time as starts_at,
                  m.end_time as ends_at,
                  'N/A' as location,
-                 m.notes as notes,
+                 coalesce(m.person_name, '') as notes,
                  m.user_id,
                  coalesce(u.full_name, u.name, u.username) as user_name,
                  u.email
@@ -794,7 +807,7 @@ export class DashboardController {
           select u.id::text as user_id,
                  coalesce(u.full_name, u.name, u.username) as name,
                  count(distinct op.id)::int as total_ops,
-                 coalesce(sum(case when (lower(g.status) = 'approved' or lower(g.final_status) = 'approved' or lower(g.payment_status) = 'approved') then g.amount_usd else 0 end), 0)::float as achieved_value,
+                 coalesce(sum(case when (lower(g.status::text) = 'approved' or lower(g.final_status::text) = 'approved' or lower(coalesce(g.payment_status::text, '')) = 'approved') then g.amount_usd else 0 end), 0)::float as achieved_value,
                  count(distinct op.id) filter (where op.stage = 'GM')::int as gm_count,
                  count(distinct op.id) filter (where op.stage = 'BV')::int as bv_count
             from drm.users u
@@ -1582,7 +1595,7 @@ export async function computeActivityRows(req: Request, roleList: string[]) {
     `
       select ap.assigned_to::text as user_id,
              count(*)::int as appointments,
-             coalesce(sum(extract(epoch from (ap.ends_at - ap.starts_at)) / 60),0)::float as total_minutes
+             coalesce(sum(extract(epoch from (coalesce(ap.ends_at, ap.starts_at) - ap.starts_at)) / 60),0)::float as total_minutes
         from drm.appointments ap
        where coalesce(ap.is_deleted,false)=false
          and ap.starts_at between $1 and $2
@@ -1699,7 +1712,11 @@ export async function computeActivityRows(req: Request, roleList: string[]) {
       );
       displayUsers = uRes.rows;
   } else {
-      const uRes = await pool.query(`SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = $1::uuid AND role = ANY($2::text[])`, [userId, roleList]);
+      const uRes = await pool.query(
+        `SELECT id::text as user_id, coalesce(full_name, name, username) as name, coalesce(role, role_id) as role, under_works
+           FROM drm.users WHERE id = $1::uuid`,
+        [userId],
+      );
       displayUsers = uRes.rows;
   }
 
@@ -1729,9 +1746,9 @@ export async function computeActivityRows(req: Request, roleList: string[]) {
     const taskTimeQuery = `
       SELECT
         ttl.user_id::text as user_id,
-        COALESCE(SUM(ttl.time_spent_minutes), 0)::float as total_minutes
+        COALESCE(SUM(ttl.duration_minutes), 0)::float as total_minutes
       FROM drm.task_time_logs ttl
-      WHERE ttl.log_date BETWEEN $1 AND $2
+      WHERE ttl.start_at BETWEEN $1 AND $2
         ${taskTimeFilter}
       GROUP BY ttl.user_id
     `;
@@ -1781,6 +1798,67 @@ export async function computeActivityRows(req: Request, roleList: string[]) {
     console.error("Failed to fetch product posting evidence links for dashboard activities", err);
   }
 
+  const rolePrettyNameMap: Record<string, string> = {
+    sales_executive: "sales executive",
+    service_executive: "service executive",
+    product_posting_executive: "product posting executive",
+    posting_executive: "product posting executive",
+    dd_executive: "dd executive",
+    software_executive: "software executive",
+  };
+
+  const applyAssignedTargets = (userTargets: Record<string, any>, assignedRows: { target_name?: string; target?: string | number }[]) => {
+    assignedRows.forEach((t) => {
+      const normMethod = (t.target_name || "").toLowerCase().replace(/[^a-z0-9]/g, "_");
+      const targetVal = Number(t.target) || 0;
+      if (normMethod.includes("mobile")) userTargets.mobile = (userTargets.mobile || 0) + targetVal;
+      if (normMethod.includes("whatsapp")) userTargets.whatsapp = (userTargets.whatsapp || 0) + targetVal;
+      if (normMethod.includes("wh_call")) userTargets.whCall = (userTargets.whCall || 0) + targetVal;
+      if (normMethod.includes("in_meeting")) userTargets.inMeeting = (userTargets.inMeeting || 0) + targetVal;
+      if (normMethod.includes("email")) userTargets.email = (userTargets.email || 0) + targetVal;
+      if (normMethod.includes("seminar")) userTargets.seminar = (userTargets.seminar || 0) + targetVal;
+      if (normMethod.includes("webinar")) userTargets.webinar = (userTargets.webinar || 0) + targetVal;
+      if (normMethod.includes("appointment")) userTargets.appointment = (userTargets.appointment || 0) + targetVal;
+      if (normMethod.includes("copy")) userTargets.copy = (userTargets.copy || 0) + targetVal;
+      if (normMethod.includes("new")) userTargets.new = (userTargets.new || 0) + targetVal;
+      if (normMethod.includes("meeting")) {
+        if (normMethod.includes("out") || normMethod.includes("site")) userTargets.onsite = (userTargets.onsite || 0) + targetVal;
+        else userTargets.meeting = (userTargets.meeting || 0) + targetVal;
+      }
+    });
+  };
+
+  const userAssignedByKey: Record<string, { target_name?: string; target?: string | number }[]> = {};
+  try {
+    const lookupKeys = [
+      ...new Set(
+        displayUsers.flatMap((u) =>
+          [u.user_id, u.name, String(u.role || "").toLowerCase().replace(/\s+/g, "_")].filter(Boolean),
+        ),
+      ),
+    ];
+    if (lookupKeys.length) {
+      const userAssignedRes = await pool.query(
+        `SELECT user_id, target_name, target
+           FROM drm.target_system_user_targets
+          WHERE user_id = ANY($1::text[])`,
+        [lookupKeys],
+      );
+      for (const uRow of displayUsers) {
+        const roleSlug = String(uRow.role || "").toLowerCase().replace(/\s+/g, "_");
+        const matches = userAssignedRes.rows.filter(
+          (t) =>
+            t.user_id === uRow.user_id ||
+            t.user_id === uRow.name ||
+            String(t.user_id || "").toLowerCase().replace(/\s+/g, "_") === roleSlug,
+        );
+        userAssignedByKey[uRow.user_id] = matches;
+      }
+    }
+  } catch (err) {
+    console.error("Failed to fetch per-user activity targets for dashboard", err);
+  }
+
   const rows = displayUsers.map((uRow) => {
     const key = uRow.user_id;
     const row = activityMap[key] || {};
@@ -1792,10 +1870,18 @@ export async function computeActivityRows(req: Request, roleList: string[]) {
     // Clone default targets for this user
     const userTargets = { ...defaultTargets };
 
+    const roleSlug = String(uRow.role || "").toLowerCase().replace(/\s+/g, "_");
+    const userRole = roleSlug.replace(/_/g, " ");
+    const rolePretty = (rolePrettyNameMap[roleSlug] || userRole).toLowerCase();
+
+    applyAssignedTargets(userTargets, userAssignedByKey[key] || []);
+
     // Override with role-specific dynamic targets if available
-    const userRole = (uRow.role || "").toLowerCase().replace(/_/g, ' ');
-    if (userRole && allDailyTargets.length > 0) {
-        const roleTargets = allDailyTargets.filter(t => (t.role || "").toLowerCase() === userRole);
+    if (allDailyTargets.length > 0) {
+        const roleTargets = allDailyTargets.filter((t) => {
+          const tr = String(t.role || "").toLowerCase();
+          return tr === userRole || tr === roleSlug || tr === rolePretty || tr.replace(/\s+/g, "_") === roleSlug;
+        });
         roleTargets.forEach(t => {
             const normMethod = (t.method || "").toLowerCase().replace(/[^a-z0-9]/g, '_');
             const targetVal = Number(t.target) || 0;

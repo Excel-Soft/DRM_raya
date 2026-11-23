@@ -1,6 +1,7 @@
-import { db } from "../db";
+import { db, pool } from "../db";
 import { allowedIps, users, type AllowedIp, type InsertAllowedIp } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
+import { ensureAllowedIpUserColumns } from "../utils/allowed-ips-user-columns";
 
 export type AllowedIpWithCreator = AllowedIp & {
   createdBy?: typeof users.$inferSelect;
@@ -26,11 +27,51 @@ export class AllowedIpsRepository {
     return allowedIp;
   }
 
-  async findAll(): Promise<AllowedIp[]> {
-    return await db
-      .select()
+  async findAll(): Promise<
+    (AllowedIp & {
+      user_id?: string | null;
+      user_name?: string | null;
+      user_display?: string | null;
+    })[]
+  > {
+    await ensureAllowedIpUserColumns(pool);
+    const rows = await db
+      .select({
+        id: allowedIps.id,
+        ip_cidr: allowedIps.ip_cidr,
+        description: allowedIps.description,
+        is_active: allowedIps.is_active,
+        createdAt: allowedIps.createdAt,
+        updatedAt: allowedIps.updatedAt,
+        userId: allowedIps.userId,
+        userName: allowedIps.userName,
+        linkedUserName: users.fullName,
+        linkedUserNameAlt: users.name,
+      })
       .from(allowedIps)
+      .leftJoin(users, eq(allowedIps.userId, users.id))
       .orderBy(desc(allowedIps.createdAt));
+
+    return rows.map((r) => {
+      const display =
+        r.userName?.trim() ||
+        r.linkedUserName?.trim() ||
+        r.linkedUserNameAlt?.trim() ||
+        null;
+      return {
+        id: r.id,
+        ip_cidr: r.ip_cidr,
+        description: r.description,
+        is_active: r.is_active,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        userId: r.userId,
+        userName: r.userName,
+        user_id: r.userId,
+        user_name: display,
+        user_display: display,
+      } as AllowedIp & { user_id?: string | null; user_name?: string | null; user_display?: string | null };
+    });
   }
 
   async update(id: string, data: Partial<InsertAllowedIp>): Promise<AllowedIp | undefined> {

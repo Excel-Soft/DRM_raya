@@ -5,6 +5,162 @@ import { projects, tasks, users, taskTimeLogs } from "@shared/schema";
 import { sql, eq, and, or, gte, lte } from "drizzle-orm";
 import { normalizeRole } from "../utils/role-utils";
 import { getStatsPeriodRange } from "./pms-routes";
+import { sqlDepartmentFamilyIn } from "@shared/project-department-variants";
+
+const DND_DEPARTMENT_SQL = sqlDepartmentFamilyIn("p.department_type", "dnd");
+
+const LEGACY_DD_DEP_FILTER = `
+  trim(coalesce(qs.dep_id, '')) = '10'
+`;
+
+async function fetchDdLegacyStatusCounts(): Promise<{
+  upcoming: number;
+  inProgress: number;
+  completed: number;
+  delayProjects: number;
+  qaVerification: number;
+  depVerification: number;
+}> {
+  try {
+    const { rows } = await pool.query(`
+      WITH dd_pro AS (
+        SELECT DISTINCT trim(cp.pro_id) AS pro_id
+        FROM legacy_archive.webxl_create_project cp
+        LEFT JOIN legacy_archive.webxl_quotation_services qs ON trim(qs.name) = trim(cp.project)
+        WHERE cp.pro_id IS NOT NULL AND trim(cp.pro_id) <> ''
+          AND ${LEGACY_DD_DEP_FILTER}
+      ),
+      latest_assign AS (
+        SELECT DISTINCT ON (trim(a.pro_id))
+          trim(a.pro_id) AS pro_id,
+          lower(trim(coalesce(a.stauts, ''))) AS status,
+          trim(coalesce(a.qa_date, '')) AS qa_date,
+          trim(coalesce(a.fy_date, '')) AS fy_date,
+          trim(coalesce(a.assign_date, '')) AS assign_date,
+          trim(coalesce(a.fy_status, '')) AS fy_status
+        FROM legacy_archive.webxl_task_assign a
+        WHERE trim(a.pro_id) IN (SELECT pro_id FROM dd_pro)
+        ORDER BY trim(a.pro_id),
+          coalesce(
+            NULLIF(trim(a.last_update), '')::timestamptz,
+            NULLIF(trim(a.assign_date), '')::timestamptz,
+            now()
+          ) DESC
+      )
+      SELECT
+        count(*) FILTER (
+          WHERE status IN (
+            '', 'todo', 'blocked', 'wait', 'waiting', 'assign', 'pending', 'panding', 'new', 'stop'
+          )
+        )::int AS upcoming,
+        count(*) FILTER (
+          WHERE status LIKE '%run%'
+             OR status LIKE '%progress%'
+             OR status IN ('inprogress', 'in progress', 'start', 'started', 'working')
+        )::int AS in_progress,
+        count(*) FILTER (
+          WHERE status IN ('end', 'completed', 'done', 'finish', 'finished', 'closed')
+        )::int AS completed,
+        count(*) FILTER (
+          WHERE status = 'task overdue'
+             OR (
+               coalesce(fy_status, '') <> '1'
+               AND assign_date <> ''
+               AND status NOT IN ('end', 'completed', 'done', 'finish', 'finished', 'closed')
+             )
+        )::int AS delay_projects,
+        count(*) FILTER (
+          WHERE assign_date <> ''
+            AND qa_date = ''
+            AND coalesce(fy_status, '') <> '1'
+        )::int AS qa_verification,
+        count(*) FILTER (
+          WHERE qa_date <> ''
+            AND fy_date = ''
+            AND coalesce(fy_status, '') <> '1'
+        )::int AS dep_verification
+      FROM latest_assign
+    `);
+    const row = rows[0] || {};
+    return {
+      upcoming: Number(row.upcoming || 0),
+      inProgress: Number(row.in_progress || 0),
+      completed: Number(row.completed || 0),
+      delayProjects: Number(row.delay_projects || 0),
+      qaVerification: Number(row.qa_verification || 0),
+      depVerification: Number(row.dep_verification || 0),
+    };
+  } catch (err) {
+    console.error("D&D legacy status counts failed (non-fatal):", err);
+    return {
+      upcoming: 0,
+      inProgress: 0,
+      completed: 0,
+      delayProjects: 0,
+      qaVerification: 0,
+      depVerification: 0,
+    };
+  }
+}
+
+const DD_EXEC_ROLE_SQL = `
+  (
+    lower(trim(coalesce(u.role, ''))) IN ('dd_executive', 'developer', 'designer')
+    OR lower(trim(coalesce(u.role_id, ''))) IN ('dd_executive', 'developer', 'designer')
+    OR trim(coalesce(u.role_id, '')) ~ '(^|,)41(,|$)'
+    OR trim(coalesce(u.role_id, '')) ~ '(^|,)74(,|$)'
+  )
+`;
+
+async function fetchDdLegacyActivityPeriodCounts(
+  from?: Date,
+  to?: Date,
+): Promise<{ upcoming: number; inProgress: number; completed: number }> {
+  if (!from || !to) return fetchDdLegacyStatusCounts();
+  try {
+    const { rows } = await pool.query(
+      `
+        WITH dd_pro AS (
+          SELECT DISTINCT trim(cp.pro_id) AS pro_id
+          FROM legacy_archive.webxl_create_project cp
+          LEFT JOIN legacy_archive.webxl_quotation_services qs ON trim(qs.name) = trim(cp.project)
+          WHERE cp.pro_id IS NOT NULL AND trim(cp.pro_id) <> ''
+            AND ${LEGACY_DD_DEP_FILTER}
+        )
+        SELECT
+          count(*) FILTER (
+            WHERE lower(trim(coalesce(a.stauts, ''))) IN ('end', 'completed', 'done', 'finish', 'finished', 'closed')
+          )::int AS completed,
+          count(*) FILTER (
+            WHERE lower(trim(coalesce(a.stauts, ''))) IN (
+              '', 'todo', 'blocked', 'wait', 'waiting', 'assign', 'pending', 'panding', 'new', 'stop'
+            )
+          )::int AS upcoming,
+          count(*) FILTER (
+            WHERE lower(trim(coalesce(a.stauts, ''))) LIKE '%run%'
+               OR lower(trim(coalesce(a.stauts, ''))) LIKE '%progress%'
+               OR lower(trim(coalesce(a.stauts, ''))) IN ('inprogress', 'in progress', 'start', 'started', 'working')
+          )::int AS in_progress
+        FROM legacy_archive.webxl_task_assign a
+        WHERE trim(a.pro_id) IN (SELECT pro_id FROM dd_pro)
+          AND coalesce(
+            NULLIF(trim(a.last_update), '')::timestamptz,
+            NULLIF(trim(a.assign_date), '')::timestamptz
+          ) BETWEEN $1 AND $2
+      `,
+      [from, to],
+    );
+    const row = rows[0] || {};
+    return {
+      upcoming: Number(row.upcoming || 0),
+      inProgress: Number(row.in_progress || 0),
+      completed: Number(row.completed || 0),
+    };
+  } catch (err) {
+    console.error("D&D legacy activity period counts failed (non-fatal):", err);
+    return { upcoming: 0, inProgress: 0, completed: 0 };
+  }
+}
 
 export function registerDdManagerRoutes(app: Express) {
     app.use("/api/dd-manager", authMiddleware);
@@ -20,27 +176,41 @@ export function registerDdManagerRoutes(app: Express) {
             // projects created within that range, using the same convention as
             // /api/pms/stats (getStatsPeriodRange).
             const { from, to } = getStatsPeriodRange(req.query.period as string | undefined);
-            const params: any[] = [userId, userId];
+            const params: any[] = [];
             let dateFilterSql = "";
-            if (from) { params.push(from); dateFilterSql += ` AND p.created_at >= $${params.length}`; }
-            if (to) { params.push(to); dateFilterSql += ` AND p.created_at <= $${params.length}`; }
+            if (from) {
+              params.push(from);
+              dateFilterSql += ` AND p.created_at >= $${params.length}`;
+            }
+            if (to) {
+              params.push(to);
+              dateFilterSql += ` AND p.created_at <= $${params.length}`;
+            }
 
-            const statsResult = await pool.query(`
+            const statsResult = await pool.query(
+              `
                 SELECT
-                    COUNT(DISTINCT p.id)::int as "totalProjects",
-                    COUNT(DISTINCT t.id) FILTER (WHERE t.status = 'ToDo' OR t.status = 'Blocked')::int as "verificationTasks",
-                    COUNT(DISTINCT t.id) FILTER (WHERE t.status = 'InProgress')::int as "assignProjects",
-                    COUNT(DISTINCT p.id) FILTER (WHERE p.status = 'Completed')::int as "completedProjects"
+                    COUNT(DISTINCT p.id)::int AS "totalProjects",
+                    COUNT(DISTINCT t.id) FILTER (
+                      WHERE coalesce(t.is_deleted, false) = false
+                        AND t.status IN ('ToDo', 'Blocked')
+                    )::int AS "verificationTasks",
+                    COUNT(DISTINCT t.id) FILTER (
+                      WHERE coalesce(t.is_deleted, false) = false
+                        AND t.status = 'InProgress'
+                    )::int AS "assignProjects",
+                    COUNT(DISTINCT p.id) FILTER (WHERE p.status = 'Completed')::int AS "completedProjects",
+                    COUNT(DISTINCT p.id) FILTER (WHERE p.status = 'OnHold')::int AS "onHoldProjects"
                 FROM drm.projects p
                 LEFT JOIN drm.tasks t ON t.project_id::text = p.id::text
-                LEFT JOIN drm.product_posting_workflows wf ON wf.project_id = p.id
-                WHERE (p.owner_user_id::text = $1::text
-                   OR p.created_by::text = $2::text
-                   OR (wf.current_phase = 'DATA_VERIFY' AND p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', '10')))
-                   ${dateFilterSql}
-            `, params);
+                WHERE coalesce(p.is_deleted, false) = false
+                  AND ${DND_DEPARTMENT_SQL}
+                  ${dateFilterSql}
+            `,
+              params,
+            );
 
-
+            const legacy = await fetchDdLegacyStatusCounts();
             const stats = statsResult.rows[0];
 
             // Department-queue phase counts (Delay / QA Verification / Dep Verification).
@@ -56,7 +226,7 @@ export function registerDdManagerRoutes(app: Express) {
                 FROM drm.product_posting_workflows wf
                 INNER JOIN drm.projects p ON p.id = wf.project_id
                 LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
-                WHERE p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', '10')
+                WHERE ${DND_DEPARTMENT_SQL}
             `);
             const phaseCounts = phaseCountsResult.rows[0];
 
@@ -69,24 +239,34 @@ export function registerDdManagerRoutes(app: Express) {
                 INNER JOIN drm.users u ON u.id::text = lr.user_id::text
                 WHERE lr.status = 'Pending'
             `);
-            const ddTeamRoles = new Set(["dd_executive", "posting_executive", "product_posting_executive"]);
-            const pendingLeaves = leaveRowsResult.rows.filter((r: any) => ddTeamRoles.has(normalizeRole(r.role_id || r.role))).length;
+            const ddTeamRoles = new Set(["dd_executive", "dd_manager", "designer", "developer"]);
+            const pendingLeaves = leaveRowsResult.rows.filter((r: any) => {
+              const role = normalizeRole(r.role_id || r.role);
+              return ddTeamRoles.has(role) || role.includes("dd_");
+            }).length;
 
-            const totalProjects = stats?.totalProjects || 0;
-            const assignProject = stats?.assignProjects || 0;
-            const completedProjects = stats?.completedProjects || 0;
+            const totalProjects = Number(stats?.totalProjects || 0);
+            const assignProject =
+              Number(stats?.assignProjects || 0) + legacy.inProgress;
+            const completedProjects =
+              Number(stats?.completedProjects || 0) + legacy.completed;
+            const verification =
+              Number(stats?.verificationTasks || 0) + legacy.upcoming;
 
             res.json({
                 totalProjects,
-                verification: stats?.verificationTasks || 0,
+                verification,
                 assignProject,
                 completedProjects,
-                // Available/idle capacity: same formula as the HOD dashboard's real
-                // "free" stat (Math.max(0, total - inProgress - completed)).
                 free: Math.max(0, totalProjects - assignProject - completedProjects),
-                delayProjects: phaseCounts?.delayProjects || 0,
-                qaVerification: phaseCounts?.qaVerification || 0,
-                depVerification: phaseCounts?.depVerification || 0,
+                delayProjects:
+                  Number(phaseCounts?.delayProjects || 0) +
+                  Number(stats?.onHoldProjects || 0) +
+                  legacy.delayProjects,
+                qaVerification:
+                  Number(phaseCounts?.qaVerification || 0) + legacy.qaVerification,
+                depVerification:
+                  Number(phaseCounts?.depVerification || 0) + legacy.depVerification,
                 leaveApplication: pendingLeaves,
             });
         } catch (error) {
@@ -102,27 +282,97 @@ export function registerDdManagerRoutes(app: Express) {
             const userId = user?.userId || user?.id;
             if (!userId) return res.status(401).json({ error: "User context not found" });
 
-            const countsResult = await pool.query(`
-                SELECT
-                    count(*)::int as "totalProjects",
-                    count(*) FILTER (WHERE p.status = 'Completed')::int as complete,
-                    count(*) FILTER (WHERE p.status = 'Active')::int as pending,
-                    count(*) FILTER (WHERE p.status = 'OnHold')::int as "onHold",
-                    COALESCE(SUM(inv.amount), 0)::numeric as "totalValue"
-                FROM drm.projects p
-                LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
-                WHERE p.owner_user_id::text = $1::text OR p.created_by::text = $2::text
-            `, [userId, userId]);
-            const counts = countsResult.rows[0];
+            const period = String(req.query.period || "MN").toUpperCase();
+            const { from, to } = getStatsPeriodRange(period);
+
+            let complete = 0;
+            let pending = 0;
+            let free = 0;
+            let total = 0;
+            let totalValue = 0;
+
+            if (from && to) {
+              const taskStats = await pool.query(
+                `
+                  SELECT
+                    COUNT(DISTINCT t.id) FILTER (
+                      WHERE coalesce(t.updated_at, t.created_at) BETWEEN $1 AND $2
+                    )::int AS touched,
+                    COUNT(DISTINCT t.id) FILTER (
+                      WHERE t.status = 'Completed'
+                        AND coalesce(t.updated_at, t.created_at) BETWEEN $1 AND $2
+                    )::int AS complete,
+                    COUNT(DISTINCT t.id) FILTER (
+                      WHERE t.status IN ('ToDo', 'Blocked')
+                        AND coalesce(t.updated_at, t.created_at) BETWEEN $1 AND $2
+                    )::int AS pending,
+                    COUNT(DISTINCT t.id) FILTER (
+                      WHERE t.status = 'InProgress'
+                        AND coalesce(t.updated_at, t.created_at) BETWEEN $1 AND $2
+                    )::int AS running
+                  FROM drm.tasks t
+                  INNER JOIN drm.projects p ON p.id::text = t.project_id::text
+                  WHERE coalesce(t.is_deleted, false) = false
+                    AND coalesce(p.is_deleted, false) = false
+                    AND ${DND_DEPARTMENT_SQL}
+                `,
+                [from, to],
+              );
+              const ts = taskStats.rows[0] || {};
+              const legacy = await fetchDdLegacyActivityPeriodCounts(from, to);
+
+              complete = Number(ts.complete || 0) + legacy.completed;
+              pending =
+                Number(ts.pending || 0) + Number(ts.running || 0) + legacy.upcoming + legacy.inProgress;
+              total = Number(ts.touched || 0) + legacy.completed + legacy.upcoming + legacy.inProgress;
+              free = Math.max(0, total - complete - pending);
+
+              const valueRow = await pool.query(
+                `
+                  SELECT COALESCE(SUM(inv.amount), 0)::numeric AS "totalValue"
+                  FROM drm.projects p
+                  LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+                  WHERE coalesce(p.is_deleted, false) = false
+                    AND ${DND_DEPARTMENT_SQL}
+                    AND p.status = 'Completed'
+                    AND coalesce(p.updated_at, p.created_at) BETWEEN $1 AND $2
+                `,
+                [from, to],
+              );
+              totalValue = Number(valueRow.rows[0]?.totalValue || 0);
+            } else {
+              const countsResult = await pool.query(
+                `
+                  SELECT
+                      count(*)::int AS "totalProjects",
+                      count(*) FILTER (WHERE p.status = 'Completed')::int AS complete,
+                      count(*) FILTER (WHERE p.status = 'Active')::int AS pending,
+                      count(*) FILTER (WHERE p.status = 'OnHold')::int AS "onHold",
+                      COALESCE(SUM(inv.amount), 0)::numeric AS "totalValue"
+                  FROM drm.projects p
+                  LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+                  WHERE coalesce(p.is_deleted, false) = false
+                    AND ${DND_DEPARTMENT_SQL}
+              `,
+              );
+              const counts = countsResult.rows[0];
+              const legacy = await fetchDdLegacyStatusCounts();
+              complete = Number(counts?.complete || 0) + legacy.completed;
+              pending =
+                Number(counts?.pending || 0) + legacy.upcoming + legacy.inProgress;
+              total = Number(counts?.totalProjects || 0);
+              if (total < complete + pending) total = complete + pending;
+              free = Number(counts?.onHold || 0) + Math.max(0, total - complete - pending);
+              totalValue = Number(counts?.totalValue || 0);
+            }
 
             res.json({
-                total: counts?.totalProjects || 0,
-                complete: counts?.complete || 0,
-                pending: counts?.pending || 0,
-                free: counts?.onHold || 0,
-                // Real sum of linked invoice amounts for this manager's projects
-                // (was previously a hardcoded mock value).
-                totalValue: Number(counts?.totalValue) || 0,
+                total,
+                complete,
+                pending,
+                free,
+                totalValue,
+                period,
             });
         } catch (error) {
             console.error("Error fetching D&D Manager activities summary:", error);
@@ -136,32 +386,92 @@ export function registerDdManagerRoutes(app: Express) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
-            const userPerformanceResult = await pool.query(`
-                SELECT 
+            const userPerformanceResult = await pool.query(
+              `
+                WITH legacy_done AS (
+                  SELECT mli.modern_id AS user_id, count(*)::int AS legacy_completed
+                  FROM legacy_archive.webxl_task_assign a
+                  INNER JOIN migration_meta.migration_legacy_ids mli
+                    ON mli.modern_table = 'users' AND mli.legacy_id = trim(a.user_id)
+                  INNER JOIN legacy_archive.webxl_create_project cp ON trim(cp.pro_id) = trim(a.pro_id)
+                  LEFT JOIN legacy_archive.webxl_quotation_services qs ON trim(qs.name) = trim(cp.project)
+                  WHERE trim(coalesce(qs.dep_id, '')) = '10'
+                    AND lower(trim(coalesce(a.stauts, ''))) IN ('end', 'completed', 'done', 'finish', 'finished', 'closed')
+                    AND coalesce(
+                      NULLIF(trim(a.last_update), '')::timestamptz,
+                      NULLIF(trim(a.assign_date), '')::timestamptz
+                    ) >= $1
+                  GROUP BY mli.modern_id
+                )
+                SELECT
                     u.id::text,
-                    u.full_name as name,
+                    coalesce(nullif(trim(u.full_name), ''), nullif(trim(u.name), ''), u.username) AS name,
                     u.role,
-                    COUNT(DISTINCT t.id) FILTER (WHERE t.status = 'Completed' AND t.updated_at >= $1)::int as "completedTasks",
-                    COALESCE(SUM(ttl.duration_minutes) FILTER (WHERE ttl.created_at >= $2), 0)::int as "totalTimeMinutes"
+                    COALESCE(tgt.target_total, 0)::int AS target_total,
+                    COUNT(DISTINCT t.id) FILTER (
+                      WHERE t.status = 'Completed' AND t.updated_at >= $1
+                        AND ${sqlDepartmentFamilyIn("p.department_type", "dnd")}
+                    )::int AS "completedTasks",
+                    COUNT(DISTINCT t.id) FILTER (
+                      WHERE t.status = 'InProgress'
+                        AND ${sqlDepartmentFamilyIn("p.department_type", "dnd")}
+                    )::int AS "runningTasks",
+                    COALESCE(ld.legacy_completed, 0)::int AS legacy_completed,
+                    COALESCE(SUM(ttl.duration_minutes) FILTER (WHERE ttl.created_at >= $1), 0)::int AS "totalTimeMinutes",
+                    (
+                      SELECT t2.title
+                      FROM drm.tasks t2
+                      INNER JOIN drm.projects p2 ON p2.id::text = t2.project_id::text
+                      WHERE t2.assigned_to_user_id::text = u.id::text
+                        AND coalesce(t2.is_deleted, false) = false
+                        AND ${sqlDepartmentFamilyIn("p2.department_type", "dnd")}
+                      ORDER BY
+                        CASE WHEN t2.status = 'InProgress' THEN 0 WHEN t2.status IN ('ToDo', 'Blocked') THEN 1 ELSE 2 END,
+                        t2.updated_at DESC NULLS LAST
+                      LIMIT 1
+                    ) AS current_task
                 FROM drm.users u
                 LEFT JOIN drm.tasks t ON t.assigned_to_user_id::text = u.id::text
+                LEFT JOIN drm.projects p ON p.id::text = t.project_id::text
                 LEFT JOIN drm.task_time_logs ttl ON ttl.user_id::text = u.id::text
-                WHERE LOWER(u.role_id) LIKE '%designer%'
-                   OR LOWER(u.role_id) LIKE '%developer%'
-                   OR LOWER(u.role_id) LIKE '%manager%'
-                GROUP BY u.id, u.full_name, u.role
-            `, [today, today]);
-            const userPerformance = userPerformanceResult.rows;
+                LEFT JOIN legacy_done ld ON ld.user_id = u.id::text
+                LEFT JOIN LATERAL (
+                  SELECT COALESCE(SUM(ut.total), 0)::numeric AS target_total
+                  FROM drm.target_system_user_targets ut
+                  WHERE ut.user_id::text = u.id::text
+                    AND CURRENT_DATE BETWEEN ut.start_date::date AND ut.end_date::date
+                ) tgt ON true
+                WHERE coalesce(u.is_active, true) = true
+                  AND ${DD_EXEC_ROLE_SQL}
+                GROUP BY u.id, u.full_name, u.name, u.username, u.role, tgt.target_total, ld.legacy_completed
+                ORDER BY name NULLS LAST
+              `,
+              [today],
+            );
 
-            res.json(userPerformance.map(u => ({
-                name: u.name || "Unknown",
-                method: u.role || "Developer",
-                methodColor: "bg-[#42a376]",
-                target: `90 (${u.completedTasks})`,
-                targetVal: u.completedTasks.toString(),
-                time: Math.round((u.totalTimeMinutes || 0) / 60).toString(),
-                avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name || "U")}&background=random`
-            })));
+            res.json(
+              userPerformanceResult.rows.map((u) => {
+                const done = Number(u.completedTasks || 0) + Number(u.legacy_completed || 0);
+                const target = Number(u.target_total || 0);
+                const taskLabel =
+                  u.current_task ||
+                  (Number(u.runningTasks) > 0 ? "In Progress" : done > 0 ? "Completed today" : "—");
+                return {
+                  name: u.name || "Unknown",
+                  method: taskLabel,
+                  methodColor:
+                    Number(u.runningTasks) > 0
+                      ? "bg-amber-500"
+                      : done > 0
+                        ? "bg-[#42a376]"
+                        : "bg-slate-400",
+                  target: target > 0 ? `${target} (${done})` : `0 (${done})`,
+                  targetVal: String(done),
+                  time: String(Math.round((u.totalTimeMinutes || 0) / 60)),
+                  avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name || "U")}&background=random`,
+                };
+              }),
+            );
         } catch (error) {
             console.error("Error fetching D&D Manager user performance:", error);
             res.status(500).json({ error: "Failed to fetch user performance" });
@@ -185,7 +495,8 @@ export function registerDdManagerRoutes(app: Express) {
                     ), 0)::int as "spent_minutes"
                 FROM drm.projects p
                 LEFT JOIN drm.product_posting_workflows wf ON wf.project_id = p.id
-                WHERE p.owner_user_id::text = $1::text OR p.created_by::text = $2::text
+                WHERE (p.owner_user_id::text = $1::text OR p.created_by::text = $2::text)
+                  AND ${DND_DEPARTMENT_SQL}
                 ORDER BY p.created_at DESC
                 LIMIT 20
             `, [userId, userId]);
@@ -213,16 +524,17 @@ export function registerDdManagerRoutes(app: Express) {
                     t.id,
                     t.title,
                     p.name as "projectName",
-                    p.project_number as "projectNumber",
+                    (SELECT mli.legacy_id FROM migration_meta.migration_legacy_ids mli WHERE mli.modern_table = 'projects' AND mli.modern_id = p.id::text LIMIT 1) as "projectNumber",
                     t.status,
                     t.updated_at as "updatedAt",
                     'TASK' as "itemType"
                 FROM drm.tasks t
                 LEFT JOIN drm.projects p ON p.id::text = t.project_id::text
                 WHERE ${statusSql}
-                  AND (t.owner_user_id::text = $1::text OR t.assigned_to_user_id::text = $2::text OR t.created_by::text = $3::text)
+                  AND (t.owner_user_id::text = $1::text OR t.assigned_to_user_id::text = $2::text)
+                  AND ${DND_DEPARTMENT_SQL}
                 LIMIT 50
-            `, [userId, userId, userId]);
+            `, [userId, userId]);
 
             let combinedList = listResult.rows.map(t => ({
                 id: t.id,
@@ -234,7 +546,8 @@ export function registerDdManagerRoutes(app: Express) {
                 itemType: 'TASK'
             }));
 
-            // Special Case: For D&D Manager include Product Posting projects
+            // D&D workflow queue (minisite / listing / design-dev): only projects
+            // whose department_type is in the D&D family — not Alibaba Product Posting.
             if (statusType === "waiting" || statusType === "approved" || statusType === "delay") {
                 // waiting: DATA_VERIFY (not yet started) OR RUNNING_PROJECT (executive
                 // has submitted and it's awaiting manager review) OR PENDING_PROJECT
@@ -253,7 +566,7 @@ export function registerDdManagerRoutes(app: Express) {
                 const ppResult = await pool.query(`
                     SELECT
                         p.id as id,
-                        p.project_number as "projectNumber",
+                        (SELECT mli.legacy_id FROM migration_meta.migration_legacy_ids mli WHERE mli.modern_table = 'projects' AND mli.modern_id = p.id::text LIMIT 1) as "projectNumber",
                         p.name as "projectName",
                         COALESCE(NULLIF(CASE WHEN p.name LIKE '%•%' THEN NULL ELSE p.name END, ''), inv.project_name, p.name) as "invoiceProject",
                         COALESCE(c.company_name, inv.company_name, p.name) as "company",
@@ -291,7 +604,7 @@ export function registerDdManagerRoutes(app: Express) {
                       -- set by project-doc-routes.ts when documents are sent).
                       -- Kept as an OR fallback rather than removed, in case some
                       -- legacy row has department_type unset but matches by name.
-                      AND p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', '10')
+                      AND ${DND_DEPARTMENT_SQL}
                     ORDER BY COALESCE(wf.updated_at, p.updated_at, p.created_at) DESC
                     LIMIT 50
                 `, [phaseFilter, statusType]);

@@ -68,7 +68,7 @@ export class ServicePoolRepository {
 
     if (showDuplicates) {
       whereParts.push(`spe.customer_id in (
-        select customer_id from service_pool_entries
+        select customer_id from drm.service_pool_entries
         group by customer_id
         having count(*) > 1
       )`);
@@ -119,7 +119,7 @@ export class ServicePoolRepository {
           u_ta.name AS "taPersonName",
           c.account_name AS "accountHolder",
           c.phone AS "contactNo",
-          (SELECT MAX(rc.bv_date) FROM related_customers rc WHERE rc.customer_name = c.company_name) AS "bvDate",
+          (SELECT MAX(br.report_date) FROM drm.bv_reports br WHERE br.customer_id = c.id) AS "bvDate",
           spe.status,
           spe.dropout_category AS "dropoutCategory",
           spe.started_at AS "startedAt",
@@ -204,18 +204,19 @@ export class ServicePoolRepository {
   // Executive. gm_entries has no FK to customers; the link is the shared
   // drm_id both rows are synced to at GM-creation time (see
   // resolveOrCreateCanonicalDrmId in gm-pool-routes.ts).
-  private gmNotInPoolWhereSql = `
+  private gmNotInPoolFromSql = `
     FROM drm.gm_entries g
     JOIN drm.customers c ON c.drm_id = g.drm_id
+    LEFT JOIN drm.users u ON u.id = g.sales_person_id
     WHERE coalesce(g.is_deleted, false) = false
-      AND g.status IN ('Approved', 'Completed')
+      AND lower(g.status::text) IN ('approved', 'completed')
       AND NOT EXISTS (
         SELECT 1 FROM drm.service_pool_entries spe WHERE spe.customer_id = c.id
       )
   `;
 
   async getGmNotInPoolCount() {
-    const res = await pool.query(`SELECT COUNT(*)::int AS count ${this.gmNotInPoolWhereSql}`);
+    const res = await pool.query(`SELECT COUNT(*)::int AS count ${this.gmNotInPoolFromSql}`);
     return Number(res.rows[0]?.count || 0);
   }
 
@@ -231,8 +232,7 @@ export class ServicePoolRepository {
         g.approved_at AS "startDate",
         g.gm_bv_submitted_at AS "bvDate",
         g.created_at AS "createDate"
-      ${this.gmNotInPoolWhereSql}
-      LEFT JOIN drm.users u ON u.id = g.sales_person_id
+      ${this.gmNotInPoolFromSql}
       ORDER BY g.created_at DESC
       LIMIT 1000
     `;

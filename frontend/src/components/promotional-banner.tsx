@@ -1,6 +1,5 @@
-// PLACEHOLDER: the real promotional-banner implementation was missing from
-// this checkout (imported by sales-executive-dashboard.tsx but absent from
-// src/components). Renders nothing so the dashboard layout is unaffected.
+import { DashboardPromotionAside } from "@/components/dashboard-promotion-aside";
+
 export function PromotionalBanner() {
-  return null;
+  return <DashboardPromotionAside />;
 }

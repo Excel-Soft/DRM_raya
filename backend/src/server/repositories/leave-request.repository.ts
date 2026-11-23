@@ -1,15 +1,48 @@
 import { pool } from "../db";
 
+/** Columns returned to the API (supports legacy rows + new inserts). */
+const LEAVE_ROW_SELECT = `
+  lr.id,
+  lr.user_id as "userId",
+  lr.from_date as "fromDate",
+  lr.to_date as "toDate",
+  lr.leave_type as "leaveType",
+  lr.leave_type as "type",
+  lr.purpose as "purpose",
+  lr.description as "description",
+  coalesce(lr.description, lr.purpose) as "reason",
+  lr.alternative as "alternative",
+  lr.time as "time",
+  coalesce(nullif(trim(lr.duration), ''), 'Full Day') as "duration",
+  lr.status as "status",
+  lr.approved_by_user_id as "approvedByUserId",
+  lr.rejection_reason as "rejectionReason",
+  lr.created_at as "createdAt",
+  lr.updated_at as "updatedAt",
+  u.full_name as "userName"
+`;
+
+const LEAVE_ROW_FROM = `
+  from drm.leave_requests lr
+  left join drm.users u on u.id = lr.user_id
+`;
+
 export type LeaveRequestWithUser = {
   id: string;
   userId: string;
   fromDate: Date;
   toDate: Date;
+  leaveType?: string;
   type: string | null;
-  duration: string | null;
+  purpose?: string | null;
+  description?: string | null;
   reason: string | null;
+  alternative?: string | null;
+  time?: string | null;
+  duration: string | null;
   status: string;
   approvedByUserId: string | null;
+  rejectionReason?: string | null;
   createdAt: Date;
   updatedAt: Date;
   userName?: string | null;
@@ -24,34 +57,32 @@ export type LeaveStats = {
   byType: Record<string, number>;
 };
 
+export type CreateLeaveInput = {
+  userId: string;
+  fromDate: Date;
+  toDate: Date;
+  leaveType: string;
+  purpose: string;
+  alternative: string;
+  description?: string | null;
+  time?: string | null;
+  duration?: string | null;
+};
+
 export class LeaveRequestRepository {
   private ensured = false;
 
   private async ensureSchema() {
     if (this.ensured) return;
-    await pool.query(
-      `alter table drm.leave_requests add column if not exists duration text;`,
-    );
+    await pool.query(`alter table drm.leave_requests add column if not exists duration text;`);
     this.ensured = true;
   }
 
   async findByUserId(userId: string): Promise<LeaveRequestWithUser[]> {
     await this.ensureSchema();
     const results = await pool.query(
-      `select lr.id,
-              lr.user_id as "userId",
-              lr.from_date as "fromDate",
-              lr.to_date as "toDate",
-              lr.type as "type",
-              lr.duration as "duration",
-              lr.reason as "reason",
-              lr.status as "status",
-              lr.approved_by as "approvedByUserId",
-              lr.created_at as "createdAt",
-              lr.updated_at as "updatedAt",
-              u.full_name as "userName"
-         from drm.leave_requests lr
-         left join drm.users u on u.id = lr.user_id
+      `select ${LEAVE_ROW_SELECT}
+         ${LEAVE_ROW_FROM}
         where lr.user_id = $1
         order by lr.created_at desc`,
       [userId],
@@ -61,21 +92,9 @@ export class LeaveRequestRepository {
 
   async findAll(): Promise<LeaveRequestWithUser[]> {
     const results = await pool.query(
-      `select lr.id,
-              lr.user_id as "userId",
-              lr.from_date as "fromDate",
-              lr.to_date as "toDate",
-              lr.type as "type",
-              lr.duration as "duration",
-              lr.reason as "reason",
-              lr.status as "status",
-              lr.approved_by as "approvedByUserId",
-              lr.created_at as "createdAt",
-              lr.updated_at as "updatedAt",
-              u.full_name as "userName"
-         from drm.leave_requests lr
-         left join drm.users u on u.id = lr.user_id
-        order by lr.created_at desc`
+      `select ${LEAVE_ROW_SELECT}
+         ${LEAVE_ROW_FROM}
+        order by lr.created_at desc`,
     );
     return results.rows as LeaveRequestWithUser[];
   }
@@ -83,26 +102,14 @@ export class LeaveRequestRepository {
   async findByUserIdAndDateRange(
     userId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
   ): Promise<LeaveRequestWithUser[]> {
     const results = await pool.query(
-      `select lr.id,
-              lr.user_id as "userId",
-              lr.from_date as "fromDate",
-              lr.to_date as "toDate",
-              lr.type as "type",
-              lr.duration as "duration",
-              lr.reason as "reason",
-              lr.status as "status",
-              lr.approved_by as "approvedByUserId",
-              lr.created_at as "createdAt",
-              lr.updated_at as "updatedAt",
-              u.full_name as "userName"
-         from drm.leave_requests lr
-         left join drm.users u on u.id = lr.user_id
+      `select ${LEAVE_ROW_SELECT}
+         ${LEAVE_ROW_FROM}
         where lr.user_id = $1
           and lr.from_date >= $2
-          and lr.to_date   <= $3
+          and lr.to_date <= $3
         order by lr.created_at desc`,
       [userId, startDate, endDate],
     );
@@ -111,20 +118,8 @@ export class LeaveRequestRepository {
 
   async findById(id: string): Promise<LeaveRequestWithUser | null> {
     const results = await pool.query(
-      `select lr.id,
-              lr.user_id as "userId",
-              lr.from_date as "fromDate",
-              lr.to_date as "toDate",
-              lr.type as "type",
-              lr.duration as "duration",
-              lr.reason as "reason",
-              lr.status as "status",
-              lr.approved_by as "approvedByUserId",
-              lr.created_at as "createdAt",
-              lr.updated_at as "updatedAt",
-              u.full_name as "userName"
-         from drm.leave_requests lr
-         left join drm.users u on u.id = lr.user_id
+      `select ${LEAVE_ROW_SELECT}
+         ${LEAVE_ROW_FROM}
         where lr.id = $1
         limit 1`,
       [id],
@@ -133,32 +128,48 @@ export class LeaveRequestRepository {
     return (results.rows[0] as LeaveRequestWithUser) || null;
   }
 
-  async create(data: { userId: string; fromDate: Date; toDate: Date; type: string; duration?: string | null; reason?: string | null }): Promise<LeaveRequestWithUser> {
+  async create(data: CreateLeaveInput): Promise<LeaveRequestWithUser> {
     await this.ensureSchema();
     const result = await pool.query(
-      `insert into drm.leave_requests (user_id, from_date, to_date, type, duration, reason, status, created_at, updated_at)
-       values ($1, $2, $3, $4, $5, $6, 'Pending', now(), now())
-       returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, duration, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
-      [data.userId, data.fromDate, data.toDate, data.type, data.duration ?? "Full Day", data.reason ?? null],
+      `insert into drm.leave_requests (
+          user_id, purpose, leave_type, alternative, from_date, to_date, time, description, duration, status, created_at, updated_at
+       )
+       values ($1, $2, $3::drm.leave_type, $4, $5, $6, $7, $8, $9, 'Pending', now(), now())
+       returning id`,
+      [
+        data.userId,
+        data.purpose,
+        data.leaveType,
+        data.alternative,
+        data.fromDate,
+        data.toDate,
+        data.time ?? null,
+        data.description ?? null,
+        data.duration ?? "Full Day",
+      ],
     );
-    return result.rows[0] as LeaveRequestWithUser;
+    const created = await this.findById(result.rows[0].id);
+    if (!created) {
+      throw new Error("Failed to load created leave request");
+    }
+    return created;
   }
 
   async cancel(id: string, userId: string): Promise<LeaveRequestWithUser | null> {
-    const existing = await pool.query(`select status from drm.leave_requests where id = $1 and user_id = $2 limit 1`, [
-      id,
-      userId,
-    ]);
+    const existing = await pool.query(
+      `select status from drm.leave_requests where id = $1 and user_id = $2 limit 1`,
+      [id, userId],
+    );
     if (!existing.rows[0] || existing.rows[0].status !== "Pending") {
       return null;
     }
 
-    const result = await pool.query(
-      `update drm.leave_requests set status = 'Cancelled', updated_at = now() where id = $1 returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, duration, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
+    await pool.query(
+      `update drm.leave_requests set status = 'Cancelled', updated_at = now() where id = $1`,
       [id],
     );
 
-    return (result.rows[0] as any) ?? null;
+    return this.findById(id);
   }
 
   async approve(id: string, approverUserId: string): Promise<LeaveRequestWithUser | null> {
@@ -167,17 +178,17 @@ export class LeaveRequestRepository {
       return null;
     }
 
-    const result = await pool.query(
+    await pool.query(
       `update drm.leave_requests
        set status = 'Approved',
-           approved_by = $2,
+           approved_by_user_id = $2,
+           approved_at = now(),
            updated_at = now()
-       where id = $1
-       returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, duration, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
+       where id = $1`,
       [id, approverUserId],
     );
 
-    return (result.rows[0] as any) ?? null;
+    return this.findById(id);
   }
 
   async reject(id: string, approverUserId: string, reason?: string): Promise<LeaveRequestWithUser | null> {
@@ -186,18 +197,17 @@ export class LeaveRequestRepository {
       return null;
     }
 
-    const result = await pool.query(
+    await pool.query(
       `update drm.leave_requests
        set status = 'Rejected',
-           approved_by = $2,
-           updated_at = now(),
-           reason = coalesce($3, reason)
-       where id = $1
-       returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, duration, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
+           approved_by_user_id = $2,
+           rejection_reason = coalesce($3, rejection_reason),
+           updated_at = now()
+       where id = $1`,
       [id, approverUserId, reason ?? null],
     );
 
-    return (result.rows[0] as any) ?? null;
+    return this.findById(id);
   }
 
   async getStats(userId: string): Promise<LeaveStats> {
@@ -228,7 +238,7 @@ export class LeaveRequestRepository {
           break;
       }
 
-      const leaveType = req.type ?? "unknown";
+      const leaveType = req.type ?? req.leaveType ?? "unknown";
       stats.byType[leaveType] = (stats.byType[leaveType] || 0) + 1;
     }
 
@@ -245,12 +255,12 @@ export class LeaveRequestRepository {
         where user_id = $1
           and status = 'Approved'
           and from_date >= $2
-          and to_date   <= $3`,
+          and to_date <= $3`,
       [userId, startDate, endDate],
     );
 
     let totalDays = 0;
-    for (const req of results.rows as any[]) {
+    for (const req of results.rows as { fromDate: Date; toDate: Date }[]) {
       const from = new Date(req.fromDate);
       const to = new Date(req.toDate);
       const days = Math.ceil((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -262,5 +272,3 @@ export class LeaveRequestRepository {
 }
 
 export const leaveRequestRepository = new LeaveRequestRepository();
-
-
