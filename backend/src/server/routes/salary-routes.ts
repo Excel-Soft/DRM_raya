@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { markRequestAudited } from "../middleware/auto-audit.middleware";
 import { pool } from "../db";
 import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { recordAuditLog } from "./services/activity-service";
@@ -1386,6 +1387,7 @@ export function registerSalaryRoutes(app: Express) {
           ...(auditIp(req) !== undefined ? { ip: auditIp(req) } : {}),
           ...(req.headers["user-agent"] ? { userAgent: req.headers["user-agent"] } : {}),
         });
+        markRequestAudited();
         await client.query(
           `INSERT INTO drm.activity_logs (user_id, action, resource_type, resource_id, details)
            VALUES ($1, $2, $3, $4, $5)`,

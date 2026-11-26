@@ -96,7 +96,7 @@ export default function AttendanceManagement() {
       const data = await res.json();
       return data.users || [];
     },
-    enabled: isManager,
+    enabled: false, // employee picker removed
   });
 
   // Fetch Attendance Records (Daily)
@@ -192,7 +192,8 @@ export default function AttendanceManagement() {
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-[16px] font-bold text-slate-600 uppercase px-1 tracking-tight dark:text-zinc-300">ATTENDANCE REPORT</h1>
         
-        {isManager && (
+        {/* Employee picker removed: every role, managers included, sees only their own attendance here. */}
+        {false && isManager && (
           <div className="w-64">
             <RoleGroupedUserSelect
               grouped={false}

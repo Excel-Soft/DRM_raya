@@ -7,9 +7,11 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { TopBar } from "@/components/top-bar";
 import { ThemeProvider, useTheme } from "@/components/theme-provider";
+import { UserSettingsSync } from "@/components/user-settings-sync";
 import { AssistantProvider } from "@/contexts/assistant-context";
 import { ScreenContextProvider } from "@/contexts/screen-context";
 import { AIAssistantButton } from "@/components/ai-assistant-button";
+import { UnpaidInvoiceReminder } from "@/components/unpaid-invoice-reminder";
 import { TicketAssignmentPopup } from "@/components/ticket-assignment-popup";
 import { TicketReviewPopup } from "@/components/ticket-review-popup";
 import { PenaltyAcknowledgementPopup } from "@/components/penalty-acknowledgement-popup";
@@ -154,6 +156,9 @@ const ReceptionDashboard = lazy(() => import("@/pages/reception-dashboard"));
 const SuperAdminDashboard = lazy(() => import("@/pages/super-admin-dashboard"));
 const AdminDashboard = lazy(() => import("@/pages/admin-dashboard"));
 const AuditLogsPage = lazy(() => import("@/pages/admin/audit-logs"));
+const LoginAuditPage = lazy(() => import("@/pages/admin/login-audit"));
+const ProfilePage = lazy(() => import("@/pages/profile"));
+const AccountSettingsPage = lazy(() => import("@/pages/account-settings"));
 const LegacyImportPage = lazy(() => import("@/pages/admin/legacy-import"));
 const ProductPostingDashboard = lazy(() => import("@/pages/product-posting-dashboard"));
 const QAManagerDashboard = lazy(() => import("@/pages/qa-manager-dashboard"));
@@ -466,6 +471,9 @@ function Router() {
       <Route path="/super-admin" component={SuperAdminDashboard} />
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/admin/audit-logs" component={AuditLogsPage} />
+      <Route path="/admin/login-audit" component={LoginAuditPage} />
+      <Route path="/profile" component={ProfilePage} />
+      <Route path="/settings" component={AccountSettingsPage} />
       <Route path="/admin/legacy-import" component={LegacyImportPage} />
       <Route path="/training/:category" component={TrainingCenter} />
       <Route path="/workspace" component={Workspace} />
@@ -633,6 +641,13 @@ function AppContent() {
   }, [location, isAuthRoute, setLocation, authStatus]);
 
   const handleLogout = () => {
+    // Tell the server first (login audit "logout" row); never blocks the logout itself.
+    try {
+      const t = sessionStorage.getItem("token");
+      if (t) {
+        fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${t}` }, credentials: "include", keepalive: true }).catch(() => {});
+      }
+    } catch { /* ignore */ }
     sessionStorage.removeItem("token");
     sessionStorage.removeItem("userName");
     sessionStorage.removeItem("userRole");
@@ -695,6 +710,8 @@ function AppContent() {
             {authStatus === "authed" && isSupportModuleEnabled() && <TicketReviewPopup />}
             {authStatus === "authed" && <PenaltyAcknowledgementPopup />}
             {authStatus === "authed" && <BvCommissionAckPopup />}
+            {authStatus === "authed" && <UnpaidInvoiceReminder />}
+            {authStatus === "authed" && <UserSettingsSync />}
             <Toaster />
           </AssistantProvider>
         </ScreenContextProvider>

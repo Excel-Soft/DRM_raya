@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { autoAuditMiddleware } from "./middleware/auto-audit.middleware";
 import { createServer, type Server } from "http";
 import { pool, checkDbHealth, getDbUnavailableReason, isNetworkOrDnsError, markDbUnavailable } from "./db";
 import gradeSystemRoutes from "./routes/grade-system-routes";
@@ -24,6 +25,9 @@ import { registerSalaryRoutes } from "./routes/salary-routes";
 import { registerOldSalaryReportRoutes } from "./routes/old-salary-report-routes";
 import { registerBalanceReportRoutes } from "./routes/balance-report-routes";
 import { registerLegacyImportRoutes } from "./routes/legacy-import-routes";
+import { registerUnpaidInvoiceReminderRoutes } from "./routes/unpaid-invoice-reminder-routes";
+import { registerPmsSettingActivityRoutes } from "./routes/pms-setting-activity-routes";
+import { registerAccountSecurityRoutes } from "./routes/account-security-routes";
 import { registerStage3ReportsRoutes } from "./routes/stage3-reports-routes";
 import { registerLeaveRoutes } from "./routes/leave-routes";
 import { registerOvertimeRoutes } from "./routes/overtime-routes";
@@ -125,6 +129,9 @@ import { CrossDepartmentStatusService } from "./services/cross-department-status
 
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Every successful add / edit / update / delete call -> drm.activity_logs (Admin → Audit Logs).
+  // Mounted first so every router is covered; the actor is read when the response finishes.
+  app.use("/api", autoAuditMiddleware);
   // Patch 4 Stage 6 (ISS-02 P2): Support module deactivation gate. Mounted before
   // the global auth / IP / permission middleware so the entire `/api/support/*`
   // surface returns 404 (regardless of authentication) when the module is
@@ -391,6 +398,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Old DRM "Balance Report" (Reports -> Balance Report)
   registerBalanceReportRoutes(app);
   registerLegacyImportRoutes(app);
+  registerUnpaidInvoiceReminderRoutes(app);
+  registerPmsSettingActivityRoutes(app);
+  registerAccountSecurityRoutes(app);
 
   // Leave routes (protected)
   registerLeaveRoutes(app);

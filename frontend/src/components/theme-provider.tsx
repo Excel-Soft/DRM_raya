@@ -1,4 +1,8 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useState } from "react";
+import { applyThemeAccent, savedThemeAccent } from "@/lib/theme-accent";
+
+// Color combination saved on this browser (Settings page); applied before first paint.
+if (typeof window !== "undefined") applyThemeAccent(savedThemeAccent());
 
 type Theme = "light" | "dark";
 

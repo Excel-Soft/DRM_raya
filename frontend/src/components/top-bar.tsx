@@ -23,6 +23,16 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { NotificationDropdown } from "./notification-dropdown";
+import { UserTicks } from "./user-ticks";
+
+// Logged-in user id from the JWT (for the ticks next to the name).
+const myUserIdFromToken = (): string | null => {
+  try {
+    const t = sessionStorage.getItem("token") || "";
+    const p = t ? JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))) : null;
+    return p?.impersonatorId ? null : p?.userId ?? null;
+  } catch { return null; }
+};
 import { formatRoleLabel, normalizeRoleForCompare } from "@/lib/role-labels";
 import { getRoleHome } from "@/lib/role-dashboards";
 
@@ -54,6 +64,7 @@ export function TopBar({
   showPeriodFilter = false,
 }: TopBarProps) {
   const { toast } = useToast();
+  const myUserId = myUserIdFromToken();
   const [period, setPeriod] = useState(() => sessionStorage.getItem("globalPeriod") || "TD");
 
   // Fetch RBAC data
@@ -281,7 +292,7 @@ export function TopBar({
       </div>
 
       <div className="flex items-center gap-4">
-        <DropdownMenu>
+        {/* Dashboards switcher (grid icon) removed on request */ false && (<DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="p-2" data-testid="button-dashboards">
               <LayoutGrid className="h-4 w-4" />
@@ -329,7 +340,7 @@ export function TopBar({
                 ));
             })()}
           </DropdownMenuContent>
-        </DropdownMenu>
+        </DropdownMenu>)}
 
         {showPeriodFilter && (
           <Select value={period} onValueChange={handlePeriodChange}>
@@ -366,10 +377,13 @@ export function TopBar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuLabel data-testid="text-user-name" className="text-sm font-bold">{userName}</DropdownMenuLabel>
+            <DropdownMenuLabel data-testid="text-user-name" className="flex items-center gap-1.5 text-sm font-bold">
+              {userName}
+              <UserTicks userId={myUserId} />
+            </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem data-testid="button-profile">Profile</DropdownMenuItem>
-            <DropdownMenuItem data-testid="button-settings">Settings</DropdownMenuItem>
+            <DropdownMenuItem data-testid="button-profile" onSelect={() => onNavigate?.("/profile")}>Profile</DropdownMenuItem>
+            <DropdownMenuItem data-testid="button-settings" onSelect={() => onNavigate?.("/settings")}>Settings</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem data-testid="button-logout" onSelect={() => onLogout?.()}>
               Logout

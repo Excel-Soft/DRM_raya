@@ -65,3 +65,6 @@ backend/private/
 /uploads/
 /func.php
 /dollarsystem.php
+
+# Staff login list (names + emails) — local only
+docs/DRM_Role_Logins.xlsx

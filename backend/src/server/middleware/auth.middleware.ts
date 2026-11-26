@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction, CookieOptions } from "express";
 import { authService, type TokenPayload } from "../services/auth.service.js";
 import { looksLikeLegacyRoleCsv, normalizeRole, resolveActiveRoleId } from "../utils/role-utils";
+import { isTokenRevoked } from "../services/session-control.service";
 
 // Extend Express Request to include user
 declare global {
@@ -125,6 +126,12 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
         `[AUTH] 401 ${req.method} ${req.originalUrl} reason=missing-user-id header=${tokenInfo.hasAuthHeader ? "y" : "n"} cookie=${tokenInfo.hasAuthCookie ? "y" : "n"} userId=none`,
       );
       return res.status(401).json({ error: "Invalid token payload" });
+    }
+
+    // Admin "Force Logout": tokens issued before drm.users.sessions_revoked_at stop working.
+    if (await isTokenRevoked(String(userId), (payload as any).iat)) {
+      console.warn(`[AUTH] 401 ${req.method} ${req.originalUrl} reason=session-revoked userId=${userId}`);
+      return res.status(401).json({ error: "Your session was ended by admin. Please log in again.", code: "SESSION_REVOKED" });
     }
 
     // Attach user info to request

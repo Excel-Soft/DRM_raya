@@ -209,6 +209,7 @@ const menuItems: MenuItem[] = [
       { title: "Super Admin", url: "/super-admin", icon: Crown, permKey: "Admin" },
       { title: "Admin", url: "/admin", icon: ShieldCheck, permKey: "Admin" },
       { title: "Audit Logs", url: "/admin/audit-logs", icon: ScrollText, permKey: "Admin" },
+      { title: "Login Audit", url: "/admin/login-audit", icon: ScrollText, permKey: "Admin" },
       { title: "Old Data Import", url: "/admin/legacy-import", icon: DatabaseBackup, permKey: "Admin" },
       { title: "Attributes", url: "/drm/attributes", icon: List, slug: "drm-attributes" },
       { title: "Drm Permission", url: "/drm/permission", icon: Shield, slug: "drm-permission" },
@@ -359,7 +360,9 @@ function hasAccess(
   userAllRoles: string[],          // all assigned roles
 ): boolean {
   if (!permKey) return true; // no restriction = always visible
-  const roles = [...(userRoleName ? [userRoleName] : []), ...userAllRoles];
+  // Only the role selected in the ROLE switcher counts (a multi-role user sees one
+  // role's menus at a time); all assigned roles only when no role is selected.
+  const roles = userRoleName ? [userRoleName] : userAllRoles;
   return grantingRows(menuPermissions, permKey, roles).length > 0;
 }
 
@@ -588,7 +591,7 @@ export function AppSidebar() {
       // enforced at the top level).
       if (isRealAdmin) return true;
       if (!subItem.slug) return false;
-      const roles = [...(userRoleName ? [userRoleName] : []), ...rolesToUse];
+      const roles = userRoleName ? [userRoleName] : rolesToUse;
       return subItemVisible(menuPermissions, parentPermKey, roles, subItem.slug, !!subItem.newPage);
     });
   };

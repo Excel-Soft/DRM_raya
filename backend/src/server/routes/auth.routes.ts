@@ -8,6 +8,7 @@ import { formatRoleLabel, normalizeRole, resolveActiveRoleId } from "../utils/ro
 import { legacyAttendanceRepository } from "../repositories/legacy-attendance.repository";
 import { emailService } from "../services/email.service";
 import { sendError, badRequest, unauthorized, forbidden, notFound, conflict } from "../utils/api-error";
+import { recordLoginEvent } from "../services/session-control.service";
 
 
 const router = Router();
@@ -146,6 +147,7 @@ router.post("/login", async (req: Request, res: Response) => {
       [loginId, digits],
     );
     if (result.rows.length === 0) {
+      await recordLoginEvent(req, { event: "login_failed", loginId, reason: "Unknown user" });
       return sendError(res, unauthorized("Invalid credentials"));
     }
 
@@ -160,16 +162,19 @@ router.post("/login", async (req: Request, res: Response) => {
     };
 
     if (!user.is_active) {
+      await recordLoginEvent(req, { event: "login_failed", userId: user.id, loginId, reason: "Account inactive" });
       return sendError(res, unauthorized("Invalid credentials"));
     }
 
     const ok = await authService.comparePassword(password, user.password_hash);
     if (!ok) {
+      await recordLoginEvent(req, { event: "login_failed", userId: user.id, loginId, reason: "Wrong password" });
       return sendError(res, unauthorized("Invalid credentials"));
     }
 
     const payload = await issueAuthPayload(user);
     setAuthCookie(res, payload.token);
+    await recordLoginEvent(req, { event: "login_success", userId: user.id, loginId });
     return res.json(payload);
   } catch (error: any) {
     if (!(error instanceof z.ZodError)) {
@@ -243,7 +248,10 @@ router.get("/me", authMiddleware, async (req: Request, res: Response) => {
 });
 
 // Logout (stateless JWT): client should drop the token
-router.post("/logout", authMiddleware, async (_req: Request, res: Response) => {
+router.post("/logout", authMiddleware, async (req: Request, res: Response) => {
+  if (!(req.user as any)?.impersonatorId) {
+    await recordLoginEvent(req, { event: "logout", userId: req.user?.userId });
+  }
   clearAuthCookie(res);
   return res.json({ success: true });
 });

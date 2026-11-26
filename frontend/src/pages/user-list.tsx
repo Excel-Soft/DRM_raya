@@ -59,9 +59,12 @@ import {
     Settings,
     CreditCard,
     GraduationCap,
+    LogOut,
+    BadgeCheck,
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { groupUsersByRoleTitle } from "@/lib/user-role-groups";
+import { UserTicksView, useUserBadges, useUserSecurityActions } from "@/components/user-ticks";
 
 type User = {
     id: string;
@@ -171,6 +174,10 @@ export default function UserList() {
     const [page, setPage] = useState(1);
     const currentRole = (typeof window !== "undefined" ? sessionStorage.getItem("userRole") : "") || "";
     const isAdmin = ["admin", "super_admin", "adm"].includes(currentRole.toLowerCase());
+    // Accounts can verify a user's account (blue tick); the server checks this too.
+    const canVerifyAccount = isAdmin || ["account_manager", "accounts_assistant_manager"].includes(currentRole.toLowerCase().replace(/\s+/g, "_"));
+    const badges = useUserBadges();
+    const securityActions = useUserSecurityActions();
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [userToDelete, setUserToDelete] = useState<User | null>(null);
     const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -655,7 +662,10 @@ export default function UserList() {
                                                 <div className="flex items-center gap-3" title={user.email}>
                                                     <UserAvatar user={user} />
                                                     <div className="min-w-0">
-                                                        <div className="font-semibold text-slate-800 dark:text-zinc-100 truncate">{user.fullName}</div>
+                                                        <div className="flex items-center gap-1 font-semibold text-slate-800 dark:text-zinc-100">
+                                                            <span className="truncate">{user.fullName}</span>
+                                                            <UserTicksView active={badges.get(user.id)?.active} verified={badges.get(user.id)?.verified} />
+                                                        </div>
                                                         <div className="text-xs text-muted-foreground truncate">{user.fatherHusbandName || user.email}</div>
                                                     </div>
                                                 </div>
@@ -767,6 +777,28 @@ export default function UserList() {
                                                     >
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
+                                                    {canVerifyAccount && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className={`h-8 w-8 hover:bg-blue-50 ${badges.get(user.id)?.verified ? "text-blue-600" : "text-slate-400"}`}
+                                                            onClick={() => securityActions.setVerified(user.id, user.fullName, !badges.get(user.id)?.verified)}
+                                                            title={badges.get(user.id)?.verified ? "Account verified (click to remove)" : "Verify account"}
+                                                        >
+                                                            <BadgeCheck className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
+                                                    {isAdmin && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                                                            onClick={() => securityActions.forceLogout(user.id, user.fullName)}
+                                                            title="Force logout"
+                                                        >
+                                                            <LogOut className="h-4 w-4" />
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             </TableCell>
                                         </TableRow>

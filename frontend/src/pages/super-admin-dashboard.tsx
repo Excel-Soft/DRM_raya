@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
+import { UserTicks, useUserSecurityActions } from "@/components/user-ticks";
 import { cn } from "@/lib/utils";
 import {
     Command,
@@ -898,6 +899,7 @@ export default function SuperAdminDashboard() {
 }
 
 const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User, roles: Role[], onUpdate: (id: string, data: any) => void, onDelete: (id: string) => void, isUpdating: boolean }) => {
+    const securityActions = useUserSecurityActions();
     const { toast } = useToast();
     const [formData, setFormData] = useState({
         fullName: user.fullName || "",
@@ -939,7 +941,7 @@ const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User,
             <CardContent className="p-4 space-y-4 bg-muted/40 text-foreground">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1">
-                        <Label className="text-xs text-muted-foreground">Name</Label>
+                        <Label className="flex items-center gap-1 text-xs text-muted-foreground">Name <UserTicks userId={user.id} /></Label>
                         <Input
                             value={formData.fullName}
                             onChange={e => handleChange("fullName", e.target.value)}
@@ -994,6 +996,14 @@ const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User,
                         {user.isActive ? <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Active</span> : <span className="text-red-500 flex items-center gap-1"><XCircle className="h-3 w-3" /> Inactive</span>}
                     </div>
                     <div className="flex gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => securityActions.forceLogout(user.id, (user as any).fullName || (user as any).name || user.email)}
+                            className="border-amber-200 text-amber-700 hover:bg-amber-50"
+                        >
+                            Force Logout
+                        </Button>
                         <Button
                             size="sm"
                             variant="default"

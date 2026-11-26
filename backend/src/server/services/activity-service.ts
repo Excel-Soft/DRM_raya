@@ -2,6 +2,7 @@ import type { Request } from "express";
 import { db } from "../db";
 import { activityLogs, insertActivityLogSchema } from "../../shared/schema";
 import { eq, and } from "drizzle-orm";
+import { markRequestAudited } from "../middleware/auto-audit.middleware";
 
 export class ActivityLogService {
     /**
@@ -14,6 +15,8 @@ export class ActivityLogService {
         resourceId: string;
         details?: string;
     }) {
+        // This request now has its own detailed entry: the auto audit skips it.
+        markRequestAudited();
         try {
             const parsedData = insertActivityLogSchema.parse(data);
             await db.insert(activityLogs).values(parsedData);
