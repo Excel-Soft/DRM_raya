@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { authMiddleware } from "../middleware/auth.middleware";
 import { pool } from "../db";
-import { handleDrmSystemBotMessage } from "../services/drm-system-bot.service";
+import { handleDrmSystemBotMessage, type BotApiCaller } from "../services/drm-system-bot.service";
 
 export function registerBotRoutes(app: Express) {
     // Auth is enforced globally
@@ -56,10 +56,24 @@ export function registerBotRoutes(app: Express) {
             }
 
             const message = typeof req.body?.message === "string" ? req.body.message : "";
+            // Menu commands fetch the page's own API as this user (same token and role),
+            // so the bot never shows data the user could not open on the page itself.
+            const port = process.env.PORT || "5001";
+            const callApi: BotApiCaller = async (path) => {
+                const headers: Record<string, string> = {};
+                if (req.headers.authorization) headers.authorization = String(req.headers.authorization);
+                for (const h of ["x-acting-role", "x-forwarded-for", "x-real-ip", "user-agent"]) {
+                    if (req.headers[h]) headers[h] = String(req.headers[h]);
+                }
+                const r = await fetch(`http://127.0.0.1:${port}${path}`, { headers, signal: AbortSignal.timeout(20000) });
+                const body = await r.json().catch(() => null);
+                return { status: r.status, body };
+            };
             const { response, format } = await handleDrmSystemBotMessage(
                 pool,
                 message,
                 (req.user as { userId?: string }).userId,
+                callApi,
             );
 
             res.json({

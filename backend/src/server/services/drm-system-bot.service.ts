@@ -10,7 +10,7 @@ const HELP_TEXT = `Chat Bot
 6 — User Penalties : Penalties for a user (example: "User Penalties 61").
 7 — User Current Increment : Latest increment snapshot from archive.
 
-You can also type menu names (e.g. "delay project", "related customer", "pms setting") to get the new-system link.`;
+You can also type menu names to get their data: "delay project", "related customer", "promotion", "drm permission", "pms setting", "attributes".\nAdd a name to search, e.g. "related customer Accuram" or "attributes Penalty Head".`;
 
 function normalize(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
@@ -41,10 +41,116 @@ const MENU_HINTS: { keywords: string[]; title: string; path: string }[] = [
   { keywords: ["user list", "users list"], title: "Users List", path: "/drm/users/list" },
 ];
 
+/** GET an internal API as the calling user. Returns { status, body }. */
+export type BotApiCaller = (path: string) => Promise<{ status: number; body: any }>;
+
+const fmtDate = (v: unknown) => {
+  if (!v) return "";
+  const d = new Date(String(v));
+  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString("en-GB");
+};
+const val = (v: unknown) => (v === null || v === undefined || v === "" || v === "0" ? "—" : String(v));
+
+/** Text after the command words, used as a search term ("related customer accuram" -> "accuram"). */
+function searchTerm(raw: string, words: string[]): string {
+  let t = raw;
+  for (const w of words) t = t.replace(new RegExp(`\\b${w}\\b`, "ig"), " ");
+  return t.replace(/\s+/g, " ").trim();
+}
+
+async function menuData(n: string, raw: string, callApi: BotApiCaller): Promise<string | null> {
+  const get = async (path: string) => {
+    const r = await callApi(path);
+    if (r.status === 401 || r.status === 403) throw new Error("NO_PERMISSION");
+    if (r.status >= 400) throw new Error(`HTTP ${r.status}`);
+    return r.body;
+  };
+  try {
+    if (n.includes("delay")) {
+      const search = searchTerm(raw, ["delay", "delayed", "project", "projects"]);
+      const [countsRes, list] = await Promise.all([
+        get("/api/drm/delay-projects?counts=1"),
+        get(`/api/drm/delay-projects?pageSize=30${search ? `&search=${encodeURIComponent(search)}` : ""}`),
+      ]);
+      const labels: Record<string, string> = {
+        "ab-doc": "AB Doc", "vas-doc": "VAS Doc", hod: "HOD", "dep-not-assign": "Dep Not Assign",
+        "not-start": "Task Not Start", "qa-dep": "QA Dep", "vf-dep": "Verification Dep",
+      };
+      const counts = Object.entries(countsRes?.counts ?? {}).map(([k, v]) => `${labels[k] ?? k}: ${v}`).join(" | ");
+      const rows: any[] = list?.rows ?? list?.data ?? [];
+      const lines = rows.map((r, i) =>
+        `${i + 1}. #${r.id} ${val(r.project)} | ${val(r.company)} | ${val(r.dep)} | deadline ${fmtDate(r.deadline)} | ${val(r.days)} days late`);
+      return `Delay Projects (${list?.total ?? rows.length}${search ? ` matching "${search}"` : ""})\n${counts}\n\n${lines.join("\n") || "No delayed projects."}${(list?.total ?? 0) > rows.length ? `\n… showing ${rows.length} of ${list.total}. Add a company or project name to search, e.g. "delay project Haidys".` : ""}`;
+    }
+
+    if (n.includes("related")) {
+      const search = searchTerm(raw, ["related", "customers?", "customer"]);
+      const body = await get(`/api/crm/related-customers?pageSize=30${search ? `&q=${encodeURIComponent(search)}` : ""}`);
+      const items: any[] = body?.items ?? [];
+      const lines = items.map((r, i) =>
+        `${i + 1}. ${val(r.customerName)}${r.companyId ? ` (${r.companyId})` : ""} | ${val(r.personName)} | follow: ${val(r.followStatus)} | invoice: ${val(r.invoiceNumber)} | package: ${val(r.packageType)}${r.isDisabled ? " | disabled" : ""}`);
+      return `Related Customers (${body?.total ?? items.length}${search ? ` matching "${search}"` : ""})\n${lines.join("\n") || "No records found."}${(body?.total ?? 0) > items.length ? `\n… showing ${items.length} of ${body.total}. Add a company name to search, e.g. "related customer Accuram".` : ""}`;
+    }
+
+    if (n.includes("promotion")) {
+      const search = searchTerm(raw, ["promotions?", "promotion"]);
+      const body = await get(`/api/drm/promotions?pageSize=50${search ? `&search=${encodeURIComponent(search)}` : ""}`);
+      const items: any[] = body?.data ?? body?.items ?? [];
+      const lines = items.map((p, i) =>
+        `${i + 1}. ${val(p.title)} | discount: ${val(p.discount)} | ${val(p.status)}${p.is_active ?? p.isActive ? " | active" : " | inactive"} | ${fmtDate(p.start_date ?? p.startDate)} → ${fmtDate(p.end_date ?? p.endDate)}`);
+      return `Promotions (${body?.total ?? items.length})\n${lines.join("\n") || "No promotions found."}`;
+    }
+
+    if (n.includes("permission")) {
+      const rows: any[] = await get("/api/drm/permissions");
+      const lines = (Array.isArray(rows) ? rows : []).map((p, i) =>
+        `${i + 1}. ${val(p.name)} | ${p.isActive ? "active" : "inactive"} | ${(p.allowedRoleIds ?? []).length} roles | ${(p.subUrls ?? []).length} sub menus`);
+      return `DRM Permissions (${lines.length})\n${lines.join("\n") || "No permissions found."}`;
+    }
+
+    if (/\b(pms|assign)\b/.test(n)) {
+      const act = await get("/api/pms/setting/activity").catch(() => null);
+      const items: any[] = act?.items ?? [];
+      if (items.length) {
+        const lines = items.slice(0, 30).map((r, i) =>
+          `${i + 1}. #${r.id} ${val(r.project)} | ${val(r.company)} | ${val(r.person)} | ${val(r.status)}`);
+        return `List of Project Activity (${items.length})\n${lines.join("\n")}${items.length > 30 ? `\n… showing 30 of ${items.length}.` : ""}`;
+      }
+      const body = await get("/api/pms/department-assignments");
+      const lines = (body?.departments ?? []).map((d: any, i: number) =>
+        `${i + 1}. ${val(d.name)} | ratio ${val(d.ratio)} | managers: ${(d.managers ?? []).map((m: any) => m.name).join(", ") || "—"}`);
+      return `PMS Project Setting — department assignment\n${lines.join("\n") || "No departments found."}`;
+    }
+
+    if (n.includes("attribute")) {
+      const CATEGORIES = [
+        "Company Detail", "Company Business Type", "Service Type", "RC Link", "Source", "Job Designation",
+        "Q & A", "Whatsapp Message", "Contact Attribute", "Donation Head", "Penalty Head", "Company Branch",
+        "Country", "Govt Leave", "Account Monthly Task",
+      ];
+      const rest = searchTerm(raw, ["attributes?", "attribute"]).toLowerCase();
+      const category = CATEGORIES.find((c) => rest && (c.toLowerCase() === rest || c.toLowerCase().includes(rest)));
+      if (!category) {
+        return `Attributes — type a category to see its items, e.g. "attributes Penalty Head".\nCategories:\n${CATEGORIES.map((c, i) => `${i + 1}. ${c}`).join("\n")}`;
+      }
+      const rows: any[] = await get(`/api/attributes/${encodeURIComponent(category)}`);
+      const list = Array.isArray(rows) ? rows : [];
+      const lines = list.slice(0, 60).map((a, i) =>
+        `${i + 1}. ${val(a.name)}${a.amount ? ` | ${a.amount}` : ""}${a.dateLabel ? ` | ${a.dateLabel}` : ""}`);
+      return `Attributes — ${category} (${list.length})\n${lines.join("\n") || "No items."}${list.length > 60 ? `\n… showing 60 of ${list.length}.` : ""}`;
+    }
+  } catch (e: any) {
+    if (e?.message === "NO_PERMISSION") return "You do not have permission to see this data.";
+    return null;
+  }
+  return null;
+}
+
 export async function handleDrmSystemBotMessage(
   client: Pool | PoolClient,
   message: string,
   _userId?: string,
+  callApi?: BotApiCaller,
 ): Promise<{ response: string; format?: "text" | "html" }> {
   const raw = message.trim();
   if (!raw) {
@@ -241,6 +347,13 @@ export async function handleDrmSystemBotMessage(
       ].join("\n");
     });
     return { response: lines.join("\n\n") };
+  }
+
+  // Menu commands: answer with the page's data (fetched through the page's own API with the
+  // caller's token, so the same permissions apply). Falls back to the link if not possible.
+  if (callApi) {
+    const data = await menuData(n, raw, callApi);
+    if (data) return { response: data };
   }
 
   for (const hint of MENU_HINTS) {
