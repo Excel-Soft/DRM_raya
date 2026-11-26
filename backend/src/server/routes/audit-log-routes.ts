@@ -20,6 +20,40 @@ const router = Router();
 
 const ROLES = ["admin", "super_admin", "super_hod"] as const;
 
+// users.role_id holds old DRM role ids ("55,58,59") or role keys ("product_posting_executive").
+// Show short role abbreviations instead: "Lead Manager" -> "LM", "SEO/SMM Manager" -> "SEO/SMM-M".
+function abbreviateRole(name: string): string {
+  const words = name.replace(/_/g, " ").trim().split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return words[0] ? words[0][0].toUpperCase() + words[0].slice(1) : "";
+  let out = "";
+  words.forEach((w, i) => {
+    const acronym = !/[a-z]/.test(w);
+    out += acronym ? w : w[0].toUpperCase();
+    if (acronym && i < words.length - 1) out += "-";
+  });
+  return out;
+}
+
+let roleNameCache: { at: number; map: Map<string, string> } | null = null;
+async function roleNames(): Promise<Map<string, string>> {
+  if (roleNameCache && Date.now() - roleNameCache.at < 10 * 60_000) return roleNameCache.map;
+  const map = new Map<string, string>();
+  const { rows } = await pool.query(`SELECT name FROM drm.roles`);
+  for (const r of rows) {
+    const m = /^(.*?)\s*\[L(\d+)\]\s*$/.exec(String(r.name));
+    if (m) map.set(m[2], m[1]);
+  }
+  roleNameCache = { at: Date.now(), map };
+  return map;
+}
+
+function describeRoles(raw: string | null, names: Map<string, string>) {
+  const parts = String(raw || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return { short: null, full: null };
+  const full = parts.map((p) => names.get(p) ?? p.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
+  return { short: full.map(abbreviateRole).join(", "), full: full.join(", ") };
+}
+
 // No caller has ever populated `details.module` in practice (checked: 0/315
 // existing rows), so it's derived here from resource_type instead of relying
 // on writers to set it.
@@ -280,6 +314,7 @@ router.get("/", requireRole(...ROLES), async (req, res) => {
       listResult.rows.map((r: any) => ({ resource_type: r.resource_type, resource_id: r.resource_id })),
     );
 
+    const names = await roleNames();
     const items = listResult.rows.map((r: any) => {
       let module: string | undefined;
       let reason: string | undefined;
@@ -304,12 +339,14 @@ router.get("/", requireRole(...ROLES), async (req, res) => {
         }
       }
       const typeKey = (r.resource_type || "").toLowerCase();
+      const roles = describeRoles(r.actor_role, names);
       return {
         id: r.id,
         actorId: r.user_id,
         actorName: r.actor_full_name || r.actor_name || null,
         actorEmail: r.actor_email || null,
-        actorRole: r.actor_role || null,
+        actorRole: roles.short,
+        actorRoleFull: roles.full,
         action: r.action,
         entityType: r.resource_type,
         entityId: r.resource_id,

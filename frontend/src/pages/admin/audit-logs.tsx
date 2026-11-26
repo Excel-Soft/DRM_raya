@@ -12,6 +12,7 @@ interface AuditEntry {
   actorName: string | null;
   actorEmail: string | null;
   actorRole: string | null;
+  actorRoleFull?: string | null;
   action: string;
   entityType: string;
   entityId: string;
@@ -136,7 +137,7 @@ export default function AuditLogsPage() {
                     <TableCell className="text-[12px] text-slate-600 py-2.5 whitespace-nowrap dark:text-zinc-400">{fmtDateTime(r.createdAt)}</TableCell>
                     <TableCell className="text-[12px] text-slate-600 py-2.5 dark:text-zinc-400">
                       <div className="font-semibold">{r.actorName || r.actorEmail || r.actorId || "—"}</div>
-                      {r.actorRole && <div className="text-[11px] text-slate-400">{r.actorRole}</div>}
+                      {r.actorRole && <div className="text-[11px] text-slate-400" title={r.actorRoleFull || ""}>{r.actorRole}</div>}
                     </TableCell>
                     <TableCell className="text-[12px] font-medium text-slate-700 py-2.5 dark:text-zinc-300">{r.action}</TableCell>
                     <TableCell className="text-[12px] text-slate-600 py-2.5 dark:text-zinc-400">{r.module || "—"}</TableCell>

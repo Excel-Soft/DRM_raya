@@ -51,31 +51,46 @@ export async function handleDrmSystemBotMessage(
     return { response: "Type Hi, Hello, or click Get Commands for the command list." };
   }
 
-  const n = normalize(raw);
+  // Number shortcuts from the command list ("2" = Active Users, …).
+  const NUMBERED: Record<string, string> = {
+    "1": "hi", "2": "active users", "3": "show password", "4": "due payment",
+    "5": "user yearly leaves", "6": "user penalties", "7": "user current increment",
+  };
+  const n = NUMBERED[normalize(raw)] ?? normalize(raw);
 
   if (/^(hi|hello|help|commands?|click here)/.test(n) || n.includes("get commands")) {
     return { response: HELP_TEXT };
   }
 
-  if (n.includes("active user")) {
+  // "active users", "active drm users list", "users list", "user list", "all users" → return the data.
+  if (/\bactive\b.*\busers?\b/.test(n) || /\b(users?|employees?|staff) list\b/.test(n) || /^(all )?users$/.test(n)) {
+    const roleRows = await client.query(`SELECT name FROM drm.roles`);
+    const roleNames = new Map<string, string>();
+    for (const r of roleRows.rows) {
+      const m = /^(.*?)\s*\[L(\d+)\]\s*$/.exec(String(r.name));
+      if (m) roleNames.set(m[2], m[1]);
+    }
+    const roleLabel = (v: unknown) =>
+      String(v || "").split(",").map((s) => s.trim()).filter(Boolean)
+        .map((s) => roleNames.get(s) ?? s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))
+        .join(", ") || "—";
     const { rows } = await client.query(`
       SELECT coalesce(full_name, name, username) AS name,
              email,
              coalesce(role_id, role) AS role,
              branch
       FROM drm.users
-      WHERE is_active = true
+      WHERE is_active = true AND coalesce(role_id, '') NOT IN ('54', '54,')
       ORDER BY coalesce(full_name, name, username) ASC NULLS LAST
-      LIMIT 80
     `);
     if (!rows.length) {
-      return { response: "No active users found in drm.users." };
+      return { response: "No active users found." };
     }
     const lines = rows.map(
       (r, i) =>
-        `${i + 1}. ${r.name || "—"} | ${r.email || "—"} | role: ${r.role || "—"} | ${r.branch || ""}`,
+        `${i + 1}. ${r.name || "—"} | ${r.email || "—"} | ${roleLabel(r.role)}${r.branch ? ` | ${r.branch}` : ""}`,
     );
-    return { response: `Active users (${rows.length} shown):\n${truncateLines(lines, 50)}` };
+    return { response: `Active users (${rows.length}):\n${lines.join("\n")}` };
   }
 
   if (n.includes("show password") || n === "password") {
